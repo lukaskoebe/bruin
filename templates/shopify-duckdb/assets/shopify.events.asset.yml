@@ -39,5 +39,5 @@ columns:
 parameters:
   source_connection: shopify-default
   source_table: events
-  destination: duckdb
+  destination: duckdb-default
 

@@ -1,0 +1,546 @@
+"use client";
+
+import Editor from "@monaco-editor/react";
+import { BarChart3, EyeOff, FileText, Table2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+
+import { Button } from "@/components/ui/button";
+import {
+  Combobox,
+  ComboboxChip,
+  ComboboxChips,
+  ComboboxChipsInput,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxValue,
+  useComboboxAnchor,
+} from "@/components/ui/combobox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+export const VISUALIZATION_META_KEYS = [
+  "web_view",
+  "web_chart_type",
+  "web_chart_x",
+  "web_chart_series",
+  "web_chart_title",
+  "web_table_columns",
+  "web_table_limit",
+  "web_table_dense",
+  "web_markdown_column",
+  "web_markdown_template",
+] as const;
+
+type VisualizationView = "none" | "chart" | "table" | "markdown";
+
+type Props = {
+  meta?: Record<string, string>;
+  columnNames: string[];
+  monacoTheme: string;
+  disabled?: boolean;
+  onSave: (meta: Record<string, string>) => void;
+};
+
+export function VisualizationSettingsEditor({
+  meta,
+  columnNames,
+  monacoTheme,
+  disabled = false,
+  onSave,
+}: Props) {
+  const initialView = useMemo<VisualizationView>(() => {
+    const nextView = (meta?.web_view ?? "").trim().toLowerCase();
+    if (
+      nextView === "chart" ||
+      nextView === "table" ||
+      nextView === "markdown"
+    ) {
+      return nextView;
+    }
+    return "none";
+  }, [meta?.web_view]);
+
+  const [view, setView] = useState<VisualizationView>(initialView);
+  const [chartType, setChartType] = useState(
+    (meta?.web_chart_type ?? "line").trim() || "line"
+  );
+  const [chartX, setChartX] = useState(meta?.web_chart_x ?? "");
+  const [chartSeries, setChartSeries] = useState(meta?.web_chart_series ?? "");
+  const [chartSeriesList, setChartSeriesList] = useState<string[]>(
+    parseCSV(meta?.web_chart_series ?? "")
+  );
+  const [chartTitle, setChartTitle] = useState(meta?.web_chart_title ?? "");
+  const [tableColumns, setTableColumns] = useState(
+    meta?.web_table_columns ?? ""
+  );
+  const [tableColumnsList, setTableColumnsList] = useState<string[]>(
+    parseCSV(meta?.web_table_columns ?? "")
+  );
+  const [tableLimit, setTableLimit] = useState(meta?.web_table_limit ?? "");
+  const [tableDense, setTableDense] = useState(
+    (meta?.web_table_dense ?? "").trim().toLowerCase() === "true"
+  );
+  const [markdownColumn, setMarkdownColumn] = useState(
+    meta?.web_markdown_column ?? ""
+  );
+  const [markdownTemplate, setMarkdownTemplate] = useState(
+    meta?.web_markdown_template ?? ""
+  );
+
+  const sortedColumns = useMemo(() => [...columnNames].sort(), [columnNames]);
+  const hasKnownSchema = sortedColumns.length > 0;
+
+  const chartSeriesValue = hasKnownSchema
+    ? compactUnique(chartSeriesList).join(",")
+    : chartSeries.trim();
+  const tableColumnsValue = hasKnownSchema
+    ? compactUnique(tableColumnsList).join(",")
+    : tableColumns.trim();
+
+  const handleSave = () => {
+    const nextMeta: Record<string, string> = {};
+
+    if (view !== "none") {
+      nextMeta.web_view = view;
+    }
+
+    if (view === "chart") {
+      const nextChartType = chartType.trim().toLowerCase();
+      if (nextChartType) {
+        nextMeta.web_chart_type = nextChartType;
+      }
+      if (chartX.trim()) {
+        nextMeta.web_chart_x = chartX.trim();
+      }
+      if (chartSeriesValue) {
+        nextMeta.web_chart_series = chartSeriesValue;
+      }
+      if (chartTitle.trim()) {
+        nextMeta.web_chart_title = chartTitle.trim();
+      }
+    }
+
+    if (view === "table") {
+      if (tableColumnsValue) {
+        nextMeta.web_table_columns = tableColumnsValue;
+      }
+      if (tableLimit.trim()) {
+        nextMeta.web_table_limit = tableLimit.trim();
+      }
+      nextMeta.web_table_dense = tableDense ? "true" : "false";
+    }
+
+    if (view === "markdown") {
+      if (markdownColumn.trim()) {
+        nextMeta.web_markdown_column = markdownColumn.trim();
+      }
+      if (markdownTemplate.trim()) {
+        nextMeta.web_markdown_template = markdownTemplate;
+      }
+    }
+
+    onSave(nextMeta);
+  };
+
+  return (
+    <div className="grid gap-2 ">
+      <div className="grid gap-1">
+        <Label>View Type</Label>
+        <Tabs
+          onValueChange={(value) => setView(value as VisualizationView)}
+          value={view}
+        >
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger disabled={disabled} value="none">
+              <EyeOff className="mr-1 size-3.5 text-zinc-500" />
+              None
+            </TabsTrigger>
+            <TabsTrigger disabled={disabled} value="table">
+              <Table2 className="mr-1 size-3.5 text-emerald-600" />
+              Table
+            </TabsTrigger>
+            <TabsTrigger disabled={disabled} value="chart">
+              <BarChart3 className="mr-1 size-3.5 text-sky-600" />
+              Chart
+            </TabsTrigger>
+            <TabsTrigger disabled={disabled} value="markdown">
+              <FileText className="mr-1 size-3.5 text-amber-600" />
+              Markdown
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+
+      {view === "chart" && (
+        <>
+          <div className="grid gap-1">
+            <Label>Chart Type</Label>
+            <Select
+              disabled={disabled}
+              onValueChange={setChartType}
+              value={chartType}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select chart type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="line">line</SelectItem>
+                <SelectItem value="bar">bar</SelectItem>
+                <SelectItem value="area">area</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid gap-1">
+            <Label>X Axis Column</Label>
+            {hasKnownSchema ? (
+              <ColumnCombobox
+                columns={sortedColumns}
+                disabled={disabled}
+                onChange={setChartX}
+                placeholder="Select a column"
+                value={chartX}
+              />
+            ) : (
+              <Input
+                disabled={disabled}
+                onChange={(event) => setChartX(event.target.value)}
+                placeholder="e.g. created_at"
+                value={chartX}
+              />
+            )}
+          </div>
+
+          <div className="grid gap-1">
+            <Label>Series Columns</Label>
+            {hasKnownSchema ? (
+              <MultiColumnCombobox
+                columns={sortedColumns}
+                disabled={disabled}
+                onChange={setChartSeriesList}
+                placeholder="Search columns"
+                value={chartSeriesList}
+              />
+            ) : (
+              <Input
+                disabled={disabled}
+                onChange={(event) => setChartSeries(event.target.value)}
+                placeholder="comma-separated, e.g. revenue,orders"
+                value={chartSeries}
+              />
+            )}
+          </div>
+
+          <div className="grid gap-1">
+            <Label>Chart Title</Label>
+            <Input
+              disabled={disabled}
+              onChange={(event) => setChartTitle(event.target.value)}
+              placeholder="optional"
+              value={chartTitle}
+            />
+          </div>
+        </>
+      )}
+
+      {view === "table" && (
+        <>
+          <div className="grid gap-1">
+            <Label>Visible Columns</Label>
+            {hasKnownSchema ? (
+              <MultiColumnCombobox
+                columns={sortedColumns}
+                disabled={disabled}
+                onChange={setTableColumnsList}
+                placeholder="Search columns"
+                value={tableColumnsList}
+              />
+            ) : (
+              <Input
+                disabled={disabled}
+                onChange={(event) => setTableColumns(event.target.value)}
+                placeholder="comma-separated, leave empty for all"
+                value={tableColumns}
+              />
+            )}
+          </div>
+
+          <div className="grid gap-1">
+            <Label>Row Limit</Label>
+            <Input
+              disabled={disabled}
+              inputMode="numeric"
+              onChange={(event) => setTableLimit(event.target.value)}
+              placeholder="e.g. 200"
+              value={tableLimit}
+            />
+          </div>
+
+          <div className="grid gap-1">
+            <Label>Dense Mode</Label>
+            <Select
+              disabled={disabled}
+              onValueChange={(value) => setTableDense(value === "true")}
+              value={tableDense ? "true" : "false"}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select density" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="false">off</SelectItem>
+                <SelectItem value="true">on</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </>
+      )}
+
+      {view === "markdown" && (
+        <>
+          <div className="grid gap-1">
+            <Label>Markdown Column</Label>
+            {hasKnownSchema ? (
+              <ColumnCombobox
+                columns={sortedColumns}
+                disabled={disabled}
+                onChange={setMarkdownColumn}
+                placeholder="Optional column"
+                value={markdownColumn}
+              />
+            ) : (
+              <Input
+                disabled={disabled}
+                onChange={(event) => setMarkdownColumn(event.target.value)}
+                placeholder="optional"
+                value={markdownColumn}
+              />
+            )}
+          </div>
+
+          <div className="grid gap-1">
+            <Label>Markdown Template</Label>
+            <div className="overflow-hidden rounded-md border">
+              <Editor
+                language="markdown"
+                onChange={(value) => setMarkdownTemplate(value ?? "")}
+                options={{
+                  fontSize: 12,
+                  minimap: { enabled: false },
+                  readOnly: disabled,
+                  scrollBeyondLastLine: false,
+                }}
+                theme={monacoTheme}
+                value={markdownTemplate}
+                height="180px"
+              />
+            </div>
+          </div>
+        </>
+      )}
+
+      <div className="mt-1 flex justify-end">
+        <Button
+          disabled={disabled}
+          onClick={handleSave}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          Save Visualization
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function parseCSV(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function compactUnique(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+function MultiColumnCombobox({
+  value,
+  onChange,
+  disabled,
+  columns,
+  placeholder,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  disabled: boolean;
+  columns: string[];
+  placeholder: string;
+}) {
+  const anchor = useComboboxAnchor();
+  const normalizedValue = compactUnique(value);
+  const [draft, setDraft] = useState("");
+
+  const normalizedColumns = useMemo(() => compactUnique(columns), [columns]);
+  const draftAsItem = draft.trim();
+  const items = useMemo(() => {
+    if (!draftAsItem) {
+      return normalizedColumns;
+    }
+    if (normalizedColumns.includes(draftAsItem)) {
+      return normalizedColumns;
+    }
+    return [...normalizedColumns, draftAsItem];
+  }, [draftAsItem, normalizedColumns]);
+
+  const commitDraft = () => {
+    const raw = draft.trim();
+    if (!raw) {
+      return;
+    }
+
+    const additions = raw
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (additions.length === 0) {
+      return;
+    }
+
+    onChange(compactUnique([...normalizedValue, ...additions]));
+    setDraft("");
+  };
+
+  return (
+    <Combobox
+      multiple
+      autoHighlight
+      items={items}
+      onValueChange={(nextValue) =>
+        onChange(
+          Array.isArray(nextValue) ? compactUnique(nextValue as string[]) : []
+        )
+      }
+      value={normalizedValue}
+    >
+      <ComboboxChips ref={anchor} className="w-full">
+        <ComboboxValue>
+          {(values) => (
+            <>
+              {(values as string[]).map((column) => (
+                <ComboboxChip key={column}>{column}</ComboboxChip>
+              ))}
+              <ComboboxChipsInput
+                value={draft}
+                placeholder={placeholder}
+                disabled={disabled}
+                onBlur={commitDraft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === ",") {
+                    event.preventDefault();
+                    commitDraft();
+                  }
+                }}
+              />
+            </>
+          )}
+        </ComboboxValue>
+      </ComboboxChips>
+      <ComboboxContent anchor={anchor}>
+        <ComboboxEmpty>No columns found.</ComboboxEmpty>
+        <ComboboxList>
+          {(item) => (
+            <ComboboxItem key={item} value={item}>
+              {item}
+            </ComboboxItem>
+          )}
+        </ComboboxList>
+      </ComboboxContent>
+    </Combobox>
+  );
+}
+
+function ColumnCombobox({
+  value,
+  onChange,
+  disabled,
+  columns,
+  placeholder,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  disabled: boolean;
+  columns: string[];
+  placeholder: string;
+}) {
+  const [inputValue, setInputValue] = useState(value);
+
+  useEffect(() => {
+    setInputValue(value);
+  }, [value]);
+
+  const items = useMemo(() => {
+    const custom = inputValue.trim();
+    if (!custom || columns.includes(custom)) {
+      return columns;
+    }
+    return [...columns, custom];
+  }, [columns, inputValue]);
+
+  return (
+    <Combobox
+      items={items}
+      onValueChange={(nextValue) => onChange(nextValue ?? "")}
+      value={value}
+    >
+      <ComboboxInput
+        disabled={disabled}
+        onBlur={() => onChange(inputValue.trim())}
+        onChange={(event) => {
+          setInputValue(event.target.value);
+          onChange(event.target.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            onChange(inputValue.trim());
+          }
+        }}
+        placeholder={placeholder}
+        value={inputValue}
+      />
+      <ComboboxContent>
+        <ComboboxEmpty>No columns found.</ComboboxEmpty>
+        <ComboboxList>
+          {(item) => (
+            <ComboboxItem key={item} value={item}>
+              {item}
+            </ComboboxItem>
+          )}
+        </ComboboxList>
+      </ComboboxContent>
+    </Combobox>
+  );
+}

@@ -165,3 +165,6 @@ logs/queries
 *.py[cod]
 
 .devcontainer
+example.duckdb
+v86
+.tmp

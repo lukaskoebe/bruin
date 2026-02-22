@@ -1,0 +1,87 @@
+"use client";
+
+import { useCallback, useEffect, useRef } from "react";
+
+import { updateAsset } from "@/lib/api";
+
+type PendingAssetSave = {
+  pipelineId: string;
+  assetId: string;
+  content: string;
+};
+
+export function useDebouncedAssetSave(delay = 500) {
+  const timersByAssetRef = useRef<Record<string, ReturnType<typeof setTimeout>>>(
+    {}
+  );
+  const pendingByAssetRef = useRef<Record<string, PendingAssetSave>>({});
+
+  const runSaveNow = useCallback((assetId: string) => {
+    const pending = pendingByAssetRef.current[assetId];
+    if (!pending) {
+      return;
+    }
+
+    delete pendingByAssetRef.current[assetId];
+    void updateAsset(pending.pipelineId, pending.assetId, {
+      content: pending.content,
+    });
+  }, []);
+
+  const flushAssetSave = useCallback(
+    (assetId: string) => {
+      const timer = timersByAssetRef.current[assetId];
+      if (timer) {
+        clearTimeout(timer);
+        delete timersByAssetRef.current[assetId];
+      }
+
+      runSaveNow(assetId);
+    },
+    [runSaveNow]
+  );
+
+  const flushAllSaves = useCallback(() => {
+    for (const assetId of Object.keys(timersByAssetRef.current)) {
+      clearTimeout(timersByAssetRef.current[assetId]);
+      delete timersByAssetRef.current[assetId];
+    }
+
+    for (const assetId of Object.keys(pendingByAssetRef.current)) {
+      runSaveNow(assetId);
+    }
+  }, [runSaveNow]);
+
+  useEffect(() => {
+    return () => {
+      flushAllSaves();
+    };
+  }, [flushAllSaves]);
+
+  const scheduleSave = useCallback(
+    (pipelineId: string, assetId: string, content: string) => {
+      pendingByAssetRef.current[assetId] = {
+        pipelineId,
+        assetId,
+        content,
+      };
+
+      const previousTimer = timersByAssetRef.current[assetId];
+      if (previousTimer) {
+        clearTimeout(previousTimer);
+      }
+
+      timersByAssetRef.current[assetId] = setTimeout(() => {
+        delete timersByAssetRef.current[assetId];
+        runSaveNow(assetId);
+      }, delay);
+    },
+    [delay, runSaveNow]
+  );
+
+  return {
+    scheduleSave,
+    flushAssetSave,
+    flushAllSaves,
+  };
+}

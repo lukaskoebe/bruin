@@ -31,10 +31,20 @@ custom_checks:
 
 @bruin */
 
-select 1 as one
-union all
-select 2 as one
---     and {{ start_date }}
---     and {{ end_timestamp }}
---     and {{ end_timestamp | add_days(2) }}
---     and {{ end_timestamp | add_days(2) | date_format('%Y-%m-%d') }}
+with segment_map as (
+    select *
+    from (
+        values
+            (1, 'Enterprise'),
+            (2, 'Startup'),
+            (3, 'Research')
+    ) as t(customer_id, segment)
+)
+select
+    customers.customer_id,
+    customers.customer_name,
+    coalesce(segment_map.segment, 'General') as segment
+from hello_python as customers
+left join segment_map
+    on customers.customer_id = segment_map.customer_id
+order by customers.customer_id

@@ -61,6 +61,7 @@ func main() {
 		Commands: []*cli.Command{
 			cmd.Lint(&isDebug),
 			cmd.Run(&isDebug),
+			cmd.Web(),
 			cmd.Render(),
 			cmd.RenderDDL(),
 			cmd.Lineage(),
