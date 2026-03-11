@@ -1,10 +1,11 @@
 "use client";
 
-import { RefObject, useEffect } from "react";
+import { RefObject, useEffect, useRef } from "react";
 import { Edge, Node, ReactFlowInstance } from "reactflow";
 
 type UseGraphViewportFocusInput = {
   reactFlowInstance: ReactFlowInstance | null;
+  activePipelineId: string | null;
   graphNodes: Node[];
   graphEdges: Edge[];
   selectedAssetId: string | null;
@@ -14,26 +15,45 @@ type UseGraphViewportFocusInput = {
 
 export function useGraphViewportFocus({
   reactFlowInstance,
+  activePipelineId,
   graphNodes,
   graphEdges,
   selectedAssetId,
   storedNodePositions,
   canvasContainerRef,
 }: UseGraphViewportFocusInput) {
+  const lastFittedPipelineRef = useRef<string | null>(null);
+  const lastFocusedAssetRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!reactFlowInstance || graphNodes.length === 0) {
       return;
     }
+
+    const pipelineKey = activePipelineId ?? "__no_pipeline__";
+    if (lastFittedPipelineRef.current === pipelineKey) {
+      return;
+    }
+
+    lastFittedPipelineRef.current = pipelineKey;
 
     const raf = window.requestAnimationFrame(() => {
       reactFlowInstance.fitView({ padding: 0.2, duration: 180 });
     });
 
     return () => window.cancelAnimationFrame(raf);
-  }, [graphEdges, graphNodes, reactFlowInstance]);
+  }, [activePipelineId, graphEdges, graphNodes.length, reactFlowInstance]);
+
+  useEffect(() => {
+    lastFocusedAssetRef.current = null;
+  }, [activePipelineId]);
 
   useEffect(() => {
     if (!reactFlowInstance || !selectedAssetId) {
+      return;
+    }
+
+    if (lastFocusedAssetRef.current === selectedAssetId) {
       return;
     }
 
@@ -47,6 +67,8 @@ export function useGraphViewportFocus({
       if (!container) {
         return;
       }
+
+      lastFocusedAssetRef.current = selectedAssetId;
 
       const viewport = reactFlowInstance.getViewport();
       const zoom = viewport.zoom;
@@ -79,6 +101,7 @@ export function useGraphViewportFocus({
 
     return () => window.cancelAnimationFrame(raf);
   }, [
+    activePipelineId,
     canvasContainerRef,
     graphNodes,
     reactFlowInstance,

@@ -161,6 +161,7 @@ export function WorkspaceShell() {
 
   useGraphViewportFocus({
     reactFlowInstance,
+    activePipelineId: pipeline?.id ?? null,
     graphNodes: graph.nodes,
     graphEdges: graph.edges,
     selectedAssetId: selectedAsset,
