@@ -3,7 +3,7 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import { useEffect } from "react";
 
-import { changedAssetIdsAtom, workspaceAtom } from "@/lib/atoms";
+import { workspaceAtom } from "@/lib/atoms";
 import { getWorkspace } from "@/lib/api";
 import { WebAsset, WorkspaceEvent, WorkspaceState } from "@/lib/types";
 
@@ -59,7 +59,6 @@ function mergeWorkspaceWithPreservedContent(
 export function useWorkspaceSync() {
   const workspace = useAtomValue(workspaceAtom);
   const setWorkspace = useSetAtom(workspaceAtom);
-  const setChangedAssetIds = useSetAtom(changedAssetIdsAtom);
 
   useEffect(() => {
     let mounted = true;
@@ -76,22 +75,6 @@ export function useWorkspaceSync() {
     source.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as WorkspaceEvent;
-
-        // Accumulate changed asset IDs for downstream consumers (e.g. preview refresh).
-        const incomingChanged = payload.changed_asset_ids;
-        if (incomingChanged && incomingChanged.length > 0) {
-          setChangedAssetIds((prev: Set<string>) => {
-            let changed = false;
-            const next = new Set(prev);
-            for (const id of incomingChanged) {
-              if (!next.has(id)) {
-                next.add(id);
-                changed = true;
-              }
-            }
-            return changed ? next : prev;
-          });
-        }
 
         setWorkspace((current) => {
           const currentRevision = current?.revision ?? -1;
@@ -120,7 +103,7 @@ export function useWorkspaceSync() {
       mounted = false;
       source.close();
     };
-  }, [setWorkspace, setChangedAssetIds]);
+  }, [setWorkspace]);
 
   return workspace as WorkspaceState | null;
 }
