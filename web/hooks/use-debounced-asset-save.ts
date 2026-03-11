@@ -1,7 +1,9 @@
 "use client";
 
+import { useSetAtom } from "jotai";
 import { useCallback, useEffect, useRef } from "react";
 
+import { changedAssetIdsAtom } from "@/lib/atoms";
 import { updateAsset } from "@/lib/api";
 
 type PendingAssetSave = {
@@ -11,6 +13,7 @@ type PendingAssetSave = {
 };
 
 export function useDebouncedAssetSave(delay = 500) {
+  const setChangedAssetIds = useSetAtom(changedAssetIdsAtom);
   const timersByAssetRef = useRef<Record<string, ReturnType<typeof setTimeout>>>(
     {}
   );
@@ -25,8 +28,20 @@ export function useDebouncedAssetSave(delay = 500) {
     delete pendingByAssetRef.current[assetId];
     void updateAsset(pending.pipelineId, pending.assetId, {
       content: pending.content,
+    }).then(() => {
+      setChangedAssetIds((prev: Set<string>) => {
+        if (prev.has(pending.assetId)) {
+          return prev;
+        }
+
+        const next = new Set(prev);
+        next.add(pending.assetId);
+        return next;
+      });
+    }).catch(() => {
+      // noop: failed saves should not trigger preview refresh
     });
-  }, []);
+  }, [setChangedAssetIds]);
 
   const flushAssetSave = useCallback(
     (assetId: string) => {
