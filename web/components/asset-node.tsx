@@ -115,7 +115,7 @@ export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
             meta={data.meta}
           />
           <div>
-            <div className="text-sm font-semibold leading-tight">
+            <div className="text-sm font-semibold leading-tight truncate">
               {data.name}
             </div>
 

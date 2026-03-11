@@ -157,10 +157,7 @@ export function useAssetCanvasInteractions({
   useEffect(() => {
     const mappedNodes = graphNodes.map((node) => ({
       ...node,
-      position:
-        !connectedNodeIDs.has(node.id) && storedNodePositions[node.id]
-          ? storedNodePositions[node.id]
-          : node.position,
+      position: storedNodePositions[node.id] ?? node.position,
       selected: selectedAssetId ? node.id === selectedAssetId : false,
     }));
 
@@ -216,16 +213,12 @@ export function useAssetCanvasInteractions({
         return;
       }
 
-      if (connectedNodeIDs.has(node.id)) {
-        return;
-      }
-
       setStoredNodePositions((previous) => ({
         ...previous,
         [node.id]: node.position,
       }));
     },
-    [connectedNodeIDs, setStoredNodePositions]
+    [setStoredNodePositions]
   );
 
   const handleNodeClick = useCallback(

@@ -26,6 +26,7 @@ export function buildFlowFromPipeline(
   pipeline: WebPipeline | null,
   inspectByAssetID?: Record<string, AssetInspectResponse | undefined>,
   inspectLoadingByAssetID?: Record<string, boolean>,
+  positionsByAssetId?: Record<string, { x: number; y: number }>,
 ): {
   nodes: Node[];
   edges: Edge[];
@@ -52,38 +53,15 @@ export function buildFlowFromPipeline(
     }
   }
 
-  const graph = new dagre.graphlib.Graph();
-  graph.setDefaultEdgeLabel(() => ({}));
-  graph.setGraph({
-    rankdir: "TB",
-    nodesep: 64,
-    ranksep: 120,
-    marginx: 24,
-    marginy: 24,
-    ranker: "network-simplex",
-  });
-
-  for (const asset of pipeline.assets) {
-    const inspect = inspectByAssetID?.[asset.id];
-    const previewMode = getAssetViewMode(asset.meta);
-    const size = estimateNodeSize(previewMode, inspect, inspectLoadingByAssetID?.[asset.id] === true);
-    graph.setNode(asset.id, { width: size.width, height: size.height });
-  }
-
-  for (const edge of edges) {
-    graph.setEdge(edge.source, edge.target);
-  }
-
-  dagre.layout(graph);
-
-  const nodes: Node[] = pipeline.assets.map((asset) => {
+  const nodes: Node[] = pipeline.assets.map((asset, index) => {
     const inspect = inspectByAssetID?.[asset.id];
     const previewMode = getAssetViewMode(asset.meta);
     const isPreviewLoading = inspectLoadingByAssetID?.[asset.id] === true;
     const size = estimateNodeSize(previewMode, inspect, isPreviewLoading);
-    const layoutNode = graph.node(asset.id) as { x: number; y: number } | undefined;
-    const x = layoutNode?.x ?? 0;
-    const y = layoutNode?.y ?? 0;
+    const storedPosition = positionsByAssetId?.[asset.id];
+    const fallbackPosition = defaultNodePosition(index);
+    const x = storedPosition?.x ?? fallbackPosition.x;
+    const y = storedPosition?.y ?? fallbackPosition.y;
 
     return {
       id: asset.id,
@@ -118,6 +96,81 @@ export function buildFlowFromPipeline(
   return { nodes, edges };
 }
 
+export function computeGraphLayoutPositions(
+  pipeline: WebPipeline | null,
+  inspectByAssetID?: Record<string, AssetInspectResponse | undefined>,
+  inspectLoadingByAssetID?: Record<string, boolean>,
+): Record<string, { x: number; y: number }> {
+  if (!pipeline) {
+    return {};
+  }
+
+  const byName = new Map(pipeline.assets.map((asset) => [asset.name, asset.id]));
+  const graph = new dagre.graphlib.Graph();
+  graph.setDefaultEdgeLabel(() => ({}));
+  graph.setGraph({
+    rankdir: "TB",
+    nodesep: 64,
+    ranksep: 120,
+    marginx: 24,
+    marginy: 24,
+    ranker: "network-simplex",
+  });
+
+  for (const asset of pipeline.assets) {
+    const inspect = inspectByAssetID?.[asset.id];
+    const previewMode = getAssetViewMode(asset.meta);
+    const size = estimateNodeSize(
+      previewMode,
+      inspect,
+      inspectLoadingByAssetID?.[asset.id] === true,
+    );
+    graph.setNode(asset.id, { width: size.width, height: size.height });
+  }
+
+  for (const asset of pipeline.assets) {
+    for (const upstream of asset.upstreams ?? []) {
+      const sourceId = byName.get(upstream);
+      if (!sourceId) {
+        continue;
+      }
+
+      graph.setEdge(sourceId, asset.id);
+    }
+  }
+
+  dagre.layout(graph);
+
+  const positions: Record<string, { x: number; y: number }> = {};
+  for (const asset of pipeline.assets) {
+    const inspect = inspectByAssetID?.[asset.id];
+    const previewMode = getAssetViewMode(asset.meta);
+    const isPreviewLoading = inspectLoadingByAssetID?.[asset.id] === true;
+    const size = estimateNodeSize(previewMode, inspect, isPreviewLoading);
+    const layoutNode = graph.node(asset.id) as { x: number; y: number } | undefined;
+    const x = layoutNode?.x ?? 0;
+    const y = layoutNode?.y ?? 0;
+
+    positions[asset.id] = {
+      x: x - size.width / 2,
+      y: y - size.height / 2,
+    };
+  }
+
+  return positions;
+}
+
+function defaultNodePosition(index: number) {
+  const columns = 3;
+  const column = index % columns;
+  const row = Math.floor(index / columns);
+
+  return {
+    x: 32 + column * 320,
+    y: 32 + row * 220,
+  };
+}
+
 function estimateNodeSize(
   mode: AssetViewMode | null,
   inspect: AssetInspectResponse | undefined,
@@ -143,11 +196,12 @@ function estimateNodeSize(
   }
 
   if (mode === "table") {
-    const cols = Math.max(1, inspect.columns.length);
-    const rows = Math.min(8, inspect.rows.length);
+    const sampledRows = inspect.rows.slice(0, 8);
+    const estimatedWidth = estimateTableWidth(inspect.columns, sampledRows);
+    const rowCount = Math.min(8, inspect.rows.length);
     return {
-      width: Math.min(760, Math.max(300, cols * 130)),
-      height: Math.min(420, Math.max(170, 96 + rows * 28)),
+      width: estimatedWidth,
+      height: Math.min(420, Math.max(170, 96 + rowCount * 28)),
     };
   }
 
@@ -157,4 +211,63 @@ function estimateNodeSize(
     width: 420,
     height: Math.min(500, Math.max(190, 90 + estimatedLines * 18)),
   };
+}
+
+function estimateTableWidth(
+  columns: string[],
+  rows: Record<string, unknown>[],
+): number {
+  if (columns.length === 0) {
+    return 300;
+  }
+
+  const totalWidth = columns.reduce((sum, column) => {
+    const values = rows.map((row) => stringifyCellValue(row[column]));
+    const widestText = [column, ...values].reduce((widest, current) => {
+      const width = measureTextWidth(current || "");
+      return Math.max(widest, width);
+    }, 0);
+
+    return sum + Math.max(96, widestText + 28);
+  }, 0);
+
+  return Math.min(760, Math.max(300, totalWidth + 4));
+}
+
+let measurementContext: CanvasRenderingContext2D | null | undefined;
+
+function measureTextWidth(value: string): number {
+  if (typeof document === "undefined") {
+    return value.length * 7;
+  }
+
+  if (measurementContext === undefined) {
+    const canvas = document.createElement("canvas");
+    measurementContext = canvas.getContext("2d");
+    if (measurementContext) {
+      measurementContext.font = "500 11px ui-sans-serif, system-ui, sans-serif";
+    }
+  }
+
+  if (!measurementContext) {
+    return value.length * 7;
+  }
+
+  return measurementContext.measureText(value).width;
+}
+
+function stringifyCellValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }

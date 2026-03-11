@@ -31,7 +31,7 @@ import {
   enrichedSelectedAssetAtom,
   pipelineAtom,
 } from "@/lib/atoms";
-import { buildFlowFromPipeline } from "@/lib/graph";
+import { buildFlowFromPipeline, computeGraphLayoutPositions } from "@/lib/graph";
 import { buildCreateAssetInput } from "@/lib/workspace-shell-helpers";
 import { useAssetActions } from "@/hooks/use-asset-actions";
 import { useAssetCanvasInteractions } from "@/hooks/use-asset-canvas-interactions";
@@ -68,6 +68,7 @@ export function WorkspaceShell() {
   const [helpMode, setHelpMode] = useState(false);
   const [pendingPipelinePathSelection, setPendingPipelinePathSelection] =
     useState<string | null>(null);
+  const [recomputeVersion, setRecomputeVersion] = useState(0);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
 
   const { scheduleSave, flushAssetSave } = useDebouncedAssetSave(500);
@@ -136,9 +137,10 @@ export function WorkspaceShell() {
       buildFlowFromPipeline(
         enrichedPipeline,
         inspectByAssetId,
-        inspectLoadingByAssetId
+        inspectLoadingByAssetId,
+        storedNodePositions,
       ),
-    [enrichedPipeline, inspectByAssetId, inspectLoadingByAssetId]
+    [enrichedPipeline, inspectByAssetId, inspectLoadingByAssetId, storedNodePositions]
   );
 
   const connectedNodeIDs = useMemo(() => {
@@ -162,12 +164,45 @@ export function WorkspaceShell() {
   useGraphViewportFocus({
     reactFlowInstance,
     activePipelineId: pipeline?.id ?? null,
+    recomputeVersion,
     graphNodes: graph.nodes,
     graphEdges: graph.edges,
     selectedAssetId: selectedAsset,
     storedNodePositions,
     canvasContainerRef,
   });
+
+  useEffect(() => {
+    if (!enrichedPipeline || enrichedPipeline.assets.length === 0) {
+      return;
+    }
+
+    const assetIds = enrichedPipeline.assets.map((currentAsset) => currentAsset.id);
+    const hasStoredPositionsForPipeline = assetIds.some(
+      (assetId) => storedNodePositions[assetId],
+    );
+
+    if (hasStoredPositionsForPipeline) {
+      return;
+    }
+
+    const initialPositions = computeGraphLayoutPositions(
+      enrichedPipeline,
+      inspectByAssetId,
+      inspectLoadingByAssetId,
+    );
+
+    setStoredNodePositions((previous) => ({
+      ...previous,
+      ...initialPositions,
+    }));
+  }, [
+    enrichedPipeline,
+    inspectByAssetId,
+    inspectLoadingByAssetId,
+    setStoredNodePositions,
+    storedNodePositions,
+  ]);
 
   useEffect(() => {
     form.reset({
@@ -252,6 +287,24 @@ export function WorkspaceShell() {
   });
 
   const handleCreatePipeline = openCreatePipelineDialog;
+
+  const handleRecomputeGraph = useCallback(() => {
+    if (!enrichedPipeline) {
+      return;
+    }
+
+    const recomputedPositions = computeGraphLayoutPositions(
+      enrichedPipeline,
+      inspectByAssetId,
+      inspectLoadingByAssetId,
+    );
+
+    setStoredNodePositions((previous) => ({
+      ...previous,
+      ...recomputedPositions,
+    }));
+    setRecomputeVersion((previous) => previous + 1);
+  }, [enrichedPipeline, inspectByAssetId, inspectLoadingByAssetId, setStoredNodePositions]);
 
   const handleConfirmCreatePipeline = useCallback(async () => {
     const createdPath = createPipelinePath.trim();
@@ -386,6 +439,7 @@ export function WorkspaceShell() {
                 onPaneClick={handlePaneClick}
                 onPaneContextMenu={handlePaneContextMenu}
                 onNodeClick={handleNodeClick}
+                onRecomputeGraph={handleRecomputeGraph}
               />
 
               <PanelResizeHandle className="w-px bg-border" />

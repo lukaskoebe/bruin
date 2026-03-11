@@ -98,7 +98,7 @@ export function AssetNodeMeasurement({
               <tr>
                 {previewColumns.map((column) => (
                   <th
-                    className="border-b px-2 py-1.5 text-left font-medium"
+                    className="border-b px-2 py-1.5 text-left font-medium whitespace-nowrap"
                     key={column}
                   >
                     {column}
@@ -111,7 +111,7 @@ export function AssetNodeMeasurement({
                 <tr key={rowIndex}>
                   {previewColumns.map((column) => (
                     <td
-                      className="border-b px-2 py-1 align-top"
+                      className="border-b px-2 py-1 align-top whitespace-nowrap"
                       key={`${rowIndex}-${column}`}
                     >
                       {stringifyCellValue(row[column])}
@@ -227,7 +227,7 @@ function TablePreview({
           <tr>
             {columns.map((column) => (
               <th
-                className="border-b px-2 py-1.5 text-left font-medium"
+                className="border-b px-2 py-1.5 text-left font-medium whitespace-nowrap"
                 key={column}
               >
                 {column}
@@ -240,7 +240,7 @@ function TablePreview({
             <tr className="odd:bg-muted/20" key={rowIndex}>
               {columns.map((column) => (
                 <td
-                  className="border-b px-2 py-1 align-top"
+                  className="border-b px-2 py-1 align-top whitespace-nowrap"
                   key={`${rowIndex}-${column}`}
                 >
                   {stringifyCellValue(row[column])}

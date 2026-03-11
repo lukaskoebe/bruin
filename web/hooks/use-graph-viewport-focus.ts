@@ -6,6 +6,7 @@ import { Edge, Node, ReactFlowInstance } from "reactflow";
 type UseGraphViewportFocusInput = {
   reactFlowInstance: ReactFlowInstance | null;
   activePipelineId: string | null;
+  recomputeVersion: number;
   graphNodes: Node[];
   graphEdges: Edge[];
   selectedAssetId: string | null;
@@ -16,13 +17,14 @@ type UseGraphViewportFocusInput = {
 export function useGraphViewportFocus({
   reactFlowInstance,
   activePipelineId,
+  recomputeVersion,
   graphNodes,
   graphEdges,
   selectedAssetId,
   storedNodePositions,
   canvasContainerRef,
 }: UseGraphViewportFocusInput) {
-  const lastFittedPipelineRef = useRef<string | null>(null);
+  const lastFitKeyRef = useRef<string | null>(null);
   const lastFocusedAssetRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -30,19 +32,19 @@ export function useGraphViewportFocus({
       return;
     }
 
-    const pipelineKey = activePipelineId ?? "__no_pipeline__";
-    if (lastFittedPipelineRef.current === pipelineKey) {
+    const fitKey = `${activePipelineId ?? "__no_pipeline__"}:${recomputeVersion}`;
+    if (lastFitKeyRef.current === fitKey) {
       return;
     }
 
-    lastFittedPipelineRef.current = pipelineKey;
+    lastFitKeyRef.current = fitKey;
 
     const raf = window.requestAnimationFrame(() => {
       reactFlowInstance.fitView({ padding: 0.2, duration: 180 });
     });
 
     return () => window.cancelAnimationFrame(raf);
-  }, [activePipelineId, graphEdges, graphNodes.length, reactFlowInstance]);
+  }, [activePipelineId, graphEdges, graphNodes.length, reactFlowInstance, recomputeVersion]);
 
   useEffect(() => {
     lastFocusedAssetRef.current = null;
