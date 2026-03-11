@@ -10,7 +10,7 @@ export type LineChartSpec = {
 };
 
 export function getAssetViewMode(
-  meta?: Record<string, string>,
+  meta?: Record<string, string>
 ): AssetViewMode | null {
   const value = (meta?.web_view ?? "").trim().toLowerCase();
   if (value === "chart" || value === "markdown" || value === "table") {
@@ -21,7 +21,7 @@ export function getAssetViewMode(
 
 export function buildMarkdown(
   meta: Record<string, string> | undefined,
-  rows: Record<string, unknown>[],
+  rows: Record<string, unknown>[]
 ): string {
   const template = (meta?.web_markdown_template ?? "").trim();
   if (template.length > 0) {
@@ -33,7 +33,7 @@ export function buildMarkdown(
 
 export function buildLineChartSpec(
   rows: Record<string, unknown>[],
-  meta?: Record<string, string>,
+  meta?: Record<string, string>
 ): LineChartSpec | null {
   if (rows.length === 0) {
     return null;
@@ -69,7 +69,7 @@ export function buildLineChartSpec(
 
 function interpolateMarkdownTemplate(
   template: string,
-  rows: Record<string, unknown>[],
+  rows: Record<string, unknown>[]
 ): string {
   const firstRow = rows[0] ?? {};
 
@@ -139,7 +139,7 @@ function stringifyTemplateValue(value: unknown): string {
 
 function getMarkdownValue(
   rows: Record<string, unknown>[],
-  markdownColumn?: string,
+  markdownColumn?: string
 ): string {
   if (rows.length === 0) {
     return "";
@@ -168,7 +168,10 @@ function getMarkdownValue(
   return "";
 }
 
-function pickXKey(meta: Record<string, string> | undefined, keys: string[]): string {
+function pickXKey(
+  meta: Record<string, string> | undefined,
+  keys: string[]
+): string {
   const configured = (meta?.web_chart_x ?? "").trim();
   if (configured && keys.includes(configured)) {
     return configured;
@@ -191,7 +194,7 @@ function pickXKey(meta: Record<string, string> | undefined, keys: string[]): str
 function pickSeriesKeys(
   meta: Record<string, string> | undefined,
   keys: string[],
-  xKey: string,
+  xKey: string
 ): string[] {
   const configured = (meta?.web_chart_series ?? "")
     .split(",")

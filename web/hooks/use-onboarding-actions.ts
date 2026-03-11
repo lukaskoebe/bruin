@@ -71,7 +71,11 @@ export function useOnboardingActions({
 
       const suggestedName =
         kind === "python"
-          ? buildSuggestedAssetName("python", existingAssetNames, pipeline?.name)
+          ? buildSuggestedAssetName(
+              "python",
+              existingAssetNames,
+              pipeline?.name
+            )
           : buildSuggestedAssetName("sql", existingAssetNames, pipeline?.name);
       const createInput = buildCreateAssetInput(
         suggestedName,
@@ -140,7 +144,10 @@ export function useOnboardingActions({
   ]);
 
   const handleMaterializeOnboardingAssets = useCallback(() => {
-    if (onboarding.tutorialAssets.length === 0 || onboardingMaterializeLoading) {
+    if (
+      onboarding.tutorialAssets.length === 0 ||
+      onboardingMaterializeLoading
+    ) {
       return;
     }
 
@@ -173,7 +180,9 @@ export function useOnboardingActions({
         );
       } finally {
         if (pipelineId) {
-          await refreshPipelineMaterialization(pipelineId).catch(() => undefined);
+          await refreshPipelineMaterialization(pipelineId).catch(
+            () => undefined
+          );
         }
         setOnboardingMaterializeLoading(false);
       }

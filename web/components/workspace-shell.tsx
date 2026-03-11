@@ -1,7 +1,7 @@
 "use client";
 
 import { useAtom, useAtomValue } from "jotai";
-import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import {
   NodeTypes,
@@ -9,6 +9,7 @@ import {
   useEdgesState,
   useNodesState,
 } from "reactflow";
+import { Plus } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import "reactflow/dist/style.css";
 
@@ -22,6 +23,7 @@ import { WorkspaceCanvasPane } from "@/components/workspace-canvas-pane";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { WorkspaceOnboardingPanel } from "@/components/workspace-onboarding-panel";
 import { WorkspaceDialogs } from "@/components/workspace-dialogs";
+import { Button } from "@/components/ui/button";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import {
   assetEditorTabAtom,
@@ -64,6 +66,8 @@ export function WorkspaceShell() {
     usePersistedNodePositions();
   const [showOnboarding, setShowOnboarding] = useState(true);
   const [helpMode, setHelpMode] = useState(false);
+  const [pendingPipelinePathSelection, setPendingPipelinePathSelection] =
+    useState<string | null>(null);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
 
   const { scheduleSave, flushAssetSave } = useDebouncedAssetSave(500);
@@ -248,6 +252,40 @@ export function WorkspaceShell() {
 
   const handleCreatePipeline = openCreatePipelineDialog;
 
+  const handleConfirmCreatePipeline = useCallback(async () => {
+    const createdPath = createPipelinePath.trim();
+    const created = await confirmCreatePipeline();
+    if (created && createdPath) {
+      setPendingPipelinePathSelection(createdPath);
+    }
+    return created;
+  }, [confirmCreatePipeline, createPipelinePath]);
+
+  useEffect(() => {
+    if (!pendingPipelinePathSelection || !workspace) {
+      return;
+    }
+
+    const normalizedPendingPath = pendingPipelinePathSelection
+      .replaceAll("\\", "/")
+      .trim();
+
+    const matchingPipeline = workspace.pipelines.find((currentPipeline) => {
+      const pipelinePath = currentPipeline.path.replaceAll("\\", "/").trim();
+      return (
+        pipelinePath === normalizedPendingPath ||
+        pipelinePath.endsWith(`/${normalizedPendingPath}`)
+      );
+    });
+
+    if (!matchingPipeline) {
+      return;
+    }
+
+    navigateSelection(matchingPipeline.id, matchingPipeline.assets[0]?.id ?? null);
+    setPendingPipelinePathSelection(null);
+  }, [navigateSelection, pendingPipelinePathSelection, workspace]);
+
   const helpPulseStyle = useMemo<CSSProperties>(
     () => ({
       animation: "bruin-help-scale 520ms ease-in-out infinite alternate",
@@ -274,6 +312,8 @@ export function WorkspaceShell() {
       onToggleHelp={() => setHelpMode((previous) => !previous)}
     />
   );
+
+  const hasPipelines = (workspace?.pipelines.length ?? 0) > 0;
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-background text-foreground">
@@ -318,62 +358,81 @@ export function WorkspaceShell() {
 
           <PanelResizeHandle className="w-px bg-border" />
 
-          <WorkspaceCanvasPane
-            highlighted={helpMode && onboardingHelp.target === "canvas"}
-            highlightStyle={helpPulseStyle}
-            hasResultData={hasResultData}
-            canvasContainerRef={canvasContainerRef}
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            inspectResult={inspectResult}
-            inspectLoading={inspectLoading}
-            materializeLoading={materializeLoading}
-            hasInspectData={hasInspectData}
-            hasMaterializeData={hasMaterializeData}
-            effectiveResultTab={effectiveResultTab}
-            materializeStatus={materializeStatus}
-            materializeError={materializeError}
-            materializeOutputHtml={materializeOutputHtml}
-            onResultTabChange={setResultTab}
-            onInit={setReactFlowInstance}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onNodeDragStop={handleNodeDragStop}
-            onPaneClick={handlePaneClick}
-            onPaneContextMenu={handlePaneContextMenu}
-            onNodeClick={handleNodeClick}
-          />
+          {hasPipelines ? (
+            <>
+              <WorkspaceCanvasPane
+                highlighted={helpMode && onboardingHelp.target === "canvas"}
+                highlightStyle={helpPulseStyle}
+                hasResultData={hasResultData}
+                canvasContainerRef={canvasContainerRef}
+                nodes={nodes}
+                edges={edges}
+                nodeTypes={nodeTypes}
+                inspectResult={inspectResult}
+                inspectLoading={inspectLoading}
+                materializeLoading={materializeLoading}
+                hasInspectData={hasInspectData}
+                hasMaterializeData={hasMaterializeData}
+                effectiveResultTab={effectiveResultTab}
+                materializeStatus={materializeStatus}
+                materializeError={materializeError}
+                materializeOutputHtml={materializeOutputHtml}
+                onResultTabChange={setResultTab}
+                onInit={setReactFlowInstance}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                onNodeDragStop={handleNodeDragStop}
+                onPaneClick={handlePaneClick}
+                onPaneContextMenu={handlePaneContextMenu}
+                onNodeClick={handleNodeClick}
+              />
 
-          <PanelResizeHandle className="w-px bg-border" />
+              <PanelResizeHandle className="w-px bg-border" />
 
-          <WorkspaceEditorPane
-            asset={asset}
-            pipelineId={pipeline?.id ?? null}
-            selectedEnvironment={workspace?.selected_environment}
-            workspace={workspace}
-            helpMode={helpMode}
-            actionHighlighted={onboardingHelp.target === "actions"}
-            editorHighlighted={onboardingHelp.target === "editor"}
-            visualizationHighlighted={onboardingHelp.target === "visualization"}
-            highlightStyle={helpPulseStyle}
-            materializeLoading={materializeLoading}
-            inspectLoading={inspectLoading}
-            deleteLoading={deleteLoading}
-            editorValue={editorValue}
-            monacoTheme={monacoTheme}
-            assetEditorTab={assetEditorTab}
-            form={form}
-            assetColumns={assetColumns}
-            onEditorTabChange={setAssetEditorTab}
-            onEditorChange={handleEditorChange}
-            onMaterializeSelectedAsset={handleMaterializeSelectedAsset}
-            onInspectSelectedAsset={handleInspectSelectedAsset}
-            onOpenDeleteDialog={() => setDeleteDialogOpen(true)}
-            onMaterializationTypeChange={handleMaterializationTypeChange}
-            onSaveVisualizationSettings={handleSaveVisualizationSettings}
-            onGoToAsset={navigateSelection}
-          />
+              <WorkspaceEditorPane
+                asset={asset}
+                pipelineId={pipeline?.id ?? null}
+                selectedEnvironment={workspace?.selected_environment}
+                workspace={workspace}
+                helpMode={helpMode}
+                actionHighlighted={onboardingHelp.target === "actions"}
+                editorHighlighted={onboardingHelp.target === "editor"}
+                visualizationHighlighted={onboardingHelp.target === "visualization"}
+                highlightStyle={helpPulseStyle}
+                materializeLoading={materializeLoading}
+                inspectLoading={inspectLoading}
+                deleteLoading={deleteLoading}
+                editorValue={editorValue}
+                monacoTheme={monacoTheme}
+                assetEditorTab={assetEditorTab}
+                form={form}
+                assetColumns={assetColumns}
+                onEditorTabChange={setAssetEditorTab}
+                onEditorChange={handleEditorChange}
+                onMaterializeSelectedAsset={handleMaterializeSelectedAsset}
+                onInspectSelectedAsset={handleInspectSelectedAsset}
+                onOpenDeleteDialog={() => setDeleteDialogOpen(true)}
+                onMaterializationTypeChange={handleMaterializationTypeChange}
+                onSaveVisualizationSettings={handleSaveVisualizationSettings}
+                onGoToAsset={navigateSelection}
+              />
+            </>
+          ) : (
+            <Panel defaultSize={82} minSize={30}>
+              <div className="flex h-full items-center justify-center bg-muted/10 p-8">
+                <div className="max-w-md rounded-lg border bg-card p-6 text-center shadow-sm">
+                  <h2 className="text-lg font-semibold">No pipelines yet</h2>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Create your first pipeline to start editing assets and building your workflow.
+                  </p>
+                  <Button className="mt-4" onClick={handleCreatePipeline} type="button">
+                    <Plus className="mr-2 size-4" />
+                    Create pipeline
+                  </Button>
+                </div>
+              </div>
+            </Panel>
+          )}
         </PanelGroup>
 
         <WorkspaceDialogs
@@ -397,7 +456,7 @@ export function WorkspaceShell() {
             }
           }}
           onCreatePipelinePathChange={setCreatePipelinePath}
-          onConfirmCreatePipeline={confirmCreatePipeline}
+          onConfirmCreatePipeline={handleConfirmCreatePipeline}
         />
       </SidebarProvider>
       <style jsx global={true}>{`

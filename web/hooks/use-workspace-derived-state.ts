@@ -35,8 +35,16 @@ export function useWorkspaceDerivedState({
 
     return {
       sql: buildSuggestedAssetName("sql", existingAssetNames, pipelineName),
-      python: buildSuggestedAssetName("python", existingAssetNames, pipelineName),
-      ingestr: buildSuggestedAssetName("ingestr", existingAssetNames, pipelineName),
+      python: buildSuggestedAssetName(
+        "python",
+        existingAssetNames,
+        pipelineName
+      ),
+      ingestr: buildSuggestedAssetName(
+        "ingestr",
+        existingAssetNames,
+        pipelineName
+      ),
     };
   }, [enrichedPipeline?.name, existingAssetNames]);
 
