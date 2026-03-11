@@ -1,5 +1,5 @@
 import ReactMarkdown from "react-markdown";
-import { Loader2 } from "lucide-react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -28,6 +28,8 @@ interface AssetNodePreviewProps {
   previewRows: Record<string, unknown>[];
   previewError?: string;
   isPreviewLoading: boolean;
+  canLoadMorePreviewRows?: boolean;
+  onLoadMorePreviewRows?: () => void;
 }
 
 export function AssetNodePreview({
@@ -39,6 +41,8 @@ export function AssetNodePreview({
   previewRows,
   previewError,
   isPreviewLoading,
+  canLoadMorePreviewRows,
+  onLoadMorePreviewRows,
 }: AssetNodePreviewProps) {
   if (previewError) {
     return (
@@ -58,7 +62,12 @@ export function AssetNodePreview({
         <ChartPreview chart={chart} chartType={chartType} />
       )}
       {previewMode === "table" && previewRows.length > 0 && (
-        <TablePreview columns={previewColumns} rows={previewRows} />
+        <TablePreview
+          canLoadMore={canLoadMorePreviewRows}
+          columns={previewColumns}
+          onLoadMore={onLoadMorePreviewRows}
+          rows={previewRows}
+        />
       )}
       {previewMode === "markdown" && markdown && (
         <MarkdownPreview markdown={markdown} />
@@ -107,7 +116,7 @@ export function AssetNodeMeasurement({
               </tr>
             </thead>
             <tbody>
-              {previewRows.slice(0, 8).map((row, rowIndex) => (
+              {previewRows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
                   {previewColumns.map((column) => (
                     <td
@@ -214,10 +223,14 @@ function ChartPreview({
 }
 
 function TablePreview({
+  canLoadMore,
   columns,
+  onLoadMore,
   rows,
 }: {
+  canLoadMore?: boolean;
   columns: string[];
+  onLoadMore?: () => void;
   rows: Record<string, unknown>[];
 }) {
   return (
@@ -236,7 +249,7 @@ function TablePreview({
           </tr>
         </thead>
         <tbody>
-          {rows.slice(0, 8).map((row, rowIndex) => (
+          {rows.map((row, rowIndex) => (
             <tr className="odd:bg-muted/20" key={rowIndex}>
               {columns.map((column) => (
                 <td
@@ -248,6 +261,20 @@ function TablePreview({
               ))}
             </tr>
           ))}
+          {canLoadMore && onLoadMore && (
+            <tr>
+              <td className="p-2" colSpan={Math.max(1, columns.length)}>
+                <button
+                  className="flex w-full items-center justify-center gap-1 rounded border border-dashed px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                  onClick={onLoadMore}
+                  type="button"
+                >
+                  <ChevronDown className="size-3" />
+                  Load more rows
+                </button>
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>

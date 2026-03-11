@@ -43,6 +43,10 @@ export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
     width: number;
     height: number;
   } | null>(null);
+  const { prefix, leaf } = useMemo(
+    () => splitAssetName(data.name),
+    [data.name]
+  );
 
   useEffect(() => {
     if (previewMode !== "table" && previewMode !== "markdown") {
@@ -107,21 +111,28 @@ export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
           />
         )}
 
-        <div className="flex gap-1.5 pr-4 items-center">
+        <div className="flex items-center gap-1.5 pr-4">
           <AssetTypeIcon
             assetType={data.assetType}
             className="shrink-0 text-muted-foreground px-2"
             connection={data.connection}
             meta={data.meta}
           />
-          <div>
-            <div className="text-sm font-semibold leading-tight truncate">
-              {data.name}
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <div
+              className="truncate text-sm font-semibold leading-tight"
+              title={data.name}
+            >
+              {leaf}
             </div>
-
-            <div className="text-xs text-muted-foreground">
-              {data.assetType}
-            </div>
+            {prefix && (
+              <div
+                className="truncate text-[10px] leading-tight text-muted-foreground/90"
+                title={prefix}
+              >
+                {prefix}
+              </div>
+            )}
           </div>
         </div>
 
@@ -135,10 +146,12 @@ export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
         </div>
 
         <AssetNodePreview
+          canLoadMorePreviewRows={data.canLoadMorePreviewRows}
           chart={chart}
           chartType={chartType}
           isPreviewLoading={isPreviewLoading}
           markdown={markdown}
+          onLoadMorePreviewRows={data.onLoadMorePreviewRows}
           previewColumns={previewColumns}
           previewError={previewError}
           previewMode={previewMode}
@@ -175,4 +188,19 @@ function normalizeMaterialization(value?: string) {
     return "View";
   }
   return "Unset";
+}
+
+function splitAssetName(name: string) {
+  const parts = name.split(".").filter(Boolean);
+  if (parts.length <= 1) {
+    return {
+      prefix: "",
+      leaf: name,
+    };
+  }
+
+  return {
+    prefix: parts.slice(0, -1).join("."),
+    leaf: parts[parts.length - 1],
+  };
 }

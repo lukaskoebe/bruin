@@ -116,8 +116,13 @@ export function WorkspaceShell() {
       enrichedPipeline,
     });
 
-  const { inspectByAssetId, inspectLoadingByAssetId, clearPreviewForAsset } =
-    useAssetPreviews(visualAssets);
+  const {
+    inspectByAssetId,
+    inspectLoadingByAssetId,
+    canLoadMoreByAssetId,
+    loadMorePreviewRows,
+    clearPreviewForAsset,
+  } = useAssetPreviews(visualAssets);
 
   // Derive available columns from both asset metadata and inspect results.
   const assetColumns = useMemo(() => {
@@ -139,8 +144,17 @@ export function WorkspaceShell() {
         inspectByAssetId,
         inspectLoadingByAssetId,
         storedNodePositions,
+        canLoadMoreByAssetId,
+        loadMorePreviewRows,
       ),
-    [enrichedPipeline, inspectByAssetId, inspectLoadingByAssetId, storedNodePositions]
+    [
+      canLoadMoreByAssetId,
+      enrichedPipeline,
+      inspectByAssetId,
+      inspectLoadingByAssetId,
+      loadMorePreviewRows,
+      storedNodePositions,
+    ]
   );
 
   const connectedNodeIDs = useMemo(() => {

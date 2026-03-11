@@ -14,6 +14,8 @@ export type AssetNodeData = {
   materializedAs?: string;
   rowCount?: number;
   previewLoading?: boolean;
+  canLoadMorePreviewRows?: boolean;
+  onLoadMorePreviewRows?: () => void;
   preview?: {
     mode: "table" | "chart" | "markdown";
     columns: string[];
@@ -27,6 +29,8 @@ export function buildFlowFromPipeline(
   inspectByAssetID?: Record<string, AssetInspectResponse | undefined>,
   inspectLoadingByAssetID?: Record<string, boolean>,
   positionsByAssetId?: Record<string, { x: number; y: number }>,
+  canLoadMoreByAssetId?: Record<string, boolean>,
+  onLoadMorePreviewRows?: (assetId: string) => void,
 ): {
   nodes: Node[];
   edges: Edge[];
@@ -80,6 +84,10 @@ export function buildFlowFromPipeline(
         materializedAs: asset.materialized_as || asset.materialization_type,
         rowCount: asset.row_count,
         previewLoading: isPreviewLoading,
+        canLoadMorePreviewRows: canLoadMoreByAssetId?.[asset.id] === true,
+        onLoadMorePreviewRows: onLoadMorePreviewRows
+          ? () => onLoadMorePreviewRows(asset.id)
+          : undefined,
         preview:
           previewMode && inspect && (inspect.rows.length > 0 || inspect.error)
             ? {

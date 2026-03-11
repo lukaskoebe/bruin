@@ -31,6 +31,23 @@ export function buildMarkdown(
   return getMarkdownValue(rows, meta?.web_markdown_column);
 }
 
+export function getTablePreviewLimit(
+  meta?: Record<string, string>,
+  fallback = 25,
+): number {
+  const raw = (meta?.web_table_limit ?? "").trim();
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
 export function buildLineChartSpec(
   rows: Record<string, unknown>[],
   meta?: Record<string, string>
