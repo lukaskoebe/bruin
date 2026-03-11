@@ -114,6 +114,15 @@ export function WorkspaceEditorPane({
     []
   );
 
+  const editorModelPath = useMemo(() => {
+    if (!asset) {
+      return "inmemory://bruin/no-selection.sql";
+    }
+
+    const extension = asset.path.split(".").pop()?.toLowerCase() ?? "sql";
+    return `inmemory://bruin/assets/${asset.id}.${extension}`;
+  }, [asset]);
+
   return (
     <Panel defaultSize={32} minSize={24}>
       <div className="flex h-full min-h-0 flex-col">
@@ -177,6 +186,9 @@ export function WorkspaceEditorPane({
                 language={
                   asset ? editorLanguageForAssetPath(asset.path) : "sql"
                 }
+                path={editorModelPath}
+                saveViewState
+                keepCurrentModel
                 value={editorValue}
                 theme={monacoTheme}
                 onChange={onEditorChange}
