@@ -33,7 +33,7 @@ export function buildMarkdown(
 
 export function getTablePreviewLimit(
   meta?: Record<string, string>,
-  fallback = 25,
+  fallback = 25
 ): number {
   const raw = (meta?.web_table_limit ?? "").trim();
   if (!raw) {

@@ -10,7 +10,7 @@ import { WebAsset, WorkspaceEvent, WorkspaceState } from "@/lib/types";
 function mergeWorkspaceWithPreservedContent(
   current: WorkspaceState | null,
   incoming: WorkspaceState,
-  changedAssetIds: string[] = [],
+  changedAssetIds: string[] = []
 ): WorkspaceState {
   if (!current) {
     return incoming;
@@ -40,13 +40,11 @@ function mergeWorkspaceWithPreservedContent(
         ...currentAsset,
         ...asset,
         content: asset.content || currentAsset.content,
-        meta:
-          asset.meta ??
-          (isChangedAsset ? asset.meta : currentAsset.meta),
+        meta: asset.meta ?? (isChangedAsset ? asset.meta : currentAsset.meta),
         columns:
           asset.columns ??
           (isChangedAsset ? asset.columns : currentAsset.columns),
-      }
+      };
     }),
   }));
 
@@ -78,7 +76,8 @@ export function useWorkspaceSync() {
 
         setWorkspace((current) => {
           const currentRevision = current?.revision ?? -1;
-          const incomingRevision = payload.workspace?.revision ?? currentRevision + 1;
+          const incomingRevision =
+            payload.workspace?.revision ?? currentRevision + 1;
 
           if (incomingRevision <= currentRevision) {
             return current;
@@ -88,7 +87,7 @@ export function useWorkspaceSync() {
             return mergeWorkspaceWithPreservedContent(
               current,
               payload.workspace,
-              payload.changed_asset_ids ?? [],
+              payload.changed_asset_ids ?? []
             );
           }
 

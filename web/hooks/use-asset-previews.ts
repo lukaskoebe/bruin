@@ -4,7 +4,10 @@ import { useAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { inspectAsset } from "@/lib/api";
-import { getTablePreviewLimit, getAssetViewMode } from "@/lib/asset-visualization";
+import {
+  getTablePreviewLimit,
+  getAssetViewMode,
+} from "@/lib/asset-visualization";
 import { changedAssetIdsAtom } from "@/lib/atoms";
 import { AssetInspectResponse, WebAsset } from "@/lib/types";
 
@@ -17,7 +20,7 @@ const EMPTY_LOADING_MAP: Record<string, boolean> = {};
  * Returns a map of assetId → AssetInspectResponse.
  */
 async function fetchInspectBatch(
-  requests: Array<{ id: string; limit: number }>,
+  requests: Array<{ id: string; limit: number }>
 ): Promise<Record<string, AssetInspectResponse>> {
   const results: Record<string, AssetInspectResponse> = {};
   await Promise.all(
@@ -33,7 +36,7 @@ async function fetchInspectBatch(
           error: String(error),
         };
       }
-    }),
+    })
   );
   return results;
 }
@@ -47,18 +50,26 @@ async function fetchInspectBatch(
  */
 export function useAssetPreviews(visualAssets: WebAsset[]) {
   const [changedIds, setChangedIds] = useAtom(changedAssetIdsAtom);
-  const [inspectCache, setInspectCache] = useState<Record<string, AssetInspectResponse>>({});
-  const [loadingByAssetId, setLoadingByAssetId] = useState<Record<string, boolean>>({});
-  const [requestedLimitByAssetId, setRequestedLimitByAssetId] = useState<Record<string, number>>({});
-  const [fetchedLimitByAssetId, setFetchedLimitByAssetId] = useState<Record<string, number>>({});
+  const [inspectCache, setInspectCache] = useState<
+    Record<string, AssetInspectResponse>
+  >({});
+  const [loadingByAssetId, setLoadingByAssetId] = useState<
+    Record<string, boolean>
+  >({});
+  const [requestedLimitByAssetId, setRequestedLimitByAssetId] = useState<
+    Record<string, number>
+  >({});
+  const [fetchedLimitByAssetId, setFetchedLimitByAssetId] = useState<
+    Record<string, number>
+  >({});
 
   const assetIds = useMemo(
     () => visualAssets.map((a) => a.id).sort(),
-    [visualAssets],
+    [visualAssets]
   );
   const assetById = useMemo(
     () => Object.fromEntries(visualAssets.map((asset) => [asset.id, asset])),
-    [visualAssets],
+    [visualAssets]
   );
   const baseLimitByAssetId = useMemo(() => {
     const limits: Record<string, number> = {};
@@ -72,7 +83,9 @@ export function useAssetPreviews(visualAssets: WebAsset[]) {
   }, [visualAssets]);
 
   const setChangedIdsRef = useRef(setChangedIds);
-  useEffect(() => { setChangedIdsRef.current = setChangedIds; });
+  useEffect(() => {
+    setChangedIdsRef.current = setChangedIds;
+  });
 
   useEffect(() => {
     setRequestedLimitByAssetId((prev) => {
@@ -96,13 +109,16 @@ export function useAssetPreviews(visualAssets: WebAsset[]) {
     });
   }, [baseLimitByAssetId]);
 
-  const mergeResults = useCallback((results: Record<string, AssetInspectResponse>) => {
-    if (Object.keys(results).length === 0) {
-      return;
-    }
+  const mergeResults = useCallback(
+    (results: Record<string, AssetInspectResponse>) => {
+      if (Object.keys(results).length === 0) {
+        return;
+      }
 
-    setInspectCache((prev) => ({ ...prev, ...results }));
-  }, []);
+      setInspectCache((prev) => ({ ...prev, ...results }));
+    },
+    []
+  );
 
   const markLoading = useCallback((ids: string[], isLoading: boolean) => {
     if (ids.length === 0) {
@@ -144,24 +160,36 @@ export function useAssetPreviews(visualAssets: WebAsset[]) {
         markLoading(ids, false);
       }
     },
-    [markLoading, mergeResults],
+    [markLoading, mergeResults]
   );
 
   useEffect(() => {
     const missingRequests = assetIds
       .filter((id) => !(id in inspectCache))
-      .map((id) => ({ id, limit: requestedLimitByAssetId[id] ?? baseLimitByAssetId[id] ?? 200 }));
+      .map((id) => ({
+        id,
+        limit: requestedLimitByAssetId[id] ?? baseLimitByAssetId[id] ?? 200,
+      }));
 
     if (missingRequests.length === 0) {
       return;
     }
 
     void fetchAndMerge(missingRequests);
-  }, [assetIds, baseLimitByAssetId, fetchAndMerge, inspectCache, requestedLimitByAssetId]);
+  }, [
+    assetIds,
+    baseLimitByAssetId,
+    fetchAndMerge,
+    inspectCache,
+    requestedLimitByAssetId,
+  ]);
 
   useEffect(() => {
     const expandedRequests = assetIds
-      .filter((id) => (requestedLimitByAssetId[id] ?? 0) > (fetchedLimitByAssetId[id] ?? 0))
+      .filter(
+        (id) =>
+          (requestedLimitByAssetId[id] ?? 0) > (fetchedLimitByAssetId[id] ?? 0)
+      )
       .map((id) => ({ id, limit: requestedLimitByAssetId[id] }));
 
     if (expandedRequests.length === 0) {
@@ -179,7 +207,7 @@ export function useAssetPreviews(visualAssets: WebAsset[]) {
         .filter((id) => assetIds.includes(id))
         .sort()
         .join(","),
-    [changedIds, assetIds],
+    [changedIds, assetIds]
   );
 
   useEffect(() => {
@@ -201,9 +229,14 @@ export function useAssetPreviews(visualAssets: WebAsset[]) {
       idsToRefresh.map((id) => ({
         id,
         limit: requestedLimitByAssetId[id] ?? baseLimitByAssetId[id] ?? 200,
-      })),
+      }))
     );
-  }, [baseLimitByAssetId, fetchAndMerge, relevantChangedKey, requestedLimitByAssetId]);
+  }, [
+    baseLimitByAssetId,
+    fetchAndMerge,
+    relevantChangedKey,
+    requestedLimitByAssetId,
+  ]);
 
   const inspectByAssetId = useMemo<Record<string, AssetInspectResponse>>(() => {
     if (assetIds.length === 0) {
@@ -232,40 +265,37 @@ export function useAssetPreviews(visualAssets: WebAsset[]) {
     return Object.keys(loading).length > 0 ? loading : EMPTY_LOADING_MAP;
   }, [assetIds, loadingByAssetId]);
 
-  const clearPreviewForAsset = useCallback(
-    (assetId: string) => {
-      setInspectCache((prev) => {
-        if (!(assetId in prev)) {
-          return prev;
-        }
+  const clearPreviewForAsset = useCallback((assetId: string) => {
+    setInspectCache((prev) => {
+      if (!(assetId in prev)) {
+        return prev;
+      }
 
-        const next = { ...prev };
-        delete next[assetId];
-        return next;
-      });
+      const next = { ...prev };
+      delete next[assetId];
+      return next;
+    });
 
-      setLoadingByAssetId((prev) => {
-        if (!(assetId in prev)) {
-          return prev;
-        }
+    setLoadingByAssetId((prev) => {
+      if (!(assetId in prev)) {
+        return prev;
+      }
 
-        const next = { ...prev };
-        delete next[assetId];
-        return next;
-      });
+      const next = { ...prev };
+      delete next[assetId];
+      return next;
+    });
 
-      setFetchedLimitByAssetId((prev) => {
-        if (!(assetId in prev)) {
-          return prev;
-        }
+    setFetchedLimitByAssetId((prev) => {
+      if (!(assetId in prev)) {
+        return prev;
+      }
 
-        const next = { ...prev };
-        delete next[assetId];
-        return next;
-      });
-    },
-    [],
-  );
+      const next = { ...prev };
+      delete next[assetId];
+      return next;
+    });
+  }, []);
 
   const canLoadMoreByAssetId = useMemo<Record<string, boolean>>(() => {
     const next: Record<string, boolean> = {};
@@ -276,21 +306,31 @@ export function useAssetPreviews(visualAssets: WebAsset[]) {
         continue;
       }
 
-      const requestedLimit = requestedLimitByAssetId[assetId] ?? baseLimitByAssetId[assetId] ?? 25;
+      const requestedLimit =
+        requestedLimitByAssetId[assetId] ?? baseLimitByAssetId[assetId] ?? 25;
       if (inspect.rows.length >= requestedLimit) {
         next[assetId] = true;
       }
     }
     return next;
-  }, [assetById, assetIds, baseLimitByAssetId, inspectCache, requestedLimitByAssetId]);
+  }, [
+    assetById,
+    assetIds,
+    baseLimitByAssetId,
+    inspectCache,
+    requestedLimitByAssetId,
+  ]);
 
-  const loadMorePreviewRows = useCallback((assetId: string) => {
-    const baseLimit = baseLimitByAssetId[assetId] ?? 25;
-    setRequestedLimitByAssetId((prev) => ({
-      ...prev,
-      [assetId]: (prev[assetId] ?? baseLimit) + baseLimit,
-    }));
-  }, [baseLimitByAssetId]);
+  const loadMorePreviewRows = useCallback(
+    (assetId: string) => {
+      const baseLimit = baseLimitByAssetId[assetId] ?? 25;
+      setRequestedLimitByAssetId((prev) => ({
+        ...prev,
+        [assetId]: (prev[assetId] ?? baseLimit) + baseLimit,
+      }));
+    },
+    [baseLimitByAssetId]
+  );
 
   return {
     inspectByAssetId,

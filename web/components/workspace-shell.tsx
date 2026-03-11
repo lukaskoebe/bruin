@@ -1,7 +1,14 @@
 "use client";
 
 import { useAtom, useAtomValue } from "jotai";
-import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useForm } from "react-hook-form";
 import {
   NodeTypes,
@@ -31,7 +38,10 @@ import {
   enrichedSelectedAssetAtom,
   pipelineAtom,
 } from "@/lib/atoms";
-import { buildFlowFromPipeline, computeGraphLayoutPositions } from "@/lib/graph";
+import {
+  buildFlowFromPipeline,
+  computeGraphLayoutPositions,
+} from "@/lib/graph";
 import { buildCreateAssetInput } from "@/lib/workspace-shell-helpers";
 import { useAssetActions } from "@/hooks/use-asset-actions";
 import { useAssetCanvasInteractions } from "@/hooks/use-asset-canvas-interactions";
@@ -145,7 +155,7 @@ export function WorkspaceShell() {
         inspectLoadingByAssetId,
         storedNodePositions,
         canLoadMoreByAssetId,
-        loadMorePreviewRows,
+        loadMorePreviewRows
       ),
     [
       canLoadMoreByAssetId,
@@ -191,9 +201,11 @@ export function WorkspaceShell() {
       return;
     }
 
-    const assetIds = enrichedPipeline.assets.map((currentAsset) => currentAsset.id);
+    const assetIds = enrichedPipeline.assets.map(
+      (currentAsset) => currentAsset.id
+    );
     const hasStoredPositionsForPipeline = assetIds.some(
-      (assetId) => storedNodePositions[assetId],
+      (assetId) => storedNodePositions[assetId]
     );
 
     if (hasStoredPositionsForPipeline) {
@@ -203,7 +215,7 @@ export function WorkspaceShell() {
     const initialPositions = computeGraphLayoutPositions(
       enrichedPipeline,
       inspectByAssetId,
-      inspectLoadingByAssetId,
+      inspectLoadingByAssetId
     );
 
     setStoredNodePositions((previous) => ({
@@ -310,7 +322,7 @@ export function WorkspaceShell() {
     const recomputedPositions = computeGraphLayoutPositions(
       enrichedPipeline,
       inspectByAssetId,
-      inspectLoadingByAssetId,
+      inspectLoadingByAssetId
     );
 
     setStoredNodePositions((previous) => ({
@@ -318,7 +330,12 @@ export function WorkspaceShell() {
       ...recomputedPositions,
     }));
     setRecomputeVersion((previous) => previous + 1);
-  }, [enrichedPipeline, inspectByAssetId, inspectLoadingByAssetId, setStoredNodePositions]);
+  }, [
+    enrichedPipeline,
+    inspectByAssetId,
+    inspectLoadingByAssetId,
+    setStoredNodePositions,
+  ]);
 
   const handleConfirmCreatePipeline = useCallback(async () => {
     const createdPath = createPipelinePath.trim();
@@ -350,7 +367,10 @@ export function WorkspaceShell() {
       return;
     }
 
-    navigateSelection(matchingPipeline.id, matchingPipeline.assets[0]?.id ?? null);
+    navigateSelection(
+      matchingPipeline.id,
+      matchingPipeline.assets[0]?.id ?? null
+    );
     setPendingPipelinePathSelection(null);
   }, [navigateSelection, pendingPipelinePathSelection, workspace]);
 
@@ -466,7 +486,9 @@ export function WorkspaceShell() {
                 helpMode={helpMode}
                 actionHighlighted={onboardingHelp.target === "actions"}
                 editorHighlighted={onboardingHelp.target === "editor"}
-                visualizationHighlighted={onboardingHelp.target === "visualization"}
+                visualizationHighlighted={
+                  onboardingHelp.target === "visualization"
+                }
                 highlightStyle={helpPulseStyle}
                 materializeLoading={materializeLoading}
                 inspectLoading={inspectLoading}
@@ -492,9 +514,14 @@ export function WorkspaceShell() {
                 <div className="max-w-md rounded-lg border bg-card p-6 text-center shadow-sm">
                   <h2 className="text-lg font-semibold">No pipelines yet</h2>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    Create your first pipeline to start editing assets and building your workflow.
+                    Create your first pipeline to start editing assets and
+                    building your workflow.
                   </p>
-                  <Button className="mt-4" onClick={handleCreatePipeline} type="button">
+                  <Button
+                    className="mt-4"
+                    onClick={handleCreatePipeline}
+                    type="button"
+                  >
                     <Plus className="mr-2 size-4" />
                     Create pipeline
                   </Button>

@@ -44,7 +44,13 @@ export function useGraphViewportFocus({
     });
 
     return () => window.cancelAnimationFrame(raf);
-  }, [activePipelineId, graphEdges, graphNodes.length, reactFlowInstance, recomputeVersion]);
+  }, [
+    activePipelineId,
+    graphEdges,
+    graphNodes.length,
+    reactFlowInstance,
+    recomputeVersion,
+  ]);
 
   useEffect(() => {
     lastFocusedAssetRef.current = null;
@@ -98,7 +104,10 @@ export function useGraphViewportFocus({
       const nodeCenterY = nodeY + nodeHeight / 2;
       const nextX = container.clientWidth / 2 - nodeCenterX * zoom;
       const nextY = container.clientHeight / 2 - nodeCenterY * zoom;
-      reactFlowInstance.setViewport({ x: nextX, y: nextY, zoom }, { duration: 220 });
+      reactFlowInstance.setViewport(
+        { x: nextX, y: nextY, zoom },
+        { duration: 220 }
+      );
     });
 
     return () => window.cancelAnimationFrame(raf);

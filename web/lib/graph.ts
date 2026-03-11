@@ -30,7 +30,7 @@ export function buildFlowFromPipeline(
   inspectLoadingByAssetID?: Record<string, boolean>,
   positionsByAssetId?: Record<string, { x: number; y: number }>,
   canLoadMoreByAssetId?: Record<string, boolean>,
-  onLoadMorePreviewRows?: (assetId: string) => void,
+  onLoadMorePreviewRows?: (assetId: string) => void
 ): {
   nodes: Node[];
   edges: Edge[];
@@ -39,7 +39,9 @@ export function buildFlowFromPipeline(
     return { nodes: [], edges: [] };
   }
 
-  const byName = new Map(pipeline.assets.map((asset) => [asset.name, asset.id]));
+  const byName = new Map(
+    pipeline.assets.map((asset) => [asset.name, asset.id])
+  );
   const edges: Edge[] = [];
 
   for (const asset of pipeline.assets) {
@@ -107,13 +109,15 @@ export function buildFlowFromPipeline(
 export function computeGraphLayoutPositions(
   pipeline: WebPipeline | null,
   inspectByAssetID?: Record<string, AssetInspectResponse | undefined>,
-  inspectLoadingByAssetID?: Record<string, boolean>,
+  inspectLoadingByAssetID?: Record<string, boolean>
 ): Record<string, { x: number; y: number }> {
   if (!pipeline) {
     return {};
   }
 
-  const byName = new Map(pipeline.assets.map((asset) => [asset.name, asset.id]));
+  const byName = new Map(
+    pipeline.assets.map((asset) => [asset.name, asset.id])
+  );
   const graph = new dagre.graphlib.Graph();
   graph.setDefaultEdgeLabel(() => ({}));
   graph.setGraph({
@@ -131,7 +135,7 @@ export function computeGraphLayoutPositions(
     const size = estimateNodeSize(
       previewMode,
       inspect,
-      inspectLoadingByAssetID?.[asset.id] === true,
+      inspectLoadingByAssetID?.[asset.id] === true
     );
     graph.setNode(asset.id, { width: size.width, height: size.height });
   }
@@ -155,7 +159,9 @@ export function computeGraphLayoutPositions(
     const previewMode = getAssetViewMode(asset.meta);
     const isPreviewLoading = inspectLoadingByAssetID?.[asset.id] === true;
     const size = estimateNodeSize(previewMode, inspect, isPreviewLoading);
-    const layoutNode = graph.node(asset.id) as { x: number; y: number } | undefined;
+    const layoutNode = graph.node(asset.id) as
+      | { x: number; y: number }
+      | undefined;
     const x = layoutNode?.x ?? 0;
     const y = layoutNode?.y ?? 0;
 
@@ -182,7 +188,7 @@ function defaultNodePosition(index: number) {
 function estimateNodeSize(
   mode: AssetViewMode | null,
   inspect: AssetInspectResponse | undefined,
-  isLoading: boolean,
+  isLoading: boolean
 ) {
   if (!mode) {
     return { width: 260, height: 126 };
@@ -223,7 +229,7 @@ function estimateNodeSize(
 
 function estimateTableWidth(
   columns: string[],
-  rows: Record<string, unknown>[],
+  rows: Record<string, unknown>[]
 ): number {
   if (columns.length === 0) {
     return 300;
@@ -269,7 +275,11 @@ function stringifyCellValue(value: unknown): string {
     return "";
   }
 
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
     return String(value);
   }
 

@@ -83,7 +83,12 @@ export function WorkspaceCanvasPane({
         <Panel defaultSize={hasResultData ? 72 : 100} minSize={45}>
           <div className="relative h-full" ref={canvasContainerRef}>
             <div className="absolute right-3 top-3 z-10">
-              <Button onClick={onRecomputeGraph} size="sm" type="button" variant="outline">
+              <Button
+                onClick={onRecomputeGraph}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
                 <RefreshCcw className="mr-2 size-3.5" />
                 Recompute graph
               </Button>
