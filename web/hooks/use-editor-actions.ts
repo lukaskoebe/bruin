@@ -5,7 +5,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fillAssetColumnsFromDB } from "@/lib/api";
 import { VISUALIZATION_META_KEYS } from "@/components/visualization-settings-editor";
-import { editorDraftAtom, enrichedSelectedAssetAtom, pipelineAtom } from "@/lib/atoms";
+import {
+  editorDraftAtom,
+  enrichedSelectedAssetAtom,
+  pipelineAtom,
+} from "@/lib/atoms";
 
 type UseEditorActionsInput = {
   editorValue: string;
@@ -49,7 +53,9 @@ export function useEditorActions({
   const pipelineId = pipeline?.id ?? null;
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
-  const fillColumnsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fillColumnsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
   const setEditorDraft = useSetAtom(editorDraftAtom);
 
   const handleEditorChange = useCallback(

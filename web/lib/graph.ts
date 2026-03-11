@@ -16,6 +16,7 @@ export type AssetNodeData = {
   previewLoading?: boolean;
   canLoadMorePreviewRows?: boolean;
   onLoadMorePreviewRows?: () => void;
+  onCreateDownstreamAsset?: () => void;
   preview?: {
     mode: "table" | "chart" | "markdown";
     columns: string[];

@@ -1,5 +1,6 @@
 "use client";
 
+import { Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Handle, NodeProps, Position } from "reactflow";
 
@@ -8,6 +9,7 @@ import {
   AssetNodePreview,
 } from "@/components/asset-node-preview";
 import { AssetTypeIcon } from "@/components/asset-type-icon";
+import { Button } from "@/components/ui/button";
 import { AssetNodeData } from "@/lib/graph";
 import {
   buildLineChartSpec,
@@ -39,10 +41,12 @@ export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
     [data.meta, previewRows]
   );
   const measurementRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const [measuredSize, setMeasuredSize] = useState<{
     width: number;
     height: number;
   } | null>(null);
+  const [showAddButton, setShowAddButton] = useState(false);
   const { prefix, leaf } = useMemo(
     () => splitAssetName(data.name),
     [data.name]
@@ -81,11 +85,23 @@ export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
     <>
       <Handle type="target" position={Position.Top} />
       <div
+        ref={containerRef}
         className={`relative min-w-56 rounded-lg border-2 bg-card p-3 shadow-sm transition-colors ${
           selected
             ? "border-primary ring-2 ring-primary/30"
             : "border-border/90"
         }`}
+        onMouseLeave={() => setShowAddButton(false)}
+        onMouseMove={(event) => {
+          const element = containerRef.current;
+          if (!element || !data.onCreateDownstreamAsset) {
+            setShowAddButton(false);
+            return;
+          }
+
+          const rect = element.getBoundingClientRect();
+          setShowAddButton(event.clientY >= rect.bottom - 36);
+        }}
         style={
           previewMode === "chart"
             ? {
@@ -165,6 +181,24 @@ export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
           previewMode={previewMode}
           previewRows={previewRows}
         />
+
+        {data.onCreateDownstreamAsset && showAddButton && (
+          <div className="absolute -bottom-4 left-1/2 z-10 -translate-x-1/2 nodrag nopan">
+            <Button
+              className="h-8 rounded-full px-3 shadow-md"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                data.onCreateDownstreamAsset?.();
+              }}
+              size="sm"
+              type="button"
+            >
+              <Plus className="mr-1 size-3.5" />
+              Add
+            </Button>
+          </div>
+        )}
       </div>
       <Handle type="source" position={Position.Bottom} />
     </>

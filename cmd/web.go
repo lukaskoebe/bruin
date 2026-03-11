@@ -677,6 +677,7 @@ type createAssetRequest struct {
 	Type    string `json:"type"`
 	Path    string `json:"path"`
 	Content string `json:"content"`
+	SourceAssetID string `json:"source_asset_id"`
 }
 
 func (s *webServer) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
@@ -693,7 +694,7 @@ func (s *webServer) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" && req.Path == "" {
+	if req.Name == "" && req.Path == "" && req.SourceAssetID == "" {
 		webapi.WriteBadRequest(w, "missing_name_or_path", "name or path is required")
 		return
 	}
@@ -704,9 +705,59 @@ func (s *webServer) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var sourceAsset *pipeline.Asset
+	var sourcePipeline *pipeline.Pipeline
+	var sourceConnectionName string
+	var sourceRelAssetPath string
+
+	if strings.TrimSpace(req.SourceAssetID) != "" {
+		resolvedRelPath, resolvedPipeline, resolvedAsset, resolveErr := s.resolveAssetByID(r.Context(), req.SourceAssetID)
+		if resolveErr != nil {
+			webapi.WriteBadRequest(w, "invalid_source_asset_id", resolveErr.Error())
+			return
+		}
+
+		if !pipelinePathsReferToSameRoot(resolvedPipeline.DefinitionFile.Path, pipelinePath) {
+			webapi.WriteBadRequest(w, "invalid_source_asset", "source asset must belong to the selected pipeline")
+			return
+		}
+
+		sourceAsset = resolvedAsset
+		sourcePipeline = resolvedPipeline
+		sourceRelAssetPath = resolvedRelPath
+		if conn, connErr := sourcePipeline.GetConnectionNameForAsset(sourceAsset); connErr == nil {
+			sourceConnectionName = conn
+		}
+	}
+
+	assetName := strings.TrimSpace(req.Name)
+	if assetName == "" && sourceAsset != nil {
+		assetName = deriveDownstreamAssetName(sourceAsset.Name, sourcePipeline)
+	}
+
 	relAssetPath := req.Path
 	if relAssetPath == "" {
-		relAssetPath = filepath.ToSlash(filepath.Join("assets", slug(req.Name)+extensionForAssetType(req.Type)))
+		if sourceAsset != nil {
+			sourceAbsAssetPath, pathErr := safeJoin(s.workspaceRoot, sourceRelAssetPath)
+			if pathErr != nil {
+				webapi.WriteBadRequest(w, "invalid_source_asset_path", pathErr.Error())
+				return
+			}
+
+			sourcePipelineRelativeDir, relErr := filepath.Rel(pipelinePath, filepath.Dir(sourceAbsAssetPath))
+			if relErr != nil {
+				sourcePipelineRelativeDir = "assets"
+			}
+
+			assetTypeForPath := strings.TrimSpace(req.Type)
+			if assetTypeForPath == "" {
+				assetTypeForPath = deriveSQLAssetTypeForSource(sourceAsset, sourcePipeline, sourceConnectionName)
+			}
+
+			relAssetPath = filepath.ToSlash(filepath.Join(sourcePipelineRelativeDir, slug(assetName)+extensionForAssetType(assetTypeForPath)))
+		} else {
+			relAssetPath = filepath.ToSlash(filepath.Join("assets", slug(assetName)+extensionForAssetType(req.Type)))
+		}
 	}
 
 	absAssetPath, err := safeJoin(pipelinePath, relAssetPath)
@@ -722,17 +773,24 @@ func (s *webServer) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
 
 	assetType := strings.TrimSpace(req.Type)
 	if assetType == "" {
-		assetType = inferAssetTypeFromPath(relAssetPath)
+		if sourceAsset != nil {
+			assetType = deriveSQLAssetTypeForSource(sourceAsset, sourcePipeline, sourceConnectionName)
+		} else {
+			assetType = inferAssetTypeFromPath(relAssetPath)
+		}
 	}
 
 	content := req.Content
 	if content == "" {
-		assetName := strings.TrimSpace(req.Name)
 		if assetName == "" {
 			assetName = strings.TrimSuffix(filepath.Base(relAssetPath), filepath.Ext(relAssetPath))
 		}
 
-		content = defaultAssetContent(assetName, assetType, relAssetPath)
+		if sourceAsset != nil {
+			content = defaultDerivedSQLAssetContent(assetName, assetType, relAssetPath, sourceAsset.Name, sourceConnectionName)
+		} else {
+			content = defaultAssetContent(assetName, assetType, relAssetPath)
+		}
 	}
 
 	if err := os.WriteFile(absAssetPath, []byte(content), 0o644); err != nil {
@@ -1967,6 +2025,23 @@ func safeJoin(root, relPath string) (string, error) {
 	return filepath.Join(root, clean), nil
 }
 
+func pipelinePathsReferToSameRoot(left, right string) bool {
+	if strings.TrimSpace(left) == "" || strings.TrimSpace(right) == "" {
+		return false
+	}
+
+	normalize := func(path string) string {
+		cleaned := filepath.Clean(path)
+		base := strings.ToLower(filepath.Base(cleaned))
+		if base == "pipeline.yml" || base == "pipeline.yaml" || base == ".pipeline.yml" || base == ".pipeline.yaml" {
+			return filepath.Dir(cleaned)
+		}
+		return cleaned
+	}
+
+	return normalize(left) == normalize(right)
+}
+
 func slug(input string) string {
 	trimmed := strings.TrimSpace(strings.ToLower(input))
 	if trimmed == "" {
@@ -2018,6 +2093,171 @@ func inferAssetTypeFromPath(path string) string {
 	}
 }
 
+func deriveDownstreamAssetName(sourceAssetName string, parsedPipeline *pipeline.Pipeline) string {
+	trimmed := strings.TrimSpace(sourceAssetName)
+	if trimmed == "" {
+		trimmed = "asset"
+	}
+
+	prefix := ""
+	leaf := trimmed
+	if lastDot := strings.LastIndex(trimmed, "."); lastDot >= 0 {
+		prefix = trimmed[:lastDot]
+		leaf = trimmed[lastDot+1:]
+	}
+
+	baseLeaf := leaf + "_child"
+	existing := make(map[string]struct{})
+	if parsedPipeline != nil {
+		for _, asset := range parsedPipeline.Assets {
+			existing[strings.ToLower(strings.TrimSpace(asset.Name))] = struct{}{}
+		}
+	}
+
+	for index := 1; ; index++ {
+		candidateLeaf := fmt.Sprintf("%s_%d", baseLeaf, index)
+		candidate := candidateLeaf
+		if prefix != "" {
+			candidate = prefix + "." + candidateLeaf
+		}
+
+		if _, ok := existing[strings.ToLower(candidate)]; !ok {
+			return candidate
+		}
+	}
+}
+
+func deriveSQLAssetTypeForSource(sourceAsset *pipeline.Asset, parsedPipeline *pipeline.Pipeline, sourceConnectionName string) string {
+	if sourceAsset == nil {
+		return string(pipeline.AssetTypeDuckDBQuery)
+	}
+
+	lowerType := strings.ToLower(string(sourceAsset.Type))
+	if strings.Contains(lowerType, "sql") {
+		return string(sourceAsset.Type)
+	}
+
+	if lowerType == "ingestr" {
+		if destination := strings.TrimSpace(strings.ToLower(sourceAsset.Parameters["destination"])); destination != "" {
+			if mapped, ok := pipeline.IngestrTypeConnectionMapping[destination]; ok {
+				return string(mapped)
+			}
+		}
+	}
+
+	if connectionType, ok := pipeline.AssetTypeConnectionMapping[sourceAsset.Type]; ok {
+		if assetType := preferredSQLAssetTypeForConnectionType(connectionType); assetType != "" {
+			return assetType
+		}
+	}
+
+	if parsedPipeline != nil && sourceConnectionName != "" {
+		if connectionType := resolveConnectionTypeForName(parsedPipeline, sourceConnectionName); connectionType != "" {
+			if assetType := preferredSQLAssetTypeForConnectionType(connectionType); assetType != "" {
+				return assetType
+			}
+		}
+	}
+
+	if parsedPipeline != nil {
+		return string(parsedPipeline.GetMajorityAssetTypesFromSQLAssets(pipeline.AssetTypeDuckDBQuery))
+	}
+
+	return string(pipeline.AssetTypeDuckDBQuery)
+}
+
+func preferredSQLAssetTypeForConnectionType(connectionType string) string {
+	switch strings.ToLower(strings.TrimSpace(connectionType)) {
+	case "google_cloud_platform":
+		return string(pipeline.AssetTypeBigqueryQuery)
+	case "snowflake":
+		return string(pipeline.AssetTypeSnowflakeQuery)
+	case "postgres":
+		return string(pipeline.AssetTypePostgresQuery)
+	case "redshift":
+		return string(pipeline.AssetTypeRedshiftQuery)
+	case "mssql":
+		return string(pipeline.AssetTypeMsSQLQuery)
+	case "fabric":
+		return string(pipeline.AssetTypeFabricQuery)
+	case "databricks":
+		return string(pipeline.AssetTypeDatabricksQuery)
+	case "synapse":
+		return string(pipeline.AssetTypeSynapseQuery)
+	case "athena":
+		return string(pipeline.AssetTypeAthenaQuery)
+	case "duckdb":
+		return string(pipeline.AssetTypeDuckDBQuery)
+	case "motherduck":
+		return string(pipeline.AssetTypeMotherduckQuery)
+	case "clickhouse":
+		return string(pipeline.AssetTypeClickHouse)
+	case "trino":
+		return string(pipeline.AssetTypeTrinoQuery)
+	case "oracle":
+		return string(pipeline.AssetTypeOracleQuery)
+	case "mysql":
+		return string(pipeline.AssetTypeMySQLQuery)
+	case "vertica":
+		return string(pipeline.AssetTypeVerticaQuery)
+	default:
+		return ""
+	}
+}
+
+
+func resolveConnectionTypeForName(parsedPipeline *pipeline.Pipeline, connectionName string) string {
+	if parsedPipeline == nil || strings.TrimSpace(connectionName) == "" {
+		return ""
+	}
+
+	normalizedConnectionName := strings.TrimSpace(connectionName)
+
+	for connectionType, configuredName := range parsedPipeline.DefaultConnections {
+		if strings.EqualFold(strings.TrimSpace(configuredName), normalizedConnectionName) {
+			return connectionType
+		}
+	}
+
+	for _, connectionType := range supportedSQLConnectionTypes() {
+		if strings.EqualFold(defaultConnectionNameForType(connectionType), normalizedConnectionName) {
+			return connectionType
+		}
+	}
+
+	return ""
+}
+
+func supportedSQLConnectionTypes() []string {
+	return []string{
+		"google_cloud_platform",
+		"snowflake",
+		"postgres",
+		"redshift",
+		"mssql",
+		"fabric",
+		"databricks",
+		"synapse",
+		"athena",
+		"duckdb",
+		"motherduck",
+		"clickhouse",
+		"trino",
+		"oracle",
+		"mysql",
+		"vertica",
+	}
+}
+
+func defaultConnectionNameForType(connectionType string) string {
+	switch strings.ToLower(strings.TrimSpace(connectionType)) {
+	case "google_cloud_platform":
+		return "gcp-default"
+	default:
+		return strings.ToLower(strings.TrimSpace(connectionType)) + "-default"
+	}
+}
+
 func defaultAssetContent(assetName, assetType, assetPath string) string {
 	if strings.HasSuffix(strings.ToLower(assetPath), ".py") {
 		return fmt.Sprintf(
@@ -2051,6 +2291,26 @@ def materialize():
 	}
 
 	return fmt.Sprintf("/* @bruin\n\nname: %s\ntype: %s\n\n@bruin */\n", assetName, assetType)
+}
+
+func defaultDerivedSQLAssetContent(assetName, assetType, assetPath, sourceAssetName, connectionName string) string {
+	if !strings.HasSuffix(strings.ToLower(assetPath), ".sql") {
+		return defaultAssetContent(assetName, assetType, assetPath)
+	}
+
+	connectionSection := ""
+	if strings.TrimSpace(connectionName) != "" {
+		connectionSection = fmt.Sprintf("connection: %s\n", connectionName)
+	}
+
+	return fmt.Sprintf(
+		"/* @bruin\n\nname: %s\ntype: %s\n%sdepends:\n  - %s\nmaterialization:\n  type: view\n\n@bruin */\n\nselect *\nfrom %s\n",
+		assetName,
+		assetType,
+		connectionSection,
+		sourceAssetName,
+		quoteQualifiedIdentifier(sourceAssetName),
+	)
 }
 
 func ensurePythonRequirementsFile(absAssetPath, assetType, relAssetPath string) error {

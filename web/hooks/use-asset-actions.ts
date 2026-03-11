@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { createAsset, createPipeline, deleteAsset, updateAsset } from "@/lib/api";
+import {
+  createAsset,
+  createPipeline,
+  deleteAsset,
+  updateAsset,
+} from "@/lib/api";
 
 export type UIMessage = {
   type: "success" | "error";
@@ -14,6 +19,7 @@ type CreateAssetInput = {
   type?: string;
   path?: string;
   content?: string;
+  source_asset_id?: string;
 };
 
 type UpdateAssetInput = {
@@ -24,8 +30,10 @@ type UpdateAssetInput = {
 };
 
 export function useAssetActions(defaultPipelinePath = "my-pipeline") {
-  const [createPipelineDialogOpen, setCreatePipelineDialogOpen] = useState(false);
-  const [createPipelinePath, setCreatePipelinePath] = useState(defaultPipelinePath);
+  const [createPipelineDialogOpen, setCreatePipelineDialogOpen] =
+    useState(false);
+  const [createPipelinePath, setCreatePipelinePath] =
+    useState(defaultPipelinePath);
   const [createPipelineLoading, setCreatePipelineLoading] = useState(false);
   const [uiMessage, setUIMessage] = useState<UIMessage | null>(null);
   const uiMessageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

@@ -36,14 +36,22 @@ export async function createPipeline(input: {
 
 export async function createAsset(
   pipelineId: string,
-  input: { name?: string; type?: string; path?: string; content?: string },
+  input: {
+    name?: string;
+    type?: string;
+    path?: string;
+    content?: string;
+    source_asset_id?: string;
+  },
 ) {
   const res = await fetch(`/api/pipelines/${pipelineId}/assets`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
-  return readJSON<{ status: string; asset_id?: string; asset_path?: string }>(res);
+  return readJSON<{ status: string; asset_id?: string; asset_path?: string }>(
+    res
+  );
 }
 
 export async function updateAsset(
@@ -54,7 +62,7 @@ export async function updateAsset(
     content?: string;
     materialization_type?: string;
     meta?: Record<string, string>;
-  },
+  }
 ) {
   const res = await fetch(`/api/pipelines/${pipelineId}/assets/${assetId}`, {
     method: "PUT",
@@ -73,7 +81,7 @@ export async function deleteAsset(pipelineId: string, assetId: string) {
 
 export async function inspectAsset(
   assetId: string,
-  options?: { limit?: number; environment?: string },
+  options?: { limit?: number; environment?: string }
 ) {
   const params = new URLSearchParams();
   if (options?.limit) {
@@ -103,7 +111,9 @@ export async function inspectAsset(
   throw new Error(text || `Request failed: ${res.status}`);
 }
 
-function normalizeInspectResponse(response: AssetInspectResponse): AssetInspectResponse {
+function normalizeInspectResponse(
+  response: AssetInspectResponse
+): AssetInspectResponse {
   if (response.status !== "error") {
     return response;
   }
@@ -128,7 +138,10 @@ function extractErrorFromRawInspectOutput(rawOutput: string): string | null {
   }
 
   try {
-    const parsed = JSON.parse(trimmed) as { error?: unknown; message?: unknown };
+    const parsed = JSON.parse(trimmed) as {
+      error?: unknown;
+      message?: unknown;
+    };
     if (typeof parsed.error === "string" && parsed.error.trim()) {
       return parsed.error.trim();
     }
@@ -178,7 +191,10 @@ export async function inferAssetColumns(assetId: string) {
   return readJSON<InferColumnsResponse>(res);
 }
 
-export async function updateAssetColumns(assetId: string, columns: WebColumn[]) {
+export async function updateAssetColumns(
+  assetId: string,
+  columns: WebColumn[]
+) {
   const res = await fetch(`/api/assets/${assetId}/columns`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

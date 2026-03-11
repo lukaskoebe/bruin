@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bruin-data/bruin/pkg/pipeline"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -127,6 +128,18 @@ func TestPathContains(t *testing.T) {
 	}
 }
 
+func TestPipelinePathsReferToSameRoot(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join(string(filepath.Separator), "tmp", "pipeline")
+
+	assert.True(t, pipelinePathsReferToSameRoot(filepath.Join(root, "pipeline.yml"), root))
+	assert.True(t, pipelinePathsReferToSameRoot(filepath.Join(root, "pipeline.yaml"), root))
+	assert.True(t, pipelinePathsReferToSameRoot(root, filepath.Join(root, "pipeline.yml")))
+	assert.False(t, pipelinePathsReferToSameRoot(filepath.Join(root, "pipeline.yml"), filepath.Join(root, "other")))
+	assert.False(t, pipelinePathsReferToSameRoot("", root))
+}
+
 func TestReplaceAssetNameReferences(t *testing.T) {
 	t.Parallel()
 
@@ -165,4 +178,63 @@ func TestReplaceAssetNameReferences(t *testing.T) {
 			assert.Equal(t, tt.expected, replaceAssetNameReferences(tt.input, tt.oldName, tt.newName))
 		})
 	}
+}
+
+func TestDeriveDownstreamAssetName(t *testing.T) {
+	t.Parallel()
+
+	pl := &pipeline.Pipeline{
+		Assets: []*pipeline.Asset{
+			{Name: "marts.orders"},
+			{Name: "marts.orders_child_1"},
+		},
+	}
+
+	assert.Equal(t, "marts.orders_child_2", deriveDownstreamAssetName("marts.orders", pl))
+}
+
+func TestDefaultDerivedSQLAssetContent(t *testing.T) {
+	t.Parallel()
+
+	content := defaultDerivedSQLAssetContent(
+		"marts.orders_child_1",
+		"duckdb.sql",
+		"assets/orders_child_1.sql",
+		"marts.orders",
+		"duckdb-default",
+	)
+
+	require.Contains(t, content, "name: marts.orders_child_1")
+	require.Contains(t, content, "type: duckdb.sql")
+	require.Contains(t, content, "connection: duckdb-default")
+	require.Contains(t, content, "depends:\n  - marts.orders")
+	require.Contains(t, content, "select *")
+	require.Contains(t, content, `from "marts"."orders"`)
+}
+
+func TestDeriveSQLAssetTypeForSource_UsesIngestrTypeConnectionMapping(t *testing.T) {
+	t.Parallel()
+
+	asset := &pipeline.Asset{
+		Type: pipeline.AssetTypeIngestr,
+		Parameters: pipeline.EmptyStringMap{
+			"destination": "vertica",
+		},
+	}
+
+	assert.Equal(t, string(pipeline.AssetTypeVerticaQuery), deriveSQLAssetTypeForSource(asset, nil, ""))
+}
+
+func TestDeriveSQLAssetTypeForSource_UsesCanonicalConnectionMappings(t *testing.T) {
+	t.Parallel()
+
+	pl := &pipeline.Pipeline{
+		DefaultConnections: pipeline.EmptyStringMap{
+			"vertica": "warehouse-vertica",
+		},
+	}
+	asset := &pipeline.Asset{Type: pipeline.AssetTypePython}
+
+	assert.Equal(t, string(pipeline.AssetTypeVerticaQuery), deriveSQLAssetTypeForSource(asset, pl, "warehouse-vertica"))
+	assert.Equal(t, string(pipeline.AssetTypeVerticaQuery), deriveSQLAssetTypeForSource(asset, pl, "vertica-default"))
 }

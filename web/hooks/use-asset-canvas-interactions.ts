@@ -35,7 +35,13 @@ type UseAssetCanvasInteractionsInput = {
   setEdges: Dispatch<SetStateAction<Edge[]>>;
   runCreateAsset: (
     pipelineId: string,
-    input: { name?: string; type?: string; path?: string; content?: string }
+    input: {
+      name?: string;
+      type?: string;
+      path?: string;
+      content?: string;
+      source_asset_id?: string;
+    }
   ) => Promise<{ asset_id?: string } | null>;
   navigateSelection: (pipelineId: string, assetId: string | null) => void;
   buildCreateAssetInput: (
@@ -45,6 +51,13 @@ type UseAssetCanvasInteractionsInput = {
 };
 
 const NEW_ASSET_NODE_ID = "__new_asset__";
+const DOWNSTREAM_NODE_VERTICAL_GAP = 40;
+
+type NodeWithMeasuredHeight = Node & {
+  measured?: {
+    height?: number;
+  };
+};
 
 export function useAssetCanvasInteractions({
   reactFlowInstance,
@@ -161,9 +174,63 @@ export function useAssetCanvasInteractions({
     ]
   );
 
+  const handleCreateDownstreamAsset = useCallback(
+    (sourceAssetId: string) => {
+      if (!pipelineId) {
+        return;
+      }
+
+      const sourceNode = graphNodes.find((node) => node.id === sourceAssetId);
+      const renderedSourceNode = reactFlowInstance?.getNode(sourceAssetId);
+      const sourcePosition = storedNodePositions[sourceAssetId] ??
+        sourceNode?.position ?? { x: 32, y: 32 };
+        const renderedSourceNodeWithMeasurement =
+          renderedSourceNode as NodeWithMeasuredHeight | undefined;
+        const sourceNodeWithMeasurement =
+          sourceNode as NodeWithMeasuredHeight | undefined;
+        const sourceHeight =
+          renderedSourceNodeWithMeasurement?.measured?.height ??
+          renderedSourceNode?.height ??
+          sourceNodeWithMeasurement?.measured?.height ??
+          sourceNode?.height ??
+          180;
+
+      void runCreateAsset(pipelineId, {
+        source_asset_id: sourceAssetId,
+      }).then((response) => {
+        if (response?.asset_id) {
+          setStoredNodePositions((previous) => ({
+            ...previous,
+            [response.asset_id as string]: {
+              x: sourcePosition.x,
+              y: sourcePosition.y + sourceHeight + DOWNSTREAM_NODE_VERTICAL_GAP,
+            },
+          }));
+          navigateSelection(pipelineId, response.asset_id);
+        }
+      });
+    },
+    [
+      graphNodes,
+      navigateSelection,
+      pipelineId,
+      reactFlowInstance,
+      runCreateAsset,
+      setStoredNodePositions,
+      storedNodePositions,
+    ]
+  );
+
   useEffect(() => {
     const mappedNodes = graphNodes.map((node) => ({
       ...node,
+      data:
+        node.type === "assetNode"
+          ? {
+              ...(node.data as Record<string, unknown>),
+              onCreateDownstreamAsset: () => handleCreateDownstreamAsset(node.id),
+            }
+          : node.data,
       position: storedNodePositions[node.id] ?? node.position,
       selected: selectedAssetId ? node.id === selectedAssetId : false,
     }));
@@ -201,6 +268,7 @@ export function useAssetCanvasInteractions({
     defaultAssetNamesByKind,
     graphEdges,
     graphNodes,
+    handleCreateDownstreamAsset,
     newAssetDraft,
     selectedAssetId,
     setEdges,
