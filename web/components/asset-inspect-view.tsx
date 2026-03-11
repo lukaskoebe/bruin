@@ -43,17 +43,25 @@ export function AssetInspectView({ columns, rows, meta }: Props) {
           <ReactMarkdown
             components={{
               h1: ({ children }) => (
-                <h1 className="mb-3 mt-1 text-2xl font-bold tracking-tight">{children}</h1>
+                <h1 className="mb-3 mt-1 text-2xl font-bold tracking-tight">
+                  {children}
+                </h1>
               ),
               h2: ({ children }) => (
-                <h2 className="mb-2 mt-4 text-xl font-semibold tracking-tight">{children}</h2>
+                <h2 className="mb-2 mt-4 text-xl font-semibold tracking-tight">
+                  {children}
+                </h2>
               ),
               h3: ({ children }) => (
                 <h3 className="mb-2 mt-3 text-lg font-semibold">{children}</h3>
               ),
               p: ({ children }) => <p className="mb-2">{children}</p>,
-              ul: ({ children }) => <ul className="mb-2 list-disc pl-6">{children}</ul>,
-              ol: ({ children }) => <ol className="mb-2 list-decimal pl-6">{children}</ol>,
+              ul: ({ children }) => (
+                <ul className="mb-2 list-disc pl-6">{children}</ul>
+              ),
+              ol: ({ children }) => (
+                <ol className="mb-2 list-decimal pl-6">{children}</ol>
+              ),
               li: ({ children }) => <li className="mb-1">{children}</li>,
               code: ({ children }) => (
                 <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.9em]">
@@ -82,7 +90,10 @@ export function AssetInspectView({ columns, rows, meta }: Props) {
 
     return (
       <div className="h-full rounded border bg-background p-2">
-        <ChartContainer className="h-full min-h-55 w-full" config={chart.config}>
+        <ChartContainer
+          className="h-full min-h-55 w-full"
+          config={chart.config}
+        >
           {chartType === "bar" ? (
             <BarChart accessibilityLayer data={chart.data}>
               <CartesianGrid vertical={false} />
@@ -93,7 +104,10 @@ export function AssetInspectView({ columns, rows, meta }: Props) {
                 tickMargin={8}
               />
               <YAxis axisLine={false} tickLine={false} tickMargin={8} />
-              <ChartTooltip content={<ChartTooltipContent hideLabel />} cursor={false} />
+              <ChartTooltip
+                content={<ChartTooltipContent hideLabel />}
+                cursor={false}
+              />
               <ChartLegend content={<ChartLegendContent />} />
               {chart.series.map((series) => (
                 <Bar

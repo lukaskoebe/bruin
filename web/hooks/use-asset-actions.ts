@@ -17,6 +17,7 @@ type CreateAssetInput = {
 };
 
 type UpdateAssetInput = {
+  name?: string;
   content?: string;
   materialization_type?: string;
   meta?: Record<string, string>;

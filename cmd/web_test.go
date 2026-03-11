@@ -126,3 +126,43 @@ func TestPathContains(t *testing.T) {
 			"pathContains(%q, %q)", tt.eventPath, tt.assetPath)
 	}
 }
+
+func TestReplaceAssetNameReferences(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		oldName  string
+		newName  string
+		expected string
+	}{
+		{
+			name:     "replaces fully qualified table reference",
+			input:    "select * from marts.old_asset join marts.other on true",
+			oldName:  "marts.old_asset",
+			newName:  "marts.new_asset",
+			expected: "select * from marts.new_asset join marts.other on true",
+		},
+		{
+			name:     "does not replace partial identifier matches",
+			input:    "select * from marts.old_asset_backup join marts.old_asset on true",
+			oldName:  "marts.old_asset",
+			newName:  "marts.new_asset",
+			expected: "select * from marts.old_asset_backup join marts.new_asset on true",
+		},
+		{
+			name:     "replaces case insensitive matches",
+			input:    "select * from MARTS.OLD_ASSET",
+			oldName:  "marts.old_asset",
+			newName:  "marts.new_asset",
+			expected: "select * from marts.new_asset",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, replaceAssetNameReferences(tt.input, tt.oldName, tt.newName))
+		})
+	}
+}

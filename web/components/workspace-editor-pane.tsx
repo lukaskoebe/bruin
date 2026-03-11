@@ -26,6 +26,7 @@ import { buildSchemaForAsset } from "@/lib/sql-schema";
 import { WebAsset, WorkspaceState } from "@/lib/types";
 
 export type AssetConfigForm = {
+  name: string;
   type: string;
   materialization: string;
   custom_checks: string;
@@ -57,6 +58,7 @@ type WorkspaceEditorPaneProps = {
   onMaterializeSelectedAsset: () => void;
   onInspectSelectedAsset: () => void;
   onOpenDeleteDialog: () => void;
+  onAssetNameChange: (assetName: string) => void;
   onMaterializationTypeChange: (materializationType: string) => void;
   onSaveVisualizationSettings: (
     visualizationMeta: Record<string, string>
@@ -89,6 +91,7 @@ export function WorkspaceEditorPane({
   onMaterializeSelectedAsset,
   onInspectSelectedAsset,
   onOpenDeleteDialog,
+  onAssetNameChange,
   onMaterializationTypeChange,
   onSaveVisualizationSettings,
   onGoToAsset,
@@ -230,6 +233,22 @@ export function WorkspaceEditorPane({
                 </TabsList>
 
                 <TabsContent className="mt-3 space-y-3" value="configuration">
+                  <div className="grid gap-1">
+                    <Label>Name</Label>
+                    <Controller
+                      control={form.control}
+                      name="name"
+                      render={({ field }) => (
+                        <Input
+                          {...field}
+                          onBlur={(event) => {
+                            field.onBlur();
+                            onAssetNameChange(event.target.value);
+                          }}
+                        />
+                      )}
+                    />
+                  </div>
                   <div className="grid gap-1">
                     <Label>Type</Label>
                     <Input {...form.register("type")} />

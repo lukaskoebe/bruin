@@ -14,6 +14,7 @@ type UseEditorActionsInput = {
     pipelineId: string,
     assetId: string,
     input: {
+      name?: string;
       content?: string;
       materialization_type?: string;
       meta?: Record<string, string>;
@@ -186,6 +187,25 @@ export function useEditorActions({
     [asset, editorValue, pipelineId, runUpdateAsset]
   );
 
+  const handleAssetNameChange = useCallback(
+    (assetName: string) => {
+      if (!asset || !pipelineId) {
+        return;
+      }
+
+      const trimmedName = assetName.trim();
+      if (!trimmedName || trimmedName === asset.name) {
+        return;
+      }
+
+      void runUpdateAsset(pipelineId, asset.id, {
+        name: trimmedName,
+        content: editorValue,
+      });
+    },
+    [asset, editorValue, pipelineId, runUpdateAsset]
+  );
+
   return {
     deleteDialogOpen,
     deleteLoading,
@@ -195,6 +215,7 @@ export function useEditorActions({
     handleConfirmDeleteAsset,
     handleMaterializeSelectedAsset,
     handleInspectSelectedAsset,
+    handleAssetNameChange,
     handleMaterializationTypeChange,
   };
 }

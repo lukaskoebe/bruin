@@ -50,6 +50,7 @@ export async function updateAsset(
   pipelineId: string,
   assetId: string,
   input: {
+    name?: string;
     content?: string;
     materialization_type?: string;
     meta?: Record<string, string>;

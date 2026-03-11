@@ -178,6 +178,7 @@ export function WorkspaceShell() {
 
   const form = useForm<AssetConfigForm>({
     defaultValues: {
+      name: "",
       type: "",
       materialization: "",
       custom_checks: "",
@@ -232,12 +233,13 @@ export function WorkspaceShell() {
 
   useEffect(() => {
     form.reset({
+      name: asset?.name ?? "",
       type: asset?.type ?? "",
       materialization: asset?.materialization_type ?? "",
       custom_checks: "",
       columns: "",
     });
-  }, [asset?.materialization_type, asset?.type, form]);
+  }, [asset?.materialization_type, asset?.name, asset?.type, form]);
 
   const previousSelectedAssetRef = useRef<string | null>(null);
 
@@ -298,6 +300,7 @@ export function WorkspaceShell() {
     handleConfirmDeleteAsset,
     handleMaterializeSelectedAsset,
     handleInspectSelectedAsset,
+    handleAssetNameChange,
     handleMaterializationTypeChange,
   } = useEditorActions({
     editorValue,
@@ -503,6 +506,7 @@ export function WorkspaceShell() {
                 onMaterializeSelectedAsset={handleMaterializeSelectedAsset}
                 onInspectSelectedAsset={handleInspectSelectedAsset}
                 onOpenDeleteDialog={() => setDeleteDialogOpen(true)}
+                onAssetNameChange={handleAssetNameChange}
                 onMaterializationTypeChange={handleMaterializationTypeChange}
                 onSaveVisualizationSettings={handleSaveVisualizationSettings}
                 onGoToAsset={navigateSelection}

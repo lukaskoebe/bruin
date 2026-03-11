@@ -23,17 +23,20 @@ export function usePipelineMaterializationState(): {
   const refreshPipelineMaterialization = useCallback(
     async (pipelineId: string) => {
       const response = await getPipelineMaterialization(pipelineId);
-      const mapped = response.assets.reduce<MaterializationByAssetId>((acc, item) => {
-        acc[item.asset_id] = {
-          is_materialized: item.is_materialized,
-          freshness_status: item.freshness_status,
-          materialized_as: item.materialized_as,
-          row_count: item.row_count,
-          connection: item.connection,
-          materialization_type: item.materialization_type,
-        };
-        return acc;
-      }, {});
+      const mapped = response.assets.reduce<MaterializationByAssetId>(
+        (acc, item) => {
+          acc[item.asset_id] = {
+            is_materialized: item.is_materialized,
+            freshness_status: item.freshness_status,
+            materialized_as: item.materialized_as,
+            row_count: item.row_count,
+            connection: item.connection,
+            materialization_type: item.materialization_type,
+          };
+          return acc;
+        },
+        {}
+      );
 
       setMaterializationByAssetId(mapped);
     },
@@ -58,7 +61,11 @@ export function usePipelineMaterializationState(): {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [activePipeline, refreshPipelineMaterialization, setMaterializationByAssetId]);
+  }, [
+    activePipeline,
+    refreshPipelineMaterialization,
+    setMaterializationByAssetId,
+  ]);
 
   return {
     enrichedPipeline,

@@ -21,8 +21,10 @@ import (
 	"github.com/bruin-data/bruin/internal/web/service"
 	"github.com/bruin-data/bruin/internal/web/watch"
 	"github.com/bruin-data/bruin/pkg/config"
+	"github.com/bruin-data/bruin/pkg/jinja"
 	bruinpath "github.com/bruin-data/bruin/pkg/path"
 	"github.com/bruin-data/bruin/pkg/pipeline"
+	"github.com/bruin-data/bruin/pkg/sqlparser"
 	"github.com/bruin-data/bruin/pkg/telemetry"
 	"github.com/go-chi/chi/v5"
 	"github.com/spf13/afero"
@@ -755,6 +757,7 @@ func (s *webServer) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateAssetRequest struct {
+	Name                *string           `json:"name,omitempty"`
 	Content             *string           `json:"content,omitempty"`
 	MaterializationType *string           `json:"materialization_type,omitempty"`
 	Meta                map[string]string `json:"meta,omitempty"`
@@ -795,11 +798,35 @@ func (s *webServer) handleUpdateAsset(w http.ResponseWriter, r *http.Request) {
 		desiredExecutable = *req.Content
 	}
 
-	if req.MaterializationType != nil || req.Meta != nil {
+	changedAssetIDs := []string{assetID}
+	changedAssetPaths := []string{filepath.ToSlash(relAssetPath)}
+
+	if req.Name != nil || req.MaterializationType != nil || req.Meta != nil {
 		_, parsedPipeline, asset, resolveErr := s.resolveAssetByID(r.Context(), assetID)
 		if resolveErr != nil {
 			webapi.WriteBadRequest(w, "asset_resolve_failed", resolveErr.Error())
 			return
+		}
+
+		originalAssetName := asset.Name
+		renamedAsset := false
+
+		if req.Name != nil {
+			nextName := strings.TrimSpace(*req.Name)
+			if nextName == "" {
+				webapi.WriteBadRequest(w, "invalid_asset_name", "asset name cannot be empty")
+				return
+			}
+
+			if existing := parsedPipeline.GetAssetByNameCaseInsensitive(nextName); existing != nil && existing.DefinitionFile.Path != asset.DefinitionFile.Path {
+				webapi.WriteBadRequest(w, "duplicate_asset_name", fmt.Sprintf("an asset named %q already exists", nextName))
+				return
+			}
+
+			if nextName != asset.Name {
+				asset.Name = nextName
+				renamedAsset = true
+			}
 		}
 
 		if req.MaterializationType != nil {
@@ -828,6 +855,17 @@ func (s *webServer) handleUpdateAsset(w http.ResponseWriter, r *http.Request) {
 			webapi.WriteInternalError(w, "asset_persist_failed", err.Error())
 			return
 		}
+
+		if renamedAsset {
+			affectedIDs, affectedPaths, refactorErr := s.refactorDirectAssetDependencies(r.Context(), parsedPipeline, originalAssetName, asset.Name)
+			if refactorErr != nil {
+				webapi.WriteInternalError(w, "asset_rename_refactor_failed", refactorErr.Error())
+				return
+			}
+
+			changedAssetIDs = appendUniqueStrings(changedAssetIDs, affectedIDs...)
+			changedAssetPaths = appendUniqueStrings(changedAssetPaths, affectedPaths...)
+		}
 	}
 
 	currentBytes, err := os.ReadFile(absAssetPath)
@@ -846,9 +884,129 @@ func (s *webServer) handleUpdateAsset(w http.ResponseWriter, r *http.Request) {
 		s.scheduleSQLAssetPatches(relAssetPath)
 	}
 
-	s.suppressWatcherFor(relAssetPath)
-	s.pushWorkspaceUpdateImmediate(r.Context(), "asset.updated", relAssetPath)
+	for _, changedPath := range changedAssetPaths {
+		s.suppressWatcherFor(changedPath)
+	}
+	s.pushWorkspaceUpdateImmediateWithChangedIDs(r.Context(), "asset.updated", relAssetPath, changedAssetIDs)
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *webServer) refactorDirectAssetDependencies(ctx context.Context, parsedPipeline *pipeline.Pipeline, oldName, newName string) ([]string, []string, error) {
+	if parsedPipeline == nil || strings.TrimSpace(oldName) == strings.TrimSpace(newName) {
+		return nil, nil, nil
+	}
+
+	sqlParserInstance, err := sqlparser.NewSQLParser(false)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create sql parser: %w", err)
+	}
+	defer sqlParserInstance.Close()
+
+	renderer := jinja.NewRendererWithYesterday(parsedPipeline.Name, "web-rename")
+	fs := afero.NewOsFs()
+	changedIDs := make([]string, 0)
+	changedPaths := make([]string, 0)
+
+	for _, current := range parsedPipeline.Assets {
+		if strings.EqualFold(current.Name, newName) || strings.EqualFold(current.Name, oldName) {
+			continue
+		}
+
+		updated := false
+		for index, upstream := range current.Upstreams {
+			if !strings.EqualFold(upstream.Value, oldName) {
+				continue
+			}
+
+			current.Upstreams[index].Value = newName
+			updated = true
+		}
+
+		isSQLAsset := isSQLAssetFile(current)
+		if isSQLAsset {
+			nextContent := replaceAssetNameReferences(current.ExecutableFile.Content, oldName, newName)
+			if nextContent != current.ExecutableFile.Content {
+				current.ExecutableFile.Content = nextContent
+				updated = true
+			}
+		}
+
+		if !updated {
+			continue
+		}
+
+		if err := current.Persist(fs, parsedPipeline); err != nil {
+			return nil, nil, fmt.Errorf("failed to persist renamed dependency updates for asset '%s': %w", current.Name, err)
+		}
+
+		if isSQLAsset {
+			if err := updateAssetDependencies(ctx, current, parsedPipeline, sqlParserInstance, renderer); err != nil {
+				return nil, nil, fmt.Errorf("failed to refresh dependencies for asset '%s': %w", current.Name, err)
+			}
+		}
+
+		assetPath := current.ExecutableFile.Path
+		if assetPath == "" {
+			assetPath = current.DefinitionFile.Path
+		}
+
+		relAssetPath, relErr := filepath.Rel(s.workspaceRoot, assetPath)
+		if relErr != nil {
+			relAssetPath = assetPath
+		}
+
+		normalizedPath := filepath.ToSlash(relAssetPath)
+		changedIDs = append(changedIDs, encodeID(normalizedPath))
+		changedPaths = append(changedPaths, normalizedPath)
+	}
+
+	return changedIDs, changedPaths, nil
+}
+
+func isSQLAssetFile(asset *pipeline.Asset) bool {
+	if asset == nil {
+		return false
+	}
+
+	assetPath := asset.ExecutableFile.Path
+	if assetPath == "" {
+		assetPath = asset.DefinitionFile.Path
+	}
+	assetPath = strings.ToLower(assetPath)
+	assetType := strings.ToLower(string(asset.Type))
+	return strings.HasSuffix(assetPath, ".sql") || strings.Contains(assetType, "sql")
+}
+
+func replaceAssetNameReferences(content, oldName, newName string) string {
+	trimmedOld := strings.TrimSpace(oldName)
+	trimmedNew := strings.TrimSpace(newName)
+	if trimmedOld == "" || trimmedNew == "" || trimmedOld == trimmedNew {
+		return content
+	}
+
+	pattern := fmt.Sprintf(`(?i)(^|[^A-Za-z0-9_.])(%s)([^A-Za-z0-9_.]|$)`, regexp.QuoteMeta(trimmedOld))
+	re := regexp.MustCompile(pattern)
+	return re.ReplaceAllString(content, `${1}`+trimmedNew+`${3}`)
+}
+
+func appendUniqueStrings(values []string, extras ...string) []string {
+	seen := make(map[string]struct{}, len(values)+len(extras))
+	for _, value := range values {
+		seen[value] = struct{}{}
+	}
+
+	for _, extra := range extras {
+		if extra == "" {
+			continue
+		}
+		if _, ok := seen[extra]; ok {
+			continue
+		}
+		seen[extra] = struct{}{}
+		values = append(values, extra)
+	}
+
+	return values
 }
 
 func (s *webServer) scheduleSQLAssetPatches(relAssetPath string) {
@@ -1511,9 +1669,16 @@ func (s *webServer) pushWorkspaceUpdate(ctx context.Context, eventType, eventPat
 // pushWorkspaceUpdateImmediate publishes immediately (bypasses debounce).
 // Used by API handlers that need the client to see the change right away.
 func (s *webServer) pushWorkspaceUpdateImmediate(ctx context.Context, eventType, eventPath string) {
+	s.pushWorkspaceUpdateImmediateWithChangedIDs(ctx, eventType, eventPath, nil)
+}
+
+func (s *webServer) pushWorkspaceUpdateImmediateWithChangedIDs(ctx context.Context, eventType, eventPath string, changedAssetIDs []string) {
 	_ = s.refreshWorkspace(ctx)
 	state := s.currentState()
-	changed := s.findDirectlyChangedAssetIDs(filepath.ToSlash(eventPath))
+	changed := changedAssetIDs
+	if len(changed) == 0 {
+		changed = s.findDirectlyChangedAssetIDs(filepath.ToSlash(eventPath))
+	}
 
 	now := time.Now().UTC()
 	for _, id := range changed {
