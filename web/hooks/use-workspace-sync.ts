@@ -5,21 +5,23 @@ import { useEffect } from "react";
 
 import { changedAssetIdsAtom, workspaceAtom } from "@/lib/atoms";
 import { getWorkspace } from "@/lib/api";
-import { WorkspaceEvent, WorkspaceState } from "@/lib/types";
+import { WebAsset, WorkspaceEvent, WorkspaceState } from "@/lib/types";
 
 function mergeWorkspaceWithPreservedContent(
   current: WorkspaceState | null,
   incoming: WorkspaceState,
+  changedAssetIds: string[] = [],
 ): WorkspaceState {
   if (!current) {
     return incoming;
   }
 
-  const contentByAssetId = new Map<string, string>();
+  const changedAssetIdSet = new Set(changedAssetIds);
+  const currentAssetById = new Map<string, WebAsset>();
   for (const pipeline of current.pipelines ?? []) {
     for (const asset of pipeline.assets ?? []) {
-      if (asset.id && asset.content) {
-        contentByAssetId.set(asset.id, asset.content);
+      if (asset.id) {
+        currentAssetById.set(asset.id, asset);
       }
     }
   }
@@ -27,19 +29,24 @@ function mergeWorkspaceWithPreservedContent(
   const nextPipelines = (incoming.pipelines ?? []).map((pipeline) => ({
     ...pipeline,
     assets: (pipeline.assets ?? []).map((asset) => {
-      if (asset.content) {
+      const currentAsset = currentAssetById.get(asset.id);
+      if (!currentAsset) {
         return asset;
       }
 
-      const preserved = contentByAssetId.get(asset.id);
-      if (!preserved) {
-        return asset;
-      }
+      const isChangedAsset = changedAssetIdSet.has(asset.id);
 
       return {
+        ...currentAsset,
         ...asset,
-        content: preserved,
-      };
+        content: asset.content || currentAsset.content,
+        meta:
+          asset.meta ??
+          (isChangedAsset ? asset.meta : currentAsset.meta),
+        columns:
+          asset.columns ??
+          (isChangedAsset ? asset.columns : currentAsset.columns),
+      }
     }),
   }));
 
@@ -95,7 +102,11 @@ export function useWorkspaceSync() {
           }
 
           if (payload.lite) {
-            return mergeWorkspaceWithPreservedContent(current, payload.workspace);
+            return mergeWorkspaceWithPreservedContent(
+              current,
+              payload.workspace,
+              payload.changed_asset_ids ?? [],
+            );
           }
 
           return payload.workspace;

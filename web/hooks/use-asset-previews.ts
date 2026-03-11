@@ -1,14 +1,13 @@
 "use client";
 
 import { useAtom } from "jotai";
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import useSWR from "swr";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { inspectAsset } from "@/lib/api";
 import { changedAssetIdsAtom } from "@/lib/atoms";
 import { AssetInspectResponse, WebAsset } from "@/lib/types";
 
-/** Stable empty objects — avoids new references on every render while loading. */
+/** Stable empty objects — avoids new references on every render while idle. */
 const EMPTY_INSPECT_MAP: Record<string, AssetInspectResponse> = {};
 const EMPTY_LOADING_MAP: Record<string, boolean> = {};
 
@@ -39,52 +38,76 @@ async function fetchInspectBatch(
 }
 
 /**
- * Smart asset preview hook powered by SWR.
+ * Persistent asset preview cache.
  *
- * Uses SWR for caching, deduplication, and stale-while-revalidate.
- * When changed asset IDs arrive via SSE, only those assets are re-fetched
- * and merged into the cached data (avoids refetching all visual assets).
- *
- * IMPORTANT: The effect depends ONLY on primitive string keys to avoid
- * infinite loops. Function refs (mutate, setChangedIds) are read via
- * useRef — never placed in the dependency array.
+ * Keeps inspect results by asset ID across changes to the current set of visual
+ * assets, so adding a visualization to one asset does not wipe or re-fetch the
+ * previews for every other visual asset.
  */
 export function useAssetPreviews(visualAssets: WebAsset[]) {
   const [changedIds, setChangedIds] = useAtom(changedAssetIdsAtom);
+  const [inspectCache, setInspectCache] = useState<Record<string, AssetInspectResponse>>({});
+  const [loadingByAssetId, setLoadingByAssetId] = useState<Record<string, boolean>>({});
 
   const assetIds = useMemo(
     () => visualAssets.map((a) => a.id).sort(),
     [visualAssets],
   );
 
-  const idsKey = assetIds.join(",");
-  const swrKey = idsKey ? `inspect:${idsKey}` : null;
-
-  const {
-    data,
-    isValidating,
-    mutate,
-  } = useSWR<Record<string, AssetInspectResponse>>(
-    swrKey,
-    () => fetchInspectBatch(assetIds),
-    {
-      revalidateOnFocus: false,
-      revalidateOnReconnect: false,
-      dedupingInterval: 2000,
-    },
-  );
-
-  // Stable reference: module-level constant when data is not yet loaded
-  // to avoid creating a new {} on every render (which causes cascading
-  // useMemo recomputations and infinite loops).
-  const inspectByAssetId = data ?? EMPTY_INSPECT_MAP;
-
-  // --- Refs for values used inside effects that must NOT be deps. ---
-  const mutateRef = useRef(mutate);
-  useEffect(() => { mutateRef.current = mutate; });
-
   const setChangedIdsRef = useRef(setChangedIds);
   useEffect(() => { setChangedIdsRef.current = setChangedIds; });
+
+  const mergeResults = useCallback((results: Record<string, AssetInspectResponse>) => {
+    if (Object.keys(results).length === 0) {
+      return;
+    }
+
+    setInspectCache((prev) => ({ ...prev, ...results }));
+  }, []);
+
+  const markLoading = useCallback((ids: string[], isLoading: boolean) => {
+    if (ids.length === 0) {
+      return;
+    }
+
+    setLoadingByAssetId((prev) => {
+      const next = { ...prev };
+      for (const id of ids) {
+        if (isLoading) {
+          next[id] = true;
+        } else {
+          delete next[id];
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  const fetchAndMerge = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) {
+        return;
+      }
+
+      markLoading(ids, true);
+      try {
+        const results = await fetchInspectBatch(ids);
+        mergeResults(results);
+      } finally {
+        markLoading(ids, false);
+      }
+    },
+    [markLoading, mergeResults],
+  );
+
+  useEffect(() => {
+    const missingIds = assetIds.filter((id) => !(id in inspectCache));
+    if (missingIds.length === 0) {
+      return;
+    }
+
+    void fetchAndMerge(missingIds);
+  }, [assetIds, fetchAndMerge, inspectCache]);
 
   // Primitive string key derived from the changedIds atom — safe as an
   // effect dep because it only changes when new IDs arrive or are drained.
@@ -98,7 +121,7 @@ export function useAssetPreviews(visualAssets: WebAsset[]) {
   );
 
   useEffect(() => {
-    if (!relevantChangedKey || !swrKey) return;
+    if (!relevantChangedKey) return;
 
     const idsToRefresh = relevantChangedKey.split(",").filter(Boolean);
 
@@ -112,42 +135,57 @@ export function useAssetPreviews(visualAssets: WebAsset[]) {
       return removed ? next : prev;
     });
 
-    // Selectively re-fetch only the changed assets and merge with cache.
-    void mutateRef.current(
-      async (prev) => {
-        const refreshed = await fetchInspectBatch(idsToRefresh);
-        return { ...(prev ?? {}), ...refreshed };
-      },
-      { revalidate: false },
-    );
-    // ONLY primitive string keys here — no objects, no function refs.
-  }, [relevantChangedKey, swrKey]);
+    void fetchAndMerge(idsToRefresh);
+  }, [fetchAndMerge, relevantChangedKey]);
 
-  // Build per-asset loading map — an asset is loading when SWR is validating
-  // and we don't yet have data for it.
-  // Stable empty ref when not loading to prevent cascading re-renders.
+  const inspectByAssetId = useMemo<Record<string, AssetInspectResponse>>(() => {
+    if (assetIds.length === 0) {
+      return EMPTY_INSPECT_MAP;
+    }
+
+    const next: Record<string, AssetInspectResponse> = {};
+    for (const id of assetIds) {
+      const inspect = inspectCache[id];
+      if (inspect) {
+        next[id] = inspect;
+      }
+    }
+
+    return Object.keys(next).length > 0 ? next : EMPTY_INSPECT_MAP;
+  }, [assetIds, inspectCache]);
+
   const inspectLoadingByAssetId = useMemo<Record<string, boolean>>(() => {
-    if (!isValidating) return EMPTY_LOADING_MAP;
+    if (assetIds.length === 0) return EMPTY_LOADING_MAP;
     const loading: Record<string, boolean> = {};
     for (const id of assetIds) {
-      if (!(id in inspectByAssetId)) {
+      if (loadingByAssetId[id]) {
         loading[id] = true;
       }
     }
     return Object.keys(loading).length > 0 ? loading : EMPTY_LOADING_MAP;
-  }, [isValidating, assetIds, inspectByAssetId]);
+  }, [assetIds, loadingByAssetId]);
 
   const clearPreviewForAsset = useCallback(
     (assetId: string) => {
-      void mutateRef.current(
-        (prev) => {
-          if (!prev) return prev;
-          const next = { ...prev };
-          delete next[assetId];
-          return next;
-        },
-        { revalidate: false },
-      );
+      setInspectCache((prev) => {
+        if (!(assetId in prev)) {
+          return prev;
+        }
+
+        const next = { ...prev };
+        delete next[assetId];
+        return next;
+      });
+
+      setLoadingByAssetId((prev) => {
+        if (!(assetId in prev)) {
+          return prev;
+        }
+
+        const next = { ...prev };
+        delete next[assetId];
+        return next;
+      });
     },
     [],
   );
