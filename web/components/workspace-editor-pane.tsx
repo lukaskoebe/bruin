@@ -128,7 +128,7 @@ export function WorkspaceEditorPane({
 
   return (
     <Panel defaultSize={32} minSize={24}>
-      <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-full min-h-0 min-w-0 flex-col">
         <div className="border-b px-4 py-3">
           <div className="mb-2 text-sm font-semibold">Asset Editor</div>
           <div className="text-xs opacity-70">
@@ -175,8 +175,8 @@ export function WorkspaceEditorPane({
           </div>
         </div>
 
-        <div className="flex min-h-0 flex-1">
-          <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div
               className={`h-[55%] border-b ${
                 helpMode && editorHighlighted
@@ -205,9 +205,9 @@ export function WorkspaceEditorPane({
               />
             </div>
 
-            <div className="flex flex-1 flex-col overflow-y-auto p-4">
+            <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-4">
               <Tabs
-                className="flex-1"
+                className="flex min-h-0 min-w-0 flex-1 flex-col"
                 onValueChange={(value) =>
                   onEditorTabChange(
                     value as "configuration" | "checks" | "visualization"
@@ -216,7 +216,7 @@ export function WorkspaceEditorPane({
                 value={assetEditorTab}
               >
                 <TabsList
-                  className={`grid w-full grid-cols-2 ${
+                  className={`grid w-full min-w-0 grid-cols-2 ${
                     helpMode && visualizationHighlighted
                       ? "ring-2 ring-primary/70 ring-offset-2"
                       : ""
