@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronRight, Moon, Plus, Sun, Trash2, Workflow } from "lucide-react";
-import { CSSProperties, ReactNode } from "react";
+import { CSSProperties, ReactNode, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -48,6 +48,26 @@ export function WorkspaceSidebar({
   deletePipelineLoading,
   onNavigateSelection,
 }: Props) {
+  const [expandedPipelineIds, setExpandedPipelineIds] = useState<Set<string>>(
+    () => new Set(activePipeline ? [activePipeline] : [])
+  );
+
+  useEffect(() => {
+    if (!activePipeline) {
+      return;
+    }
+
+    setExpandedPipelineIds((previous) => {
+      if (previous.has(activePipeline)) {
+        return previous;
+      }
+
+      const next = new Set(previous);
+      next.add(activePipeline);
+      return next;
+    });
+  }, [activePipeline]);
+
   return (
     <Sidebar
       className={`h-full w-full border-r transition-transform ${
@@ -88,22 +108,46 @@ export function WorkspaceSidebar({
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {workspace?.pipelines.map((item) => (
+              {workspace?.pipelines.map((item) => {
+                const isActive = item.id === activePipeline;
+                const isExpanded = expandedPipelineIds.has(item.id);
+
+                return (
                 <SidebarMenuItem key={item.id}>
                   <SidebarMenuButton
-                    isActive={item.id === activePipeline}
-                    onClick={() => onNavigateSelection(item.id, item.assets[0]?.id ?? null)}
+                    isActive={isActive}
+                    onClick={() => {
+                      if (isActive) {
+                        setExpandedPipelineIds((previous) => {
+                          const next = new Set(previous);
+                          if (next.has(item.id)) {
+                            next.delete(item.id);
+                          } else {
+                            next.add(item.id);
+                          }
+                          return next;
+                        });
+                        return;
+                      }
+
+                      setExpandedPipelineIds((previous) => {
+                        const next = new Set(previous);
+                        next.add(item.id);
+                        return next;
+                      });
+                      onNavigateSelection(item.id, item.assets[0]?.id ?? null);
+                    }}
                     type="button"
                   >
                     <ChevronRight
                       className={`size-3 transition-transform ${
-                        item.id === activePipeline ? "rotate-90" : ""
+                        isExpanded ? "rotate-90" : ""
                       }`}
                     />
                     <span>{item.name}</span>
                   </SidebarMenuButton>
 
-                  {item.id === activePipeline && (
+                  {isExpanded && (
                     <SidebarMenu className="pl-3">
                       {item.assets.map((asset) => (
                         <SidebarMenuItem key={asset.id}>
@@ -120,7 +164,7 @@ export function WorkspaceSidebar({
                     </SidebarMenu>
                   )}
                 </SidebarMenuItem>
-              ))}
+              )})}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
