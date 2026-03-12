@@ -212,7 +212,24 @@ function TablePreview({
   rows: Record<string, unknown>[];
 }) {
   return (
-    <div className="max-h-56 overflow-auto rounded border bg-background">
+    <div
+      className="max-h-56 overflow-auto rounded border bg-background"
+      onWheelCapture={(event) => {
+        const element = event.currentTarget;
+        const canScrollVertically = element.scrollHeight > element.clientHeight + 1;
+        const canScrollHorizontally = element.scrollWidth > element.clientWidth + 1;
+
+        const wantsVerticalScroll = Math.abs(event.deltaY) >= Math.abs(event.deltaX);
+        const wantsHorizontalScroll = !wantsVerticalScroll && event.deltaX !== 0;
+
+        if (
+          (wantsVerticalScroll && canScrollVertically) ||
+          (wantsHorizontalScroll && canScrollHorizontally)
+        ) {
+          event.stopPropagation();
+        }
+      }}
+    >
       <table className="w-full border-collapse text-[11px]">
         <thead className="sticky top-0 bg-muted/70">
           <tr>
