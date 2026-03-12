@@ -7,15 +7,22 @@ type Props = {
   columns: string[];
   rows: Record<string, unknown>[];
   height?: number;
+  dense?: boolean;
 };
 
-export function VirtualDataTable({ columns, rows, height = 260 }: Props) {
+export function VirtualDataTable({
+  columns,
+  rows,
+  height = 260,
+  dense = false,
+}: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const rowHeight = dense ? 28 : 36;
 
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 36,
+    estimateSize: () => rowHeight,
     overscan: 8,
   });
 
@@ -39,9 +46,18 @@ export function VirtualDataTable({ columns, rows, height = 260 }: Props) {
 
   return (
     <div className="overflow-hidden rounded border bg-background">
-      <div className="grid grid-flow-col auto-cols-fr border-b bg-muted/60 text-xs font-semibold">
+      <div
+        className={`grid grid-flow-col auto-cols-fr border-b bg-muted/60 text-xs font-semibold ${
+          dense ? "" : ""
+        }`}
+      >
         {fallbackColumns.map((column) => (
-          <div className="truncate border-r px-2 py-2 last:border-r-0" key={column}>
+          <div
+            className={`truncate border-r last:border-r-0 ${
+              dense ? "px-2 py-1" : "px-2 py-2"
+            }`}
+            key={column}
+          >
             {column}
           </div>
         ))}
@@ -73,7 +89,9 @@ export function VirtualDataTable({ columns, rows, height = 260 }: Props) {
                     return (
                       <div
                         key={`${virtualRow.key}-${column}`}
-                        className={`truncate border-r px-2 py-2 last:border-r-0 ${cell.className}`}
+                        className={`truncate border-r last:border-r-0 ${
+                          dense ? "px-2 py-1" : "px-2 py-2"
+                        } ${cell.className}`}
                         title={cell.value}
                       >
                         {cell.value}

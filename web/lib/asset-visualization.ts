@@ -48,6 +48,10 @@ export function getTablePreviewLimit(
   return parsed;
 }
 
+export function getTableDenseMode(meta?: Record<string, string>): boolean {
+  return (meta?.web_table_dense ?? "").trim().toLowerCase() === "true";
+}
+
 export function buildLineChartSpec(
   rows: Record<string, unknown>[],
   meta?: Record<string, string>

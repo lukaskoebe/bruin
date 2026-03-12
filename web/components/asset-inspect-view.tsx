@@ -23,6 +23,7 @@ import {
   buildLineChartSpec,
   buildMarkdown,
   getAssetViewMode,
+  getTableDenseMode,
 } from "@/lib/asset-visualization";
 
 type Props = {
@@ -34,6 +35,7 @@ type Props = {
 export function AssetInspectView({ columns, rows, meta }: Props) {
   const view = getAssetViewMode(meta);
   const chartType = (meta?.web_chart_type ?? "line").trim().toLowerCase();
+  const tableDense = getTableDenseMode(meta);
 
   if (view === "markdown") {
     const markdown = buildMarkdown(meta, rows);
@@ -85,7 +87,14 @@ export function AssetInspectView({ columns, rows, meta }: Props) {
   if (view === "chart") {
     const chart = buildLineChartSpec(rows, meta);
     if (!chart) {
-      return <VirtualDataTable columns={columns} rows={rows} height={200} />;
+      return (
+        <VirtualDataTable
+          columns={columns}
+          rows={rows}
+          height={200}
+          dense={tableDense}
+        />
+      );
     }
 
     return (
@@ -147,5 +156,12 @@ export function AssetInspectView({ columns, rows, meta }: Props) {
     );
   }
 
-  return <VirtualDataTable columns={columns} rows={rows} height={200} />;
+  return (
+    <VirtualDataTable
+      columns={columns}
+      rows={rows}
+      height={200}
+      dense={tableDense}
+    />
+  );
 }

@@ -15,6 +15,7 @@ import {
   buildLineChartSpec,
   buildMarkdown,
   getAssetViewMode,
+  getTableDenseMode,
 } from "@/lib/asset-visualization";
 
 export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
@@ -22,6 +23,7 @@ export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
 
   const previewMode = getAssetViewMode(data.meta);
   const chartType = (data.meta?.web_chart_type ?? "line").trim().toLowerCase();
+  const tableDense = getTableDenseMode(data.meta);
   const previewRows = useMemo(
     () => data.preview?.rows ?? [],
     [data.preview?.rows]
@@ -169,12 +171,14 @@ export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
           markdown={markdown}
           onLoadMorePreviewRows={data.onLoadMorePreviewRows}
           previewColumns={previewColumns}
+          dense={tableDense}
           previewError={previewError}
           previewMode={previewMode}
           previewRows={previewRows}
         />
 
         <AssetNodeMeasurement
+          dense={tableDense}
           markdown={markdown || ""}
           measurementRef={measurementRef}
           previewColumns={previewColumns}

@@ -24,6 +24,7 @@ interface AssetNodePreviewProps {
   chartType: string;
   chart: LineChartSpec | null;
   markdown: string;
+  dense?: boolean;
   previewColumns: string[];
   previewRows: Record<string, unknown>[];
   previewError?: string;
@@ -36,6 +37,7 @@ export function AssetNodePreview({
   previewMode,
   chartType,
   chart,
+  dense = false,
   markdown,
   previewColumns,
   previewRows,
@@ -65,6 +67,7 @@ export function AssetNodePreview({
         <TablePreview
           canLoadMore={canLoadMorePreviewRows}
           columns={previewColumns}
+          dense={dense}
           onLoadMore={onLoadMorePreviewRows}
           rows={previewRows}
         />
@@ -81,6 +84,7 @@ interface AssetNodeMeasurementProps {
   previewColumns: string[];
   previewRows: Record<string, unknown>[];
   markdown: string;
+  dense?: boolean;
   measurementRef: React.RefObject<HTMLDivElement | null>;
 }
 
@@ -89,6 +93,7 @@ export function AssetNodeMeasurement({
   previewColumns,
   previewRows,
   markdown,
+  dense = false,
   measurementRef,
 }: AssetNodeMeasurementProps) {
   if (previewMode !== "table" && previewMode !== "markdown") {
@@ -101,7 +106,7 @@ export function AssetNodeMeasurement({
       ref={measurementRef}
     >
       {previewMode === "table" ? (
-        <TablePreview columns={previewColumns} rows={previewRows} />
+        <TablePreview columns={previewColumns} dense={dense} rows={previewRows} />
       ) : (
         <div className="rounded border bg-background p-2">
           <article className="max-w-none text-xs leading-5 text-foreground">
@@ -196,11 +201,13 @@ function ChartPreview({
 function TablePreview({
   canLoadMore,
   columns,
+  dense = false,
   onLoadMore,
   rows,
 }: {
   canLoadMore?: boolean;
   columns: string[];
+  dense?: boolean;
   onLoadMore?: () => void;
   rows: Record<string, unknown>[];
 }) {
@@ -211,7 +218,9 @@ function TablePreview({
           <tr>
             {columns.map((column) => (
               <th
-                className="border-b px-2 py-1.5 text-left font-medium whitespace-nowrap"
+                className={`border-b text-left font-medium whitespace-nowrap ${
+                  dense ? "px-2 py-1" : "px-2 py-1.5"
+                }`}
                 key={column}
               >
                 {column}
@@ -224,7 +233,9 @@ function TablePreview({
             <tr className="odd:bg-muted/20" key={rowIndex}>
               {columns.map((column) => (
                 <td
-                  className="border-b px-2 py-1 align-top whitespace-nowrap"
+                  className={`border-b align-top whitespace-nowrap ${
+                    dense ? "px-2 py-0.5" : "px-2 py-1"
+                  }`}
                   key={`${rowIndex}-${column}`}
                 >
                   {stringifyCellValue(row[column])}
