@@ -76,6 +76,9 @@ export function WorkspaceShell() {
     usePersistedNodePositions();
   const [showOnboarding, setShowOnboarding] = useState(true);
   const [helpMode, setHelpMode] = useState(false);
+  const [deletePipelineDialogOpen, setDeletePipelineDialogOpen] =
+    useState(false);
+  const [deletePipelineLoading, setDeletePipelineLoading] = useState(false);
   const [pendingPipelinePathSelection, setPendingPipelinePathSelection] =
     useState<string | null>(null);
   const [recomputeVersion, setRecomputeVersion] = useState(0);
@@ -94,6 +97,7 @@ export function WorkspaceShell() {
     confirmCreatePipeline,
     runCreateAsset,
     runDeleteAsset,
+    runDeletePipeline,
     runUpdateAsset,
   } = useAssetActions();
   const {
@@ -317,6 +321,56 @@ export function WorkspaceShell() {
 
   const handleCreatePipeline = openCreatePipelineDialog;
 
+  const handleConfirmDeletePipeline = useCallback(() => {
+    if (!pipeline || deletePipelineLoading) {
+      return;
+    }
+
+    const remainingPipelines =
+      workspace?.pipelines.filter(
+        (currentPipeline) => currentPipeline.id !== pipeline.id
+      ) ?? [];
+    const fallbackPipeline = remainingPipelines[0] ?? null;
+
+    setDeletePipelineLoading(true);
+    void runDeletePipeline(pipeline.id)
+      .then((deleted) => {
+        if (!deleted) {
+          return;
+        }
+
+        setDeletePipelineDialogOpen(false);
+        clearResultsAfterDelete();
+        if (asset) {
+          clearPreviewForAsset(asset.id);
+        }
+
+        if (fallbackPipeline) {
+          navigateSelection(
+            fallbackPipeline.id,
+            fallbackPipeline.assets[0]?.id ?? null
+          );
+          return;
+        }
+
+        window.history.replaceState(
+          window.history.state,
+          "",
+          window.location.pathname
+        );
+      })
+      .finally(() => setDeletePipelineLoading(false));
+  }, [
+    asset,
+    clearPreviewForAsset,
+    clearResultsAfterDelete,
+    deletePipelineLoading,
+    navigateSelection,
+    pipeline,
+    runDeletePipeline,
+    workspace?.pipelines,
+  ]);
+
   const handleRecomputeGraph = useCallback(() => {
     if (!enrichedPipeline) {
       return;
@@ -443,6 +497,9 @@ export function WorkspaceShell() {
                 setTheme((current) => (current === "dark" ? "light" : "dark"))
               }
               onCreatePipeline={handleCreatePipeline}
+              onDeletePipeline={() => setDeletePipelineDialogOpen(true)}
+              canDeletePipeline={Boolean(pipeline)}
+              deletePipelineLoading={deletePipelineLoading}
               onNavigateSelection={navigateSelection}
             />
           </Panel>
@@ -536,6 +593,17 @@ export function WorkspaceShell() {
         </PanelGroup>
 
         <WorkspaceDialogs
+          deletePipelineDialogOpen={deletePipelineDialogOpen}
+          deletePipelineLoading={deletePipelineLoading}
+          selectedPipelineName={pipeline?.name}
+          canDeletePipeline={Boolean(pipeline)}
+          onDeletePipelineDialogOpenChange={(open) => {
+            if (!deletePipelineLoading) {
+              setDeletePipelineDialogOpen(open);
+            }
+          }}
+          onConfirmDeletePipeline={handleConfirmDeletePipeline}
+          onCancelDeletePipeline={() => setDeletePipelineDialogOpen(false)}
           deleteDialogOpen={deleteDialogOpen}
           deleteLoading={deleteLoading}
           selectedAssetName={asset?.name}

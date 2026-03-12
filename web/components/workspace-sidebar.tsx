@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, Moon, Plus, Sun, Workflow } from "lucide-react";
+import { ChevronRight, Moon, Plus, Sun, Trash2, Workflow } from "lucide-react";
 import { CSSProperties, ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,9 @@ type Props = {
   theme: "light" | "dark";
   onToggleTheme: () => void;
   onCreatePipeline: () => void;
+  onDeletePipeline: () => void;
+  canDeletePipeline: boolean;
+  deletePipelineLoading: boolean;
   onNavigateSelection: (pipelineId: string, assetId: string | null) => void;
 };
 
@@ -40,6 +43,9 @@ export function WorkspaceSidebar({
   theme,
   onToggleTheme,
   onCreatePipeline,
+  onDeletePipeline,
+  canDeletePipeline,
+  deletePipelineLoading,
   onNavigateSelection,
 }: Props) {
   return (
@@ -59,6 +65,15 @@ export function WorkspaceSidebar({
           <div className="flex items-center gap-2">
             <Button size="icon-sm" type="button" variant="outline" onClick={onToggleTheme}>
               {theme === "dark" ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
+            </Button>
+            <Button
+              size="icon-sm"
+              type="button"
+              variant="outline"
+              disabled={!canDeletePipeline || deletePipelineLoading}
+              onClick={onDeletePipeline}
+            >
+              <Trash2 className="size-3.5" />
             </Button>
             <Button size="sm" variant="outline" onClick={onCreatePipeline} type="button">
               <Plus className="mr-1 inline size-3" />

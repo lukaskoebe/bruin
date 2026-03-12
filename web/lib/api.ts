@@ -34,6 +34,13 @@ export async function createPipeline(input: {
   return readJSON<Record<string, string>>(res);
 }
 
+export async function deletePipeline(pipelineId: string) {
+  const res = await fetch(`/api/pipelines/${pipelineId}`, {
+    method: "DELETE",
+  });
+  return readJSON<Record<string, string>>(res);
+}
+
 export async function createAsset(
   pipelineId: string,
   input: {

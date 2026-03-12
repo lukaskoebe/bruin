@@ -6,6 +6,7 @@ import {
   createAsset,
   createPipeline,
   deleteAsset,
+  deletePipeline,
   updateAsset,
 } from "@/lib/api";
 
@@ -115,6 +116,19 @@ export function useAssetActions(defaultPipelinePath = "my-pipeline") {
     [pushUIMessage]
   );
 
+  const runDeletePipeline = useCallback(
+    async (pipelineId: string) => {
+      try {
+        await deletePipeline(pipelineId);
+        return true;
+      } catch (error) {
+        pushUIMessage("error", `Failed to delete pipeline: ${String(error)}`);
+        return false;
+      }
+    },
+    [pushUIMessage]
+  );
+
   const runUpdateAsset = useCallback(
     async (pipelineId: string, assetId: string, input: UpdateAssetInput) => {
       try {
@@ -140,6 +154,7 @@ export function useAssetActions(defaultPipelinePath = "my-pipeline") {
     confirmCreatePipeline,
     runCreateAsset,
     runDeleteAsset,
+    runDeletePipeline,
     runUpdateAsset,
   };
 }

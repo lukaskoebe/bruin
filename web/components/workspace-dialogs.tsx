@@ -13,6 +13,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 type WorkspaceDialogsProps = {
+  deletePipelineDialogOpen: boolean;
+  deletePipelineLoading: boolean;
+  selectedPipelineName?: string;
+  canDeletePipeline: boolean;
+  onDeletePipelineDialogOpenChange: (open: boolean) => void;
+  onConfirmDeletePipeline: () => void;
+  onCancelDeletePipeline: () => void;
+
   deleteDialogOpen: boolean;
   deleteLoading: boolean;
   selectedAssetName?: string;
@@ -30,6 +38,13 @@ type WorkspaceDialogsProps = {
 };
 
 export function WorkspaceDialogs({
+  deletePipelineDialogOpen,
+  deletePipelineLoading,
+  selectedPipelineName,
+  canDeletePipeline,
+  onDeletePipelineDialogOpenChange,
+  onConfirmDeletePipeline,
+  onCancelDeletePipeline,
   deleteDialogOpen,
   deleteLoading,
   selectedAssetName,
@@ -46,6 +61,42 @@ export function WorkspaceDialogs({
 }: WorkspaceDialogsProps) {
   return (
     <>
+      <Dialog
+        open={deletePipelineDialogOpen}
+        onOpenChange={onDeletePipelineDialogOpenChange}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete pipeline?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete{" "}
+              {selectedPipelineName
+                ? `"${selectedPipelineName}"`
+                : "this pipeline"}{" "}
+              and all of its assets.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={deletePipelineLoading}
+              onClick={onCancelDeletePipeline}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deletePipelineLoading || !canDeletePipeline}
+              onClick={onConfirmDeletePipeline}
+            >
+              {deletePipelineLoading ? "Deleting..." : "Delete Pipeline"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={deleteDialogOpen} onOpenChange={onDeleteDialogOpenChange}>
         <DialogContent>
           <DialogHeader>
