@@ -101,36 +101,7 @@ export function AssetNodeMeasurement({
       ref={measurementRef}
     >
       {previewMode === "table" ? (
-        <div className="rounded border bg-background">
-          <table className="w-full border-collapse text-[11px]">
-            <thead>
-              <tr>
-                {previewColumns.map((column) => (
-                  <th
-                    className="border-b px-2 py-1.5 text-left font-medium whitespace-nowrap"
-                    key={column}
-                  >
-                    {column}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {previewRows.map((row, rowIndex) => (
-                <tr key={rowIndex}>
-                  {previewColumns.map((column) => (
-                    <td
-                      className="border-b px-2 py-1 align-top whitespace-nowrap"
-                      key={`${rowIndex}-${column}`}
-                    >
-                      {stringifyCellValue(row[column])}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <TablePreview columns={previewColumns} rows={previewRows} />
       ) : (
         <div className="rounded border bg-background p-2">
           <article className="max-w-none text-xs leading-5 text-foreground">
