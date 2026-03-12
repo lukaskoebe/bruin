@@ -31,6 +31,7 @@ import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { WorkspaceOnboardingPanel } from "@/components/workspace-onboarding-panel";
 import { WorkspaceDialogs } from "@/components/workspace-dialogs";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import {
   assetEditorTabAtom,
@@ -459,6 +460,19 @@ export function WorkspaceShell() {
   );
 
   const hasPipelines = (workspace?.pipelines.length ?? 0) > 0;
+
+  if (!workspace) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-background text-foreground">
+        <div className="flex items-center gap-3 rounded-lg border bg-card px-4 py-3 shadow-sm">
+          <Spinner className="size-4" />
+          <span className="text-sm text-muted-foreground">
+            Loading workspace...
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-background text-foreground">

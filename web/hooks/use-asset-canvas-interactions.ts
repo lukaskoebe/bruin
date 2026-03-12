@@ -81,6 +81,35 @@ export function useAssetCanvasInteractions({
     null
   );
 
+  useEffect(() => {
+    if (!newAssetDraft) {
+      return;
+    }
+
+    const handleWindowPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        setNewAssetDraft(null);
+        return;
+      }
+
+      if (target.closest('[data-new-asset-node="true"]')) {
+        return;
+      }
+
+      setNewAssetDraft(null);
+    };
+
+    window.addEventListener("pointerdown", handleWindowPointerDown, true);
+    return () => {
+      window.removeEventListener(
+        "pointerdown",
+        handleWindowPointerDown,
+        true
+      );
+    };
+  }, [newAssetDraft]);
+
   const openNewAssetInput = useCallback(
     (clientX: number, clientY: number) => {
       const container = canvasContainerRef.current;
@@ -184,16 +213,16 @@ export function useAssetCanvasInteractions({
       const renderedSourceNode = reactFlowInstance?.getNode(sourceAssetId);
       const sourcePosition = storedNodePositions[sourceAssetId] ??
         sourceNode?.position ?? { x: 32, y: 32 };
-        const renderedSourceNodeWithMeasurement =
-          renderedSourceNode as NodeWithMeasuredHeight | undefined;
-        const sourceNodeWithMeasurement =
-          sourceNode as NodeWithMeasuredHeight | undefined;
-        const sourceHeight =
-          renderedSourceNodeWithMeasurement?.measured?.height ??
-          renderedSourceNode?.height ??
-          sourceNodeWithMeasurement?.measured?.height ??
-          sourceNode?.height ??
-          180;
+      const renderedSourceNodeWithMeasurement =
+        renderedSourceNode as NodeWithMeasuredHeight | undefined;
+      const sourceNodeWithMeasurement =
+        sourceNode as NodeWithMeasuredHeight | undefined;
+      const sourceHeight =
+        renderedSourceNodeWithMeasurement?.measured?.height ??
+        renderedSourceNode?.height ??
+        sourceNodeWithMeasurement?.measured?.height ??
+        sourceNode?.height ??
+        180;
 
       void runCreateAsset(pipelineId, {
         source_asset_id: sourceAssetId,

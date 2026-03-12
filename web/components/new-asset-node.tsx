@@ -23,11 +23,19 @@ export function NewAssetNode({ data }: NodeProps<NewAssetNodeData>) {
   const [name, setName] = useState(data.name);
 
   useEffect(() => {
-    inputRef.current?.focus();
+    const frame = window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   return (
-    <div className="min-w-72 rounded-lg border-2 border-primary/40 bg-card p-2 shadow-sm">
+    <div
+      className="min-w-72 rounded-lg border-2 border-primary/40 bg-card p-2 shadow-sm"
+      data-new-asset-node="true"
+    >
       <Tabs
         onValueChange={(value) =>
           setName(data.onKindChange(value as NewAssetKind))
@@ -53,7 +61,7 @@ export function NewAssetNode({ data }: NodeProps<NewAssetNodeData>) {
       <div className="nodrag flex items-center gap-2">
         <Input
           ref={inputRef}
-          className="h-8"
+          className="h-8 text-base md:text-sm"
           onChange={(event) => setName(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
