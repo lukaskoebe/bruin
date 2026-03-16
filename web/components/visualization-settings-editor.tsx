@@ -1,6 +1,6 @@
 "use client";
 
-import Editor from "@monaco-editor/react";
+import Editor, { type Monaco } from "@monaco-editor/react";
 import { BarChart3, EyeOff, FileText, Table2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -61,6 +61,11 @@ export function VisualizationSettingsEditor({
   disabled = false,
   onSave,
 }: Props) {
+  const markdownMonacoRef = useRef<Monaco | null>(null);
+  const markdownEditorUriRef = useRef<string | null>(null);
+  const markdownCompletionDisposableRef = useRef<{ dispose(): void } | null>(
+    null
+  );
   const initialView = useMemo<VisualizationView>(() => {
     const nextView = (meta?.web_view ?? "").trim().toLowerCase();
     if (
@@ -213,6 +218,55 @@ export function VisualizationSettingsEditor({
   useEffect(() => {
     latestOnSaveRef.current = onSave;
   }, [onSave]);
+
+  useEffect(() => {
+    const monaco = markdownMonacoRef.current;
+    const editorUri = markdownEditorUriRef.current;
+    if (!monaco || !editorUri) {
+      return;
+    }
+
+    markdownCompletionDisposableRef.current?.dispose();
+    markdownCompletionDisposableRef.current =
+      monaco.languages.registerCompletionItemProvider("markdown", {
+        triggerCharacters: ["{", "."],
+        provideCompletionItems(
+          model: {
+            uri: { toString(): string };
+            getLineContent(lineNumber: number): string;
+          },
+          position: { lineNumber: number; column: number },
+        ) {
+          if (model.uri.toString() !== editorUri) {
+            return { suggestions: [] };
+          }
+
+          const linePrefix = model
+            .getLineContent(position.lineNumber)
+            .slice(0, position.column - 1);
+          const interpolationContext = parseMarkdownInterpolationContext(
+            linePrefix,
+          );
+          if (!interpolationContext) {
+            return { suggestions: [] };
+          }
+
+          return {
+            suggestions: buildMarkdownInterpolationSuggestions(
+              monaco,
+              position,
+              interpolationContext,
+              sortedColumns,
+            ),
+          };
+        },
+      });
+
+    return () => {
+      markdownCompletionDisposableRef.current?.dispose();
+      markdownCompletionDisposableRef.current = null;
+    };
+  }, [sortedColumns]);
 
   useEffect(() => {
     if (disabled) {
@@ -415,8 +469,15 @@ export function VisualizationSettingsEditor({
             <Label>Markdown Template</Label>
             <div className="overflow-hidden rounded-md border">
               <Editor
+                beforeMount={(monaco) => {
+                  markdownMonacoRef.current = monaco;
+                }}
                 language="markdown"
                 onChange={(value) => setMarkdownTemplate(value ?? "")}
+                onMount={(editor) => {
+                  markdownEditorUriRef.current =
+                    editor.getModel()?.uri.toString() ?? null;
+                }}
                 options={{
                   fontSize: 12,
                   minimap: { enabled: false },
@@ -437,6 +498,145 @@ export function VisualizationSettingsEditor({
       </div>
     </div>
   );
+}
+
+type MarkdownInterpolationContext = {
+  expression: string;
+  prefix: string;
+  partial: string;
+};
+
+function parseMarkdownInterpolationContext(
+  linePrefix: string,
+): MarkdownInterpolationContext | null {
+  const lastOpen = linePrefix.lastIndexOf("{{");
+  if (lastOpen < 0) {
+    return null;
+  }
+
+  const lastClose = linePrefix.lastIndexOf("}}");
+  if (lastClose > lastOpen) {
+    return null;
+  }
+
+  const rawExpression = linePrefix.slice(lastOpen + 2);
+  const expression = rawExpression.replace(/^\s+/, "");
+
+  const prefixMatch = expression.match(/^(first\.|row\[\d+\]\.|row\d+\.)?([\w]*)$/);
+  if (prefixMatch) {
+    return {
+      expression,
+      prefix: prefixMatch[1] ?? "",
+      partial: prefixMatch[2] ?? "",
+    };
+  }
+
+  if (/^(rows\.)?([\w]*)$/.test(expression)) {
+    const rowsMatch = expression.match(/^(rows\.)?([\w]*)$/);
+    return {
+      expression,
+      prefix: rowsMatch?.[1] ?? "",
+      partial: rowsMatch?.[2] ?? "",
+    };
+  }
+
+  return null;
+}
+
+function buildMarkdownInterpolationSuggestions(
+  monaco: Monaco,
+  position: { lineNumber: number; column: number },
+  context: MarkdownInterpolationContext,
+  columns: string[],
+) {
+  const columnSuggestions = buildMarkdownColumnSuggestions(
+    monaco,
+    position,
+    context,
+    columns,
+  );
+
+  if (context.prefix) {
+    return columnSuggestions;
+  }
+
+  const partialLower = context.partial.toLowerCase();
+  const suggestions = [
+    ...columnSuggestions,
+    buildMarkdownKeywordSuggestion(monaco, position, context, {
+      label: "rows.length",
+      insertText: "rows.length",
+      detail: "Number of returned rows",
+    }),
+    buildMarkdownKeywordSuggestion(monaco, position, context, {
+      label: "first.",
+      insertText: "first.",
+      detail: "First row column access",
+    }),
+    buildMarkdownKeywordSuggestion(monaco, position, context, {
+      label: "row[0].",
+      insertText: "row[0].",
+      detail: "Indexed row column access",
+    }),
+    buildMarkdownKeywordSuggestion(monaco, position, context, {
+      label: "row0.",
+      insertText: "row0.",
+      detail: "Indexed row shorthand column access",
+    }),
+  ];
+
+  return suggestions.filter((suggestion) => {
+    const label = String(suggestion.label);
+    return !partialLower || label.toLowerCase().includes(partialLower);
+  });
+}
+
+function buildMarkdownColumnSuggestions(
+  monaco: Monaco,
+  position: { lineNumber: number; column: number },
+  context: MarkdownInterpolationContext,
+  columns: string[],
+) {
+  const uniqueColumns = compactUnique(columns);
+
+  return uniqueColumns.map((column) => ({
+    label: context.prefix ? `${context.prefix}${column}` : column,
+    kind: monaco.languages.CompletionItemKind.Field,
+    detail: context.prefix
+      ? `Insert ${context.prefix}${column}`
+      : `Insert ${column} from the first row`,
+    insertText: column,
+    range: {
+      startLineNumber: position.lineNumber,
+      endLineNumber: position.lineNumber,
+      startColumn: position.column - context.partial.length,
+      endColumn: position.column,
+    },
+  }));
+}
+
+function buildMarkdownKeywordSuggestion(
+  monaco: Monaco,
+  position: { lineNumber: number; column: number },
+  context: MarkdownInterpolationContext,
+  option: {
+    label: string;
+    insertText: string;
+    detail: string;
+  },
+) {
+  return {
+    label: option.label,
+    kind: monaco.languages.CompletionItemKind.Variable,
+    detail: option.detail,
+    insertText: option.insertText,
+    range: {
+      startLineNumber: position.lineNumber,
+      endLineNumber: position.lineNumber,
+      startColumn: position.column - context.partial.length,
+      endColumn: position.column,
+    },
+  };
 }
 
 function buildVisualizationMeta({
