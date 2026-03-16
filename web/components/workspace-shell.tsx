@@ -105,6 +105,7 @@ export function WorkspaceShell() {
     inspectResult,
     inspectLoading,
     materializeLoading,
+    pipelineMaterializeLoading,
     materializeStatus,
     materializeError,
     hasInspectData,
@@ -115,6 +116,7 @@ export function WorkspaceShell() {
     setResultTab,
     runInspectForAsset,
     runMaterializeForAsset,
+    runMaterializePipeline,
     setMaterializeBatchResult,
     clearResultsAfterDelete,
   } = useAssetResults();
@@ -330,6 +332,21 @@ export function WorkspaceShell() {
 
   const handleCreatePipeline = openCreatePipelineDialog;
 
+  const handleRunPipeline = useCallback(() => {
+    if (!pipeline || materializeLoading) {
+      return;
+    }
+
+    void runMaterializePipeline(pipeline.id, async () => {
+      await refreshPipelineMaterialization(pipeline.id).catch(() => undefined);
+    });
+  }, [
+    materializeLoading,
+    pipeline,
+    refreshPipelineMaterialization,
+    runMaterializePipeline,
+  ]);
+
   const handleConfirmDeletePipeline = useCallback(() => {
     if (!pipeline || deletePipelineLoading) {
       return;
@@ -519,6 +536,9 @@ export function WorkspaceShell() {
                 setTheme((current) => (current === "dark" ? "light" : "dark"))
               }
               onCreatePipeline={handleCreatePipeline}
+              onRunPipeline={handleRunPipeline}
+              canRunPipeline={Boolean(pipeline)}
+              runPipelineLoading={pipelineMaterializeLoading}
               onDeletePipeline={() => setDeletePipelineDialogOpen(true)}
               canDeletePipeline={Boolean(pipeline)}
               deletePipelineLoading={deletePipelineLoading}
@@ -541,6 +561,7 @@ export function WorkspaceShell() {
                 inspectResult={inspectResult}
                 inspectLoading={inspectLoading}
                 materializeLoading={materializeLoading}
+                pipelineMaterializeLoading={pipelineMaterializeLoading}
                 hasInspectData={hasInspectData}
                 hasMaterializeData={hasMaterializeData}
                 effectiveResultTab={effectiveResultTab}

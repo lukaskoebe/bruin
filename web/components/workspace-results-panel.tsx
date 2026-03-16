@@ -1,5 +1,6 @@
 "use client";
 
+import { Play } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Spinner } from "@/components/ui/spinner";
 import { VirtualDataTable } from "@/components/virtual-data-table";
@@ -9,6 +10,7 @@ type Props = {
   inspectResult: AssetInspectResponse | null;
   inspectLoading: boolean;
   materializeLoading: boolean;
+  pipelineMaterializeLoading?: boolean;
   hasInspectData: boolean;
   hasMaterializeData: boolean;
   effectiveResultTab: "inspect" | "materialize";
@@ -22,6 +24,7 @@ export function WorkspaceResultsPanel({
   inspectResult,
   inspectLoading,
   materializeLoading,
+  pipelineMaterializeLoading = false,
   hasInspectData,
   hasMaterializeData,
   effectiveResultTab,
@@ -84,10 +87,22 @@ export function WorkspaceResultsPanel({
         </TabsContent>
 
         <TabsContent className="min-h-0 flex-1 p-2" value="materialize">
-          {materializeLoading ? (
-            <LoadingState label="Materializing asset..." />
+          {materializeLoading && !materializeOutputHtml && !materializeError ? (
+            <LoadingState
+              label={
+                pipelineMaterializeLoading
+                  ? "Running pipeline..."
+                  : "Materializing asset..."
+              }
+            />
           ) : (
             <div className="flex h-full min-h-0 flex-col gap-2">
+              {materializeLoading && pipelineMaterializeLoading && (
+                <div className="flex items-center gap-2 rounded border border-primary/30 bg-primary/5 px-2 py-1 text-xs text-primary">
+                  <Play className="size-3.5 animate-pulse fill-current" />
+                  Running pipeline...
+                </div>
+              )}
               {materializeStatus === "error" && (
                 <div className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
                   Materialization failed

@@ -28,6 +28,7 @@ type WorkspaceCanvasPaneProps = {
   inspectResult: AssetInspectResponse | null;
   inspectLoading: boolean;
   materializeLoading: boolean;
+  pipelineMaterializeLoading?: boolean;
   hasInspectData: boolean;
   hasMaterializeData: boolean;
   effectiveResultTab: "inspect" | "materialize";
@@ -56,6 +57,7 @@ export function WorkspaceCanvasPane({
   inspectResult,
   inspectLoading,
   materializeLoading,
+  pipelineMaterializeLoading = false,
   hasInspectData,
   hasMaterializeData,
   effectiveResultTab,
@@ -121,6 +123,7 @@ export function WorkspaceCanvasPane({
                 inspectResult={inspectResult}
                 inspectLoading={inspectLoading}
                 materializeLoading={materializeLoading}
+                pipelineMaterializeLoading={pipelineMaterializeLoading}
                 hasInspectData={hasInspectData}
                 hasMaterializeData={hasMaterializeData}
                 effectiveResultTab={effectiveResultTab}

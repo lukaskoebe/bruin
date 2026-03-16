@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, Moon, Plus, Sun, Trash2, Workflow } from "lucide-react";
+import { ChevronRight, Moon, Play, Plus, Sun, Trash2, Workflow } from "lucide-react";
 import { CSSProperties, ReactNode, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,9 @@ type Props = {
   onDeletePipeline: () => void;
   canDeletePipeline: boolean;
   deletePipelineLoading: boolean;
+  onRunPipeline: () => void;
+  canRunPipeline: boolean;
+  runPipelineLoading: boolean;
   onNavigateSelection: (pipelineId: string, assetId: string | null) => void;
 };
 
@@ -46,6 +49,9 @@ export function WorkspaceSidebar({
   onDeletePipeline,
   canDeletePipeline,
   deletePipelineLoading,
+  onRunPipeline,
+  canRunPipeline,
+  runPipelineLoading,
   onNavigateSelection,
 }: Props) {
   const [expandedPipelineIds, setExpandedPipelineIds] = useState<Set<string>>(
@@ -83,6 +89,20 @@ export function WorkspaceSidebar({
             Pipelines
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              type="button"
+              variant={runPipelineLoading ? "default" : "outline"}
+              disabled={!canRunPipeline || runPipelineLoading}
+              onClick={onRunPipeline}
+            >
+              <Play
+                className={`mr-1 inline size-3.5 ${
+                  runPipelineLoading ? "animate-pulse fill-current" : ""
+                }`}
+              />
+              {runPipelineLoading ? "Running..." : "Run"}
+            </Button>
             <Button
               size="icon-sm"
               type="button"

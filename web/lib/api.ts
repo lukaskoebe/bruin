@@ -183,6 +183,111 @@ export async function materializeAsset(assetId: string) {
   throw new Error(text || `Request failed: ${res.status}`);
 }
 
+type PipelineMaterializeStreamPayload = {
+  status?: "ok" | "error";
+  command?: string[];
+  output?: string;
+  error?: string;
+  exit_code?: number;
+  changed_asset_ids?: string[];
+  materialized_at?: string;
+  chunk?: string;
+};
+
+export async function materializePipelineStream(
+  pipelineId: string,
+  handlers: {
+    onChunk?: (chunk: string) => void;
+    onDone?: (payload: PipelineMaterializeStreamPayload) => void;
+  }
+) {
+  const res = await fetch(`/api/pipelines/${pipelineId}/materialize/stream`, {
+    method: "POST",
+    headers: {
+      Accept: "text/event-stream",
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Request failed: ${res.status}`);
+  }
+
+  if (!res.body) {
+    throw new Error("Streaming response body is not available.");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let donePayload: PipelineMaterializeStreamPayload | null = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+
+    let delimiterIndex = buffer.indexOf("\n\n");
+    while (delimiterIndex >= 0) {
+      const rawEvent = buffer.slice(0, delimiterIndex);
+      buffer = buffer.slice(delimiterIndex + 2);
+      delimiterIndex = buffer.indexOf("\n\n");
+
+      const parsed = parseSSEEvent(rawEvent);
+      if (!parsed) {
+        continue;
+      }
+
+      if (parsed.event === "output" && typeof parsed.data?.chunk === "string") {
+        handlers.onChunk?.(parsed.data.chunk);
+      }
+
+      if (parsed.event === "done") {
+        donePayload = parsed.data;
+        handlers.onDone?.(parsed.data);
+      }
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (!donePayload) {
+    throw new Error("Pipeline materialization stream ended unexpectedly.");
+  }
+
+  return donePayload;
+}
+
+function parseSSEEvent(rawEvent: string): {
+  event: string;
+  data: PipelineMaterializeStreamPayload;
+} | null {
+  const lines = rawEvent.split(/\r?\n/);
+  let event = "message";
+  const dataLines: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith("event:")) {
+      event = line.slice("event:".length).trim();
+      continue;
+    }
+
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trim());
+    }
+  }
+
+  if (dataLines.length === 0) {
+    return null;
+  }
+
+  return {
+    event,
+    data: JSON.parse(dataLines.join("\n")) as PipelineMaterializeStreamPayload,
+  };
+}
+
 export async function getPipelineMaterialization(pipelineId: string) {
   const res = await fetch(`/api/pipelines/${pipelineId}/materialization`, {
     method: "GET",

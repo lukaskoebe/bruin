@@ -120,8 +120,6 @@ type workspaceEvent struct {
 	ChangedAssetIDs []string       `json:"changed_asset_ids,omitempty"`
 }
 
-
-
 type webServer struct {
 	workspaceRoot string
 	staticDir     string
@@ -287,6 +285,7 @@ func (s *webServer) registerRoutes(router chi.Router) {
 	router.Put("/api/pipelines", s.handleUpdatePipeline)
 	router.Delete("/api/pipelines/{id}", s.handleDeletePipeline)
 	router.Get("/api/pipelines/{id}/materialization", s.handleGetPipelineMaterialization)
+	router.Post("/api/pipelines/{id}/materialize/stream", s.handleMaterializePipelineStream)
 	router.Post("/api/pipelines/{id}/assets", s.handleCreateAsset)
 	router.Put("/api/pipelines/{pipelineID}/assets/{assetID}", s.handleUpdateAsset)
 	router.Post("/api/assets/{assetID}/fill-columns-from-db", s.handleFillColumnsFromDB)
@@ -453,6 +452,26 @@ func (s *webServer) writeAPIError(w http.ResponseWriter, status int, code, messa
 			"message": message,
 		},
 	})
+}
+
+func writeSSEJSON(w http.ResponseWriter, flusher http.Flusher, event string, body any) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	if event != "" {
+		if _, err := fmt.Fprintf(w, "event: %s\n", event); err != nil {
+			return err
+		}
+	}
+
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
+		return err
+	}
+
+	flusher.Flush()
+	return nil
 }
 
 func (s *webServer) handleGetWorkspace(w http.ResponseWriter, _ *http.Request) {
@@ -673,10 +692,10 @@ func (s *webServer) handleGetPipelineMaterialization(w http.ResponseWriter, r *h
 }
 
 type createAssetRequest struct {
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	Path    string `json:"path"`
-	Content string `json:"content"`
+	Name          string `json:"name"`
+	Type          string `json:"type"`
+	Path          string `json:"path"`
+	Content       string `json:"content"`
 	SourceAssetID string `json:"source_asset_id"`
 }
 
@@ -1492,13 +1511,13 @@ func (s *webServer) handleMaterializeAsset(w http.ResponseWriter, r *http.Reques
 	affected := s.findMaterializationInspectIDs(assetID)
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"status":             "ok",
-		"command":            cmdArgs,
-		"output":             string(output),
-		"exit_code":          0,
-		"attempts":           attempts,
-		"materialized_at":    materializedAt,
-		"changed_asset_ids":  affected,
+		"status":            "ok",
+		"command":           cmdArgs,
+		"output":            string(output),
+		"exit_code":         0,
+		"attempts":          attempts,
+		"materialized_at":   materializedAt,
+		"changed_asset_ids": affected,
 	})
 }
 
@@ -1591,6 +1610,101 @@ type runRequest struct {
 	Args       []string `json:"args"`
 }
 
+func resolvePipelineRunTarget(pipelineID string) (string, error) {
+	relPath, err := decodeID(pipelineID)
+	if err != nil {
+		return "", err
+	}
+
+	cleaned := filepath.Clean(relPath)
+	base := strings.ToLower(filepath.Base(cleaned))
+	if base == "pipeline.yml" || base == "pipeline.yaml" || base == ".pipeline.yml" || base == ".pipeline.yaml" {
+		dir := filepath.Dir(cleaned)
+		if dir == "." {
+			return ".", nil
+		}
+		return filepath.ToSlash(dir), nil
+	}
+
+	return filepath.ToSlash(cleaned), nil
+}
+
+func (s *webServer) handleMaterializePipelineStream(w http.ResponseWriter, r *http.Request) {
+	pipelineID := chi.URLParam(r, "id")
+	if strings.TrimSpace(pipelineID) == "" {
+		webapi.WriteBadRequest(w, "invalid_pipeline_id", "invalid pipeline id")
+		return
+	}
+
+	target, err := resolvePipelineRunTarget(pipelineID)
+	if err != nil {
+		webapi.WriteBadRequest(w, "invalid_pipeline_id", "invalid pipeline id")
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		webapi.WriteInternalError(w, "streaming_unsupported", "streaming unsupported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	cmdArgs := []string{"run", target}
+	_ = writeSSEJSON(w, flusher, "start", map[string]any{
+		"command": cmdArgs,
+	})
+
+	output, runErr := s.runner.Stream(r.Context(), cmdArgs, func(chunk []byte) {
+		_ = writeSSEJSON(w, flusher, "output", map[string]any{
+			"chunk": string(chunk),
+		})
+	})
+
+	changedAssetIDs := make([]string, 0)
+	var materializedAt *time.Time
+	if runErr == nil {
+		now := time.Now().UTC()
+		materializedAt = &now
+		state := s.currentState()
+		for _, currentPipeline := range state.Pipelines {
+			if currentPipeline.ID != pipelineID {
+				continue
+			}
+
+			for _, asset := range currentPipeline.Assets {
+				changedAssetIDs = append(changedAssetIDs, asset.ID)
+				if strings.TrimSpace(asset.Name) != "" {
+					s.freshness.RecordMaterialization(asset.Name, now, "succeeded")
+				}
+			}
+			break
+		}
+	}
+
+	status := "ok"
+	errorMessage := ""
+	exitCode := 0
+	if runErr != nil {
+		status = "error"
+		errorMessage = runErr.Error()
+		exitCode = 1
+	}
+
+	_ = writeSSEJSON(w, flusher, "done", map[string]any{
+		"status":            status,
+		"command":           cmdArgs,
+		"output":            string(output),
+		"error":             errorMessage,
+		"exit_code":         exitCode,
+		"changed_asset_ids": changedAssetIDs,
+		"materialized_at":   materializedAt,
+	})
+}
+
 func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	var req runRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1611,7 +1725,7 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 
 	target := "."
 	if req.PipelineID != "" {
-		relPath, err := decodeID(req.PipelineID)
+		relPath, err := resolvePipelineRunTarget(req.PipelineID)
 		if err != nil {
 			webapi.WriteBadRequest(w, "invalid_pipeline_id", "invalid pipeline id")
 			return
@@ -2053,7 +2167,7 @@ func slug(input string) string {
 			b.WriteRune(r)
 			continue
 		}
-		if r == '_' || r == '-' || r == ' '  || r == '.' {
+		if r == '_' || r == '-' || r == ' ' || r == '.' {
 			b.WriteRune('_')
 		}
 	}
@@ -2204,7 +2318,6 @@ func preferredSQLAssetTypeForConnectionType(connectionType string) string {
 		return ""
 	}
 }
-
 
 func resolveConnectionTypeForName(parsedPipeline *pipeline.Pipeline, connectionName string) string {
 	if parsedPipeline == nil || strings.TrimSpace(connectionName) == "" {
@@ -2539,7 +2652,7 @@ func computePipelineFreshness(
 	)
 
 	type freshnessEval struct {
-		Fresh          bool
+		Fresh           bool
 		EffectiveUpdate *time.Time
 	}
 

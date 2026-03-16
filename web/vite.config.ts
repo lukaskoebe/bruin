@@ -12,6 +12,12 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      "^/api/pipelines/.*/materialize/stream$": {
+        target: "http://127.0.0.1:3000",
+        changeOrigin: true,
+        timeout: 0,
+        proxyTimeout: 0,
+      },
       "/api": {
         target: "http://127.0.0.1:3000",
         changeOrigin: true,

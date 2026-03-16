@@ -2,10 +2,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -13,6 +16,9 @@ import (
 type Runner interface {
 	// Run executes a command and returns its output.
 	Run(ctx context.Context, args []string) ([]byte, error)
+
+	// Stream executes a command and streams incremental output chunks.
+	Stream(ctx context.Context, args []string, onChunk func([]byte)) ([]byte, error)
 
 	// RunWithRetry executes a command with DuckDB-aware retry logic.
 	RunWithRetry(ctx context.Context, args []string, retries int, initialDelay time.Duration) ([]byte, error, int)
@@ -38,6 +44,23 @@ func (r *DefaultRunner) Run(ctx context.Context, args []string) ([]byte, error) 
 	cmd := exec.CommandContext(ctx, r.BinaryPath, args...)
 	cmd.Dir = r.WorkspaceRoot
 	return cmd.CombinedOutput()
+}
+
+// Stream executes a command and streams stdout/stderr chunks as they are produced.
+func (r *DefaultRunner) Stream(ctx context.Context, args []string, onChunk func([]byte)) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, r.BinaryPath, args...)
+	cmd.Dir = r.WorkspaceRoot
+
+	buffer := bytes.NewBuffer(nil)
+	writer := &streamCaptureWriter{
+		onChunk: onChunk,
+		buffer:  buffer,
+	}
+	cmd.Stdout = writer
+	cmd.Stderr = writer
+
+	err := cmd.Run()
+	return buffer.Bytes(), err
 }
 
 // RunWithRetry executes a command with DuckDB-aware retry logic.
@@ -113,3 +136,27 @@ var AllowedCommands = map[string]bool{
 func IsCommandAllowed(command string) bool {
 	return AllowedCommands[strings.ToLower(command)]
 }
+
+type streamCaptureWriter struct {
+	mu      sync.Mutex
+	buffer  *bytes.Buffer
+	onChunk func([]byte)
+}
+
+func (w *streamCaptureWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if _, err := w.buffer.Write(p); err != nil {
+		return 0, err
+	}
+
+	if w.onChunk != nil {
+		chunk := append([]byte(nil), p...)
+		w.onChunk(chunk)
+	}
+
+	return len(p), nil
+}
+
+var _ io.Writer = (*streamCaptureWriter)(nil)

@@ -2,16 +2,22 @@
 
 import AnsiToHtml from "ansi-to-html";
 import { useAtom, useSetAtom } from "jotai";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import useSWRMutation from "swr/mutation";
 
 import { assetResultsAtom, changedAssetIdsAtom } from "@/lib/atoms";
-import { inspectAsset, materializeAsset } from "@/lib/api";
+import {
+  inspectAsset,
+  materializeAsset,
+  materializePipelineStream,
+} from "@/lib/api";
 import { AssetInspectResponse } from "@/lib/types";
 
 export function useAssetResults() {
   const [results, setResults] = useAtom(assetResultsAtom);
   const setChangedAssetIds = useSetAtom(changedAssetIdsAtom);
+  const [pipelineMaterializeLoading, setPipelineMaterializeLoading] =
+    useState(false);
   const {
     inspectResult,
     materializeOutput,
@@ -41,13 +47,16 @@ export function useAssetResults() {
     );
   }, [inspectLoading, setResults]);
 
+  const effectiveMaterializeLoading =
+    materializeLoading || pipelineMaterializeLoading;
+
   useEffect(() => {
     setResults((previous) =>
-      previous.materializeLoading === materializeLoading
+      previous.materializeLoading === effectiveMaterializeLoading
         ? previous
-        : { ...previous, materializeLoading }
+        : { ...previous, materializeLoading: effectiveMaterializeLoading }
     );
-  }, [materializeLoading, setResults]);
+  }, [effectiveMaterializeLoading, setResults]);
 
   const setResultTab = (tab: "inspect" | "materialize") => {
     setResults((previous) => ({
@@ -60,9 +69,14 @@ export function useAssetResults() {
     inspectResult && (inspectResult.rows.length > 0 || inspectResult.error)
   );
   const hasMaterializeData =
-    materializeOutput.trim().length > 0 || materializeError.trim().length > 0;
+    materializeOutput.trim().length > 0 ||
+    materializeError.trim().length > 0 ||
+    effectiveMaterializeLoading;
   const hasResultData =
-    hasInspectData || hasMaterializeData || inspectLoading || materializeLoading;
+    hasInspectData ||
+    hasMaterializeData ||
+    inspectLoading ||
+    effectiveMaterializeLoading;
 
   const ansiConverter = useMemo(() => new AnsiToHtml({ escapeXML: true }), []);
   const materializeOutputHtml = useMemo(() => {
@@ -162,6 +176,70 @@ export function useAssetResults() {
     }
   };
 
+  const runMaterializePipeline = async (
+    pipelineId: string,
+    refresh?: () => Promise<void> | void
+  ) => {
+    setPipelineMaterializeLoading(true);
+    setResults((previous) => ({
+      ...previous,
+      materializeOutput: "",
+      materializeStatus: null,
+      materializeError: "",
+      resultTab: "materialize",
+    }));
+
+    try {
+      const result = await materializePipelineStream(pipelineId, {
+        onChunk: (chunk) => {
+          setResults((previous) => ({
+            ...previous,
+            materializeOutput: previous.materializeOutput + chunk,
+            resultTab: "materialize",
+          }));
+        },
+      });
+
+      setResults((previous) => ({
+        ...previous,
+        materializeOutput: result.output ?? previous.materializeOutput,
+        materializeStatus: result.status ?? "error",
+        materializeError: result.error ?? "",
+        resultTab: "materialize",
+      }));
+
+      const affectedIds = result.changed_asset_ids ?? [];
+      if (affectedIds.length > 0) {
+        setChangedAssetIds((prev: Set<string>) => {
+          const next = new Set(prev);
+          for (const id of affectedIds) {
+            next.add(id);
+          }
+          return next;
+        });
+      }
+
+      return result;
+    } catch (error) {
+      setResults((previous) => ({
+        ...previous,
+        materializeStatus: "error",
+        materializeError: String(error),
+        materializeOutput:
+          previous.materializeOutput +
+          (previous.materializeOutput ? "\n" : "") +
+          String(error),
+        resultTab: "materialize",
+      }));
+      return null;
+    } finally {
+      setPipelineMaterializeLoading(false);
+      if (refresh) {
+        await refresh();
+      }
+    }
+  };
+
   const setMaterializeBatchResult = (
     output: string,
     status: "ok" | "error",
@@ -188,7 +266,8 @@ export function useAssetResults() {
   return {
     inspectResult,
     inspectLoading,
-    materializeLoading,
+    materializeLoading: effectiveMaterializeLoading,
+    pipelineMaterializeLoading,
     materializeStatus,
     materializeError,
     hasInspectData,
@@ -199,6 +278,7 @@ export function useAssetResults() {
     setResultTab,
     runInspectForAsset,
     runMaterializeForAsset,
+    runMaterializePipeline,
     setMaterializeBatchResult,
     clearResultsAfterDelete,
   };
