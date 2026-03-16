@@ -48,6 +48,80 @@ function parseDotPrefix(
   return { tablePart: match[1], columnPrefix: match[2] };
 }
 
+function buildAliasMap(
+  sqlText: string,
+  tables: SchemaTable[],
+): Map<string, SchemaTable> {
+  const aliasMap = new Map<string, SchemaTable>();
+  const relationPattern =
+    /\b(?:from|join|into|update)\s+([\w.]+)(?:\s+(?:as\s+)?([a-zA-Z_]\w*))?/gi;
+
+  for (const match of sqlText.matchAll(relationPattern)) {
+    const identifier = match[1];
+    const alias = match[2];
+    if (!identifier || !alias) {
+      continue;
+    }
+
+    const table = findTableByIdentifier(tables, identifier);
+    if (!table) {
+      continue;
+    }
+
+    aliasMap.set(alias.toLowerCase(), table);
+  }
+
+  return aliasMap;
+}
+
+function resolveTableReference(
+  tables: SchemaTable[],
+  aliasMap: Map<string, SchemaTable>,
+  identifier: string,
+): SchemaTable | undefined {
+  const aliasMatch = aliasMap.get(identifier.toLowerCase());
+  if (aliasMatch) {
+    return aliasMatch;
+  }
+
+  return findTableByIdentifier(tables, identifier);
+}
+
+function collectColumnSuggestions(
+  monaco: Monaco,
+  tables: SchemaTable[],
+  aliasMap: Map<string, SchemaTable>,
+  range: MonacoNS.IRange,
+): MonacoNS.languages.CompletionItem[] {
+  const suggestions: MonacoNS.languages.CompletionItem[] = [];
+  const seen = new Set<string>();
+
+  const scopedTables = aliasMap.size > 0 ? Array.from(new Set(aliasMap.values())) : tables;
+
+  for (const table of scopedTables) {
+    for (const column of table.columns) {
+      const key = column.name.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+
+      const typeLabel = column.type ? ` (${column.type})` : "";
+      suggestions.push({
+        label: column.name,
+        kind: monaco.languages.CompletionItemKind.Field,
+        detail: `${table.shortName}.${column.name}${typeLabel}`,
+        documentation: column.description || undefined,
+        insertText: column.name,
+        range,
+        sortText: column.primaryKey ? "1" : "2",
+      });
+    }
+  }
+
+  return suggestions;
+}
+
 /**
  * Extract the SQL identifier (possibly dot-qualified) under or adjacent to the
  * cursor position.  Used for go-to-definition.
@@ -100,6 +174,18 @@ function isInTablePosition(textBeforeCursor: string): boolean {
   return /(?:FROM|JOIN|INTO|UPDATE|TABLE|VIEW)\s+[\w."]*$/i.test(normalized);
 }
 
+function isLikelyColumnPosition(textBeforeCursor: string): boolean {
+  const normalized = textBeforeCursor.replace(/\s+/g, " ").toUpperCase();
+
+  if (isInTablePosition(textBeforeCursor)) {
+    return false;
+  }
+
+  return /(?:SELECT|WHERE|AND|OR|ON|HAVING|GROUP BY|ORDER BY|BY|,|\()\s*[\w"]*$/i.test(
+    normalized,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Provider registration
 // ---------------------------------------------------------------------------
@@ -139,13 +225,24 @@ export function registerSQLProviders(
 
         const lineContent = model.getLineContent(position.lineNumber);
         const textBeforeCursor = lineContent.slice(0, position.column - 1);
+        const sqlTextBeforeCursor = model.getValueInRange({
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column,
+        });
+        const aliasMap = buildAliasMap(sqlTextBeforeCursor, tables);
 
         const suggestions: MonacoNS.languages.CompletionItem[] = [];
 
         // --- Column completions after `table.` ---
         const dotPrefix = parseDotPrefix(textBeforeCursor);
         if (dotPrefix) {
-          const table = findTableByIdentifier(tables, dotPrefix.tablePart);
+          const table = resolveTableReference(
+            tables,
+            aliasMap,
+            dotPrefix.tablePart,
+          );
           if (table && table.columns.length > 0) {
             // Adjust the replacement range to cover only the column prefix.
             const columnRange: MonacoNS.IRange = {
@@ -174,6 +271,13 @@ export function registerSQLProviders(
 
         // --- Table completions ---
         const inTableCtx = isInTablePosition(textBeforeCursor);
+        const inColumnCtx = isLikelyColumnPosition(textBeforeCursor);
+
+        if (inColumnCtx) {
+          suggestions.push(
+            ...collectColumnSuggestions(monaco, tables, aliasMap, range),
+          );
+        }
 
         for (const table of tables) {
           const priority = table.isBruinAsset ? "0" : "1";
@@ -191,7 +295,7 @@ export function registerSQLProviders(
               : undefined,
             insertText: table.name,
             range,
-            sortText: inTableCtx ? priority : `2${priority}`,
+            sortText: inTableCtx ? priority : `4${priority}`,
           });
 
           // Also offer the short name if it differs.
@@ -205,7 +309,7 @@ export function registerSQLProviders(
               detail: `${kindTag}: ${table.name}`,
               insertText: table.name,
               range,
-              sortText: inTableCtx ? `${priority}b` : `2${priority}b`,
+              sortText: inTableCtx ? `${priority}b` : `4${priority}b`,
             });
           }
         }
