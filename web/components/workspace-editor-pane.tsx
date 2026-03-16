@@ -51,6 +51,7 @@ type WorkspaceEditorPaneProps = {
   assetEditorTab: "configuration" | "checks" | "visualization";
   form: UseFormReturn<AssetConfigForm>;
   assetColumns: Array<{ name?: string }>;
+  assetPreviewRows: Record<string, unknown>[];
   onEditorTabChange: (
     value: "configuration" | "checks" | "visualization"
   ) => void;
@@ -86,6 +87,7 @@ export function WorkspaceEditorPane({
   assetEditorTab,
   form,
   assetColumns,
+  assetPreviewRows,
   onEditorTabChange,
   onEditorChange,
   onMaterializeSelectedAsset,
@@ -310,9 +312,10 @@ export function WorkspaceEditorPane({
                           .filter(Boolean) as string[]
                       }
                       disabled={!asset || !pipelineId}
-                      key={`${asset.id}:${JSON.stringify(asset.meta ?? {})}`}
+                      key={asset.id}
                       meta={asset.meta}
                       monacoTheme={monacoTheme}
+                      previewRows={assetPreviewRows}
                       onSave={onSaveVisualizationSettings}
                     />
                   )}

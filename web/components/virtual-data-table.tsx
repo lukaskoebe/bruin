@@ -65,7 +65,10 @@ export function VirtualDataTable({
 
       <div ref={parentRef} style={{ height }} className="overflow-auto">
         <div
-          style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: "relative" }}
+          style={{
+            height: `${rowVirtualizer.getTotalSize()}px`,
+            position: "relative",
+          }}
         >
           {virtualRows.map((virtualRow) => {
             const row = rows[virtualRow.index] ?? {};
@@ -83,7 +86,7 @@ export function VirtualDataTable({
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
-                {fallbackColumns.map((column) => (
+                {fallbackColumns.map((column) =>
                   (() => {
                     const cell = formatCell(row[column]);
                     return (
@@ -98,7 +101,7 @@ export function VirtualDataTable({
                       </div>
                     );
                   })()
-                ))}
+                )}
               </div>
             );
           })}

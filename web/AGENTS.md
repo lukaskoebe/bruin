@@ -1,35 +1,224 @@
 ### Project Context: Bruin Web
 
-**Project Overview**
-We are building "Bruin Web," a local-first web interface for the Bruin CLI data pipeline tool. Bruin is a CLI tool written in Go that allows users to ingest data, transform it using SQL/Python, run quality checks, and manage glossaries. Bruin Web aims to take the developer experience of Bruin (and its VS Code extension) and translate it into a highly interactive, browser-based visual workspace.
+## Overview
 
-The application will be compiled into a single executable. The frontend is a statically exported React app embedded directly into a Go-based HTTP server using `go:embed`.
+Bruin Web is the local-first browser UI for the Bruin CLI. It is not a standalone SaaS app and it is not backed by a Node.js server. The frontend is a static React application embedded into the Go Bruin binary and served by the Go HTTP server.
 
-**The Tech Stack**
+The app is centered around an interactive lineage canvas, a resizable editor pane, live workspace updates from the filesystem, and direct manipulation of Bruin pipelines and assets.
 
-- **Backend:** Go (Native Bruin core) wrapped in a custom HTTP server.
-- **Frontend Framework:** React (Tanstack Router, exported as static HTML/JS/CSS).
-- **UI Component Library:** shadcn/ui (Tailwind CSS, Radix UI primitives).
-- **Visual Canvas:** React Flow (for interactive DAG/lineage visualization).
-- **Code Editor:** Monaco Editor (`@monaco-editor/react`) for SQL, Python, and YAML.
-- **Client State Management:** Jotai (for complex canvas and editor state).
-- **Real-time Communication:** Server-Sent Events (SSE).
+## Current Stack
 
-**Core Architecture & Data Flow**
+- **Backend:** Go HTTP server in the main Bruin repo
+- **Frontend:** React 19 + TypeScript
+- **Routing:** TanStack Router
+- **Build Tool:** Vite via `rolldown-vite`
+- **Styling:** Tailwind CSS v4 + shadcn/ui + Radix primitives
+- **Canvas / DAG:** React Flow
+- **Editor:** Monaco via `@monaco-editor/react`
+- **State:** Jotai
+- **Forms:** React Hook Form
+- **Charts:** Recharts
+- **Panels:** `react-resizable-panels`
+- **Tables:** `@tanstack/react-virtual`
+- **Realtime Sync:** Server-Sent Events (SSE)
 
-1. **The Go Reactive Bridge:** The backend is not a traditional CRUD server; it is a file-system bridge. The Go server uses `fsnotify` to recursively watch the user's Bruin workspace (e.g., `pipeline.yml`, `glossary.yml`, and the `assets/` directory).
-2. **Server-Sent Events (SSE):** When a file is created, modified, or deleted (whether by the web UI or an external CLI command), the Go server immediately parses the changes and pushes the updated pipeline state to the React frontend via an SSE endpoint (`/api/events`).
-3. **Automated UI Synchronization:** The frontend listens to the SSE stream. The UI must update automatically and instantly without requiring the user to refresh the page or click a "sync" button.
-4. **Debounced Writes:** When a user types in the Monaco editor or tweaks settings in the UI, Jotai updates the local state immediately for a snappy UX. However, file system writes back to the Go server (`PUT /api/assets`) must be debounced (e.g., 400-500ms) to prevent locking the Go server or triggering infinite SSE loops.
+## Runtime Model
 
-**User Experience (UX) Requirements**
+### Single source of truth
 
-- **Visual-First Canvas:** The primary view is a React Flow drawing board. Users can right-click or drag-and-drop to create new data assets (nodes). The DAG connects nodes based on their Bruin `depends_on` relationships.
-- **Split-Pane Editing:** Clicking a node on the canvas opens a sliding side-panel or resizable pane. This pane contains the Monaco Editor for the raw code (SQL/Python) alongside shadcn/ui forms to configure asset metadata (policies, quality checks, variables).
-- **AI Integration:** The UI should include a chat panel that connects to the Bruin MCP (Model Context Protocol) server. Users can ask the AI to query data, compare tables, or build pipelines, and the resulting code should integrate directly into the visual workspace.
+The **filesystem is authoritative**. Frontend state exists only for immediate UX responsiveness. If a conflict exists between local UI state and what comes back from the backend, backend/workspace state wins.
 
-**Strict Constraints & Rules for the Agent**
+### How data flows
 
-- **No Node.js Backend:** Do not write any Node.js API routes (`app/api/...`) that rely on server-side execution for the final build. The React app will be exported using `output: 'export'`. All `/api/...` calls made by the frontend must assume they are hitting the Go HTTP server running on the same host.
-- **Single Source of Truth:** The file system is the ultimate source of truth. Jotai is only used for immediate UI feedback and managing the React Flow canvas state.
-- **Do Not Over-fetch:** Rely on the SSE connection for state updates. Avoid writing polling mechanisms (`setInterval`) to check for pipeline changes.
+1. The Go server watches Bruin workspace files.
+2. The frontend loads initial state from `/api/workspace`.
+3. The frontend subscribes to `/api/events` via SSE.
+4. All create/update/delete/materialize/inspect actions call Go endpoints under `/api/...`.
+5. SSE updates reconcile the UI after writes, CLI usage, or external file edits.
+
+### Important sync rule
+
+Do **not** add polling for workspace changes. Use SSE-driven updates.
+
+## Dev Server Behavior
+
+- Local frontend dev server runs on **5173**.
+- Vite proxies `/api` to the Go server on **http://127.0.0.1:3000**.
+- Production output is static and must remain compatible with Go embedding.
+
+See [vite.config.ts](vite.config.ts).
+
+## Current App Shape
+
+### Entry points
+
+- [src/main.tsx](src/main.tsx) mounts the app.
+- [src/router.tsx](src/router.tsx) defines the TanStack Router root and the `/` route.
+- [src/providers.tsx](src/providers.tsx) wires app-level providers.
+
+### Main screen
+
+The primary UI is rendered by [components/workspace-shell.tsx](components/workspace-shell.tsx).
+
+It coordinates:
+
+- workspace sync
+- canvas nodes and edges
+- selection state
+- onboarding/help state
+- create/delete dialogs
+- inspect/materialize results
+- debounced asset saving
+- persisted node positions
+- sidebar + canvas + editor layout
+
+### Key visual areas
+
+- [components/workspace-sidebar.tsx](components/workspace-sidebar.tsx): pipeline list, selection, collapse state, pipeline actions
+- [components/workspace-canvas-pane.tsx](components/workspace-canvas-pane.tsx): React Flow canvas
+- [components/workspace-editor-pane.tsx](components/workspace-editor-pane.tsx): Monaco editor + configuration + visualization settings
+- [components/workspace-results-panel.tsx](components/workspace-results-panel.tsx): inspect/materialize output
+- [components/workspace-dialogs.tsx](components/workspace-dialogs.tsx): confirmation and creation dialogs
+
+## Important Hooks
+
+- [hooks/use-workspace-sync.ts](hooks/use-workspace-sync.ts)
+  - fetches `/api/workspace`
+  - subscribes to `/api/events`
+  - preserves asset `content` on lite SSE updates when appropriate
+
+- [hooks/use-asset-actions.ts](hooks/use-asset-actions.ts)
+  - create/update/delete asset
+  - create/delete pipeline
+
+- [hooks/use-asset-canvas-interactions.ts](hooks/use-asset-canvas-interactions.ts)
+  - click/right-click asset creation
+  - downstream child asset creation from nodes
+  - draft-node lifecycle and outside-click dismissal
+
+- [hooks/use-debounced-asset-save.ts](hooks/use-debounced-asset-save.ts)
+  - debounced writes back to the backend
+
+- [hooks/use-asset-results.ts](hooks/use-asset-results.ts)
+  - inspect and materialize flows
+
+- [hooks/use-asset-previews.ts](hooks/use-asset-previews.ts)
+  - node preview inspection data and pagination
+
+- [hooks/use-pipeline-materialization-state.ts](hooks/use-pipeline-materialization-state.ts)
+  - freshness/materialization enrichment
+
+- [hooks/use-persisted-node-positions.ts](hooks/use-persisted-node-positions.ts)
+  - stores custom graph positions on the client side
+
+## Important Libraries / Helpers
+
+- [lib/api.ts](lib/api.ts): frontend API surface for all Go endpoints
+- [lib/types.ts](lib/types.ts): shared web-side data types
+- [lib/graph.ts](lib/graph.ts): React Flow node/edge generation and layout helpers
+- [lib/asset-visualization.ts](lib/asset-visualization.ts): visualization metadata parsing
+- [lib/atoms.ts](lib/atoms.ts): Jotai atoms for workspace, selection, editor, and tabs
+- [lib/sql-schema.ts](lib/sql-schema.ts): schema context for SQL intellisense
+
+## Supported UX Patterns
+
+These behaviors already exist and should be preserved when changing the UI:
+
+- **Live SSE synchronization** for workspace changes
+- **Debounced asset saves** instead of write-on-every-keystroke
+- **Visual-first node creation** from canvas interactions
+- **Downstream asset creation** directly from asset nodes
+- **Pipeline deletion** with confirmation dialog
+- **Asset renaming** through the editor form
+- **Split-pane editing** with Monaco and metadata tabs
+- **Inspect/materialize loading states** that replace old content immediately
+- **Table, chart, and markdown visualization modes**
+- **Bar chart support** in inspect views and node previews
+- **Dense table mode** via visualization metadata
+- **Fresh/stale materialization indicators**
+- **Asset type/provider icons** based on real asset type semantics
+- **Initial loading screen** before workspace state is available
+- **Collapsible active pipeline** while keeping it selected
+
+## Visualization Metadata
+
+Visualization settings are driven by asset metadata. Common keys include:
+
+- `web_view`
+- `web_chart_type`
+- `web_chart_x`
+- `web_chart_series`
+- `web_chart_title`
+- `web_table_columns`
+- `web_table_limit`
+- `web_table_dense`
+- `web_markdown_column`
+- `web_markdown_template`
+
+When updating visualization behavior, keep both the full inspect view and the asset-node preview in sync.
+
+## Current API Surface
+
+Frontend code already calls these Go endpoints through [lib/api.ts](lib/api.ts):
+
+- `GET /api/workspace`
+- `GET /api/events`
+- `POST /api/pipelines`
+- `DELETE /api/pipelines/:pipelineId`
+- `POST /api/pipelines/:pipelineId/assets`
+- `PUT /api/pipelines/:pipelineId/assets/:assetId`
+- `DELETE /api/pipelines/:pipelineId/assets/:assetId`
+- `GET /api/assets/:assetId/inspect`
+- `POST /api/assets/:assetId/materialize`
+- `GET /api/pipelines/:pipelineId/materialization`
+- `GET /api/assets/freshness`
+- `GET /api/assets/:assetId/columns/infer`
+- `PUT /api/assets/:assetId/columns`
+- `POST /api/assets/:assetId/fill-columns-from-db`
+
+Do not introduce frontend assumptions that require a separate server runtime.
+
+## Constraints for Future Changes
+
+### Do
+
+- Prefer updating existing hooks/components over introducing parallel state systems.
+- Keep writes debounced when editing asset content.
+- Let SSE reconcile the final workspace state.
+- Preserve current React Flow interactions and selection behavior.
+- Use Bruin/Go APIs as the source for filesystem-changing operations.
+- Keep layouts shrink-safe with `min-w-0`, overflow control, and truncation where needed.
+
+### Do not
+
+- Do not add Node.js-only API routes.
+- Do not add polling for workspace refresh.
+- Do not bypass the Go server for filesystem writes.
+- Do not treat Jotai as persistent truth.
+- Do not infer asset semantics from UI labels when canonical metadata is available.
+
+## Layout Notes
+
+The right editor pane is sensitive to flexbox overflow bugs. When touching editor-pane layout, tabs, or visualization settings:
+
+- ensure flex children that must shrink use `min-w-0`
+- avoid width rules that preserve expanded sizes after resize
+- prefer truncation over overflow for tab labels and compact controls
+- validate both expansion and shrinking of the resizable pane
+
+Relevant files:
+
+- [components/workspace-editor-pane.tsx](components/workspace-editor-pane.tsx)
+- [components/ui/tabs.tsx](components/ui/tabs.tsx)
+
+## Practical Guidance For Agents
+
+- Read existing hooks before adding new workspace behavior.
+- If a feature touches both inspect views and node previews, update both.
+- If a feature changes asset creation semantics, verify both frontend input building and backend-generated asset results.
+- Prefer small, surgical UI changes that preserve current interaction patterns.
+- Validate with a frontend build from [package.json](package.json): `npm run build`.
+
+## Summary
+
+Bruin Web is currently a Vite-built, TanStack Router-based, SSE-driven React app embedded into the Go Bruin server. It is a visual pipeline editor first, not a form-over-CRUD dashboard. Any change should respect the filesystem-first model, Go-backed APIs, real-time SSE sync, and the established canvas/editor/results workflow.

@@ -102,11 +102,7 @@ export function useAssetCanvasInteractions({
 
     window.addEventListener("pointerdown", handleWindowPointerDown, true);
     return () => {
-      window.removeEventListener(
-        "pointerdown",
-        handleWindowPointerDown,
-        true
-      );
+      window.removeEventListener("pointerdown", handleWindowPointerDown, true);
     };
   }, [newAssetDraft]);
 
@@ -213,10 +209,12 @@ export function useAssetCanvasInteractions({
       const renderedSourceNode = reactFlowInstance?.getNode(sourceAssetId);
       const sourcePosition = storedNodePositions[sourceAssetId] ??
         sourceNode?.position ?? { x: 32, y: 32 };
-      const renderedSourceNodeWithMeasurement =
-        renderedSourceNode as NodeWithMeasuredHeight | undefined;
-      const sourceNodeWithMeasurement =
-        sourceNode as NodeWithMeasuredHeight | undefined;
+      const renderedSourceNodeWithMeasurement = renderedSourceNode as
+        | NodeWithMeasuredHeight
+        | undefined;
+      const sourceNodeWithMeasurement = sourceNode as
+        | NodeWithMeasuredHeight
+        | undefined;
       const sourceHeight =
         renderedSourceNodeWithMeasurement?.measured?.height ??
         renderedSourceNode?.height ??
@@ -257,7 +255,8 @@ export function useAssetCanvasInteractions({
         node.type === "assetNode"
           ? {
               ...(node.data as Record<string, unknown>),
-              onCreateDownstreamAsset: () => handleCreateDownstreamAsset(node.id),
+              onCreateDownstreamAsset: () =>
+                handleCreateDownstreamAsset(node.id),
             }
           : node.data,
       position: storedNodePositions[node.id] ?? node.position,

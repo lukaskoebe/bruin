@@ -30,13 +30,17 @@ export function WorkspaceResultsPanel({
   materializeOutputHtml,
   onResultTabChange,
 }: Props) {
-  const inspectErrorDetails = extractInspectErrorDetails(inspectResult?.raw_output);
+  const inspectErrorDetails = extractInspectErrorDetails(
+    inspectResult?.raw_output
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col border-t bg-muted/20">
       <Tabs
         className="flex min-h-0 flex-1 flex-col"
-        onValueChange={(value) => onResultTabChange(value as "inspect" | "materialize")}
+        onValueChange={(value) =>
+          onResultTabChange(value as "inspect" | "materialize")
+        }
         value={effectiveResultTab}
       >
         <div className="flex items-center justify-between border-b px-3 py-2">
@@ -124,7 +128,10 @@ function extractInspectErrorDetails(rawOutput: string | undefined): string {
   }
 
   try {
-    const parsed = JSON.parse(trimmed) as { error?: unknown; message?: unknown };
+    const parsed = JSON.parse(trimmed) as {
+      error?: unknown;
+      message?: unknown;
+    };
     if (typeof parsed.error === "string" && parsed.error.trim()) {
       return parsed.error.trim();
     }

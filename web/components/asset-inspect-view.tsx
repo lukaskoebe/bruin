@@ -85,15 +85,12 @@ export function AssetInspectView({ columns, rows, meta }: Props) {
   }
 
   if (view === "chart") {
-    const chart = buildLineChartSpec(rows, meta);
+    const chart = buildLineChartSpec(rows, meta, columns);
     if (!chart) {
       return (
-        <VirtualDataTable
-          columns={columns}
-          rows={rows}
-          height={200}
-          dense={tableDense}
-        />
+        <div className="flex h-full items-center justify-center rounded border bg-background p-4 text-center text-sm text-muted-foreground">
+          Select chart columns to render this visualization.
+        </div>
       );
     }
 

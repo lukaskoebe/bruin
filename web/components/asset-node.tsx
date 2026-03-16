@@ -35,8 +35,8 @@ export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
   const previewError = data.preview?.error;
   const isPreviewLoading = Boolean(previewMode && data.previewLoading);
   const chart = useMemo(
-    () => buildLineChartSpec(previewRows, data.meta),
-    [data.meta, previewRows]
+    () => buildLineChartSpec(previewRows, data.meta, previewColumns),
+    [data.meta, previewColumns, previewRows]
   );
   const markdown = useMemo(
     () => buildMarkdown(data.meta, previewRows),

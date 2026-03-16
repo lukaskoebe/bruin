@@ -2,9 +2,8 @@
 
 import Editor from "@monaco-editor/react";
 import { BarChart3, EyeOff, FileText, Table2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { Button } from "@/components/ui/button";
 import {
   Combobox,
   ComboboxChip,
@@ -28,6 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { resolveChartSelection } from "@/lib/asset-visualization";
 
 export const VISUALIZATION_META_KEYS = [
   "web_view",
@@ -47,6 +47,7 @@ type VisualizationView = "none" | "chart" | "table" | "markdown";
 type Props = {
   meta?: Record<string, string>;
   columnNames: string[];
+  previewRows?: Record<string, unknown>[];
   monacoTheme: string;
   disabled?: boolean;
   onSave: (meta: Record<string, string>) => void;
@@ -55,6 +56,7 @@ type Props = {
 export function VisualizationSettingsEditor({
   meta,
   columnNames,
+  previewRows = [],
   monacoTheme,
   disabled = false,
   onSave,
@@ -100,6 +102,10 @@ export function VisualizationSettingsEditor({
 
   const sortedColumns = useMemo(() => [...columnNames].sort(), [columnNames]);
   const hasKnownSchema = sortedColumns.length > 0;
+  const inferredChartSelection = useMemo(
+    () => resolveChartSelection(undefined, previewRows, sortedColumns),
+    [previewRows, sortedColumns]
+  );
 
   const chartSeriesValue = hasKnownSchema
     ? compactUnique(chartSeriesList).join(",")
@@ -108,50 +114,121 @@ export function VisualizationSettingsEditor({
     ? compactUnique(tableColumnsList).join(",")
     : tableColumns.trim();
 
-  const handleSave = () => {
-    const nextMeta: Record<string, string> = {};
+  const currentVisualizationMeta = useMemo(
+    () => pickVisualizationMeta(meta),
+    [meta]
+  );
 
-    if (view !== "none") {
-      nextMeta.web_view = view;
+  useEffect(() => {
+    const localVisualizationMeta = buildVisualizationMeta({
+      view,
+      chartType,
+      chartX,
+      chartSeriesValue,
+      chartTitle,
+      tableColumnsValue,
+      tableLimit,
+      tableDense,
+      markdownColumn,
+      markdownTemplate,
+    });
+
+    if (
+      !areVisualizationMetaEqual(
+        currentVisualizationMeta,
+        localVisualizationMeta
+      )
+    ) {
+      return;
     }
 
-    if (view === "chart") {
-      const nextChartType = chartType.trim().toLowerCase();
-      if (nextChartType) {
-        nextMeta.web_chart_type = nextChartType;
-      }
-      if (chartX.trim()) {
-        nextMeta.web_chart_x = chartX.trim();
-      }
-      if (chartSeriesValue) {
-        nextMeta.web_chart_series = chartSeriesValue;
-      }
-      if (chartTitle.trim()) {
-        nextMeta.web_chart_title = chartTitle.trim();
-      }
+    const nextView = (meta?.web_view ?? "").trim().toLowerCase();
+    const normalizedView: VisualizationView =
+      nextView === "chart" || nextView === "table" || nextView === "markdown"
+        ? nextView
+        : "none";
+
+    const inferredX = inferredChartSelection?.xKey ?? "";
+    const inferredSeries = inferredChartSelection?.series ?? [];
+    const nextChartSeries = meta?.web_chart_series ?? inferredSeries.join(",");
+    const nextTableColumns = meta?.web_table_columns ?? "";
+
+    setView(normalizedView);
+    setChartType((meta?.web_chart_type ?? "line").trim() || "line");
+    setChartX(meta?.web_chart_x ?? inferredX);
+    setChartSeries(nextChartSeries);
+    setChartSeriesList(parseCSV(nextChartSeries));
+    setChartTitle(meta?.web_chart_title ?? "");
+    setTableColumns(nextTableColumns);
+    setTableColumnsList(parseCSV(nextTableColumns));
+    setTableLimit(meta?.web_table_limit ?? "");
+    setTableDense((meta?.web_table_dense ?? "").trim().toLowerCase() === "true");
+    setMarkdownColumn(meta?.web_markdown_column ?? "");
+    setMarkdownTemplate(meta?.web_markdown_template ?? "");
+  }, [
+    chartSeriesValue,
+    chartTitle,
+    chartType,
+    chartX,
+    currentVisualizationMeta,
+    inferredChartSelection,
+    markdownColumn,
+    markdownTemplate,
+    meta,
+    tableColumnsValue,
+    tableDense,
+    tableLimit,
+    view,
+  ]);
+
+  const nextVisualizationMeta = useMemo(
+    () =>
+      buildVisualizationMeta({
+        view,
+        chartType,
+        chartX,
+        chartSeriesValue,
+        chartTitle,
+        tableColumnsValue,
+        tableLimit,
+        tableDense,
+        markdownColumn,
+        markdownTemplate,
+      }),
+    [
+      chartSeriesValue,
+      chartTitle,
+      chartType,
+      chartX,
+      markdownColumn,
+      markdownTemplate,
+      tableColumnsValue,
+      tableDense,
+      tableLimit,
+      view,
+    ]
+  );
+
+  const latestOnSaveRef = useRef(onSave);
+  useEffect(() => {
+    latestOnSaveRef.current = onSave;
+  }, [onSave]);
+
+  useEffect(() => {
+    if (disabled) {
+      return;
     }
 
-    if (view === "table") {
-      if (tableColumnsValue) {
-        nextMeta.web_table_columns = tableColumnsValue;
-      }
-      if (tableLimit.trim()) {
-        nextMeta.web_table_limit = tableLimit.trim();
-      }
-      nextMeta.web_table_dense = tableDense ? "true" : "false";
+    if (areVisualizationMetaEqual(currentVisualizationMeta, nextVisualizationMeta)) {
+      return;
     }
 
-    if (view === "markdown") {
-      if (markdownColumn.trim()) {
-        nextMeta.web_markdown_column = markdownColumn.trim();
-      }
-      if (markdownTemplate.trim()) {
-        nextMeta.web_markdown_template = markdownTemplate;
-      }
-    }
+    const timeoutId = window.setTimeout(() => {
+      latestOnSaveRef.current(nextVisualizationMeta);
+    }, 250);
 
-    onSave(nextMeta);
-  };
+    return () => window.clearTimeout(timeoutId);
+  }, [currentVisualizationMeta, disabled, nextVisualizationMeta]);
 
   return (
     <div className="grid gap-2 ">
@@ -241,6 +318,12 @@ export function VisualizationSettingsEditor({
               />
             )}
           </div>
+
+          {!chartX.trim() || compactUnique(chartSeriesValue.split(",")).length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Select an X axis and at least one series column to render the chart.
+            </p>
+          ) : null}
 
           <div className="grid gap-1">
             <Label>Chart Title</Label>
@@ -349,18 +432,105 @@ export function VisualizationSettingsEditor({
         </>
       )}
 
-      <div className="mt-1 flex justify-end">
-        <Button
-          disabled={disabled}
-          onClick={handleSave}
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          Save Visualization
-        </Button>
+      <div className="mt-1 text-right text-xs text-muted-foreground">
+        Changes save automatically.
       </div>
     </div>
+  );
+}
+
+function buildVisualizationMeta({
+  view,
+  chartType,
+  chartX,
+  chartSeriesValue,
+  chartTitle,
+  tableColumnsValue,
+  tableLimit,
+  tableDense,
+  markdownColumn,
+  markdownTemplate,
+}: {
+  view: VisualizationView;
+  chartType: string;
+  chartX: string;
+  chartSeriesValue: string;
+  chartTitle: string;
+  tableColumnsValue: string;
+  tableLimit: string;
+  tableDense: boolean;
+  markdownColumn: string;
+  markdownTemplate: string;
+}): Record<string, string> {
+  const nextMeta: Record<string, string> = {};
+
+  if (view !== "none") {
+    nextMeta.web_view = view;
+  }
+
+  if (view === "chart") {
+    const nextChartType = chartType.trim().toLowerCase();
+    if (nextChartType) {
+      nextMeta.web_chart_type = nextChartType;
+    }
+    if (chartX.trim()) {
+      nextMeta.web_chart_x = chartX.trim();
+    }
+    if (chartSeriesValue) {
+      nextMeta.web_chart_series = chartSeriesValue;
+    }
+    if (chartTitle.trim()) {
+      nextMeta.web_chart_title = chartTitle.trim();
+    }
+  }
+
+  if (view === "table") {
+    if (tableColumnsValue) {
+      nextMeta.web_table_columns = tableColumnsValue;
+    }
+    if (tableLimit.trim()) {
+      nextMeta.web_table_limit = tableLimit.trim();
+    }
+    nextMeta.web_table_dense = tableDense ? "true" : "false";
+  }
+
+  if (view === "markdown") {
+    if (markdownColumn.trim()) {
+      nextMeta.web_markdown_column = markdownColumn.trim();
+    }
+    if (markdownTemplate.trim()) {
+      nextMeta.web_markdown_template = markdownTemplate;
+    }
+  }
+
+  return nextMeta;
+}
+
+function pickVisualizationMeta(
+  meta?: Record<string, string>
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const key of VISUALIZATION_META_KEYS) {
+    const value = meta?.[key];
+    if (value !== undefined) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function areVisualizationMetaEqual(
+  left: Record<string, string>,
+  right: Record<string, string>
+): boolean {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+
+  return leftKeys.every(
+    (key, index) => key === rightKeys[index] && left[key] === right[key]
   );
 }
 

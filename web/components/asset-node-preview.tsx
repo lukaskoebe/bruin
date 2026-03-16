@@ -63,6 +63,11 @@ export function AssetNodePreview({
       {previewMode === "chart" && chart && (
         <ChartPreview chart={chart} chartType={chartType} />
       )}
+      {previewMode === "chart" && !chart && (
+        <div className="rounded border bg-background p-2 text-[11px] text-muted-foreground">
+          Select chart columns to preview this visualization.
+        </div>
+      )}
       {previewMode === "table" && previewRows.length > 0 && (
         <TablePreview
           canLoadMore={canLoadMorePreviewRows}
@@ -106,7 +111,11 @@ export function AssetNodeMeasurement({
       ref={measurementRef}
     >
       {previewMode === "table" ? (
-        <TablePreview columns={previewColumns} dense={dense} rows={previewRows} />
+        <TablePreview
+          columns={previewColumns}
+          dense={dense}
+          rows={previewRows}
+        />
       ) : (
         <div className="rounded border bg-background p-2">
           <article className="max-w-none text-xs leading-5 text-foreground">
@@ -216,11 +225,15 @@ function TablePreview({
       className="max-h-56 overflow-auto rounded border bg-background"
       onWheelCapture={(event) => {
         const element = event.currentTarget;
-        const canScrollVertically = element.scrollHeight > element.clientHeight + 1;
-        const canScrollHorizontally = element.scrollWidth > element.clientWidth + 1;
+        const canScrollVertically =
+          element.scrollHeight > element.clientHeight + 1;
+        const canScrollHorizontally =
+          element.scrollWidth > element.clientWidth + 1;
 
-        const wantsVerticalScroll = Math.abs(event.deltaY) >= Math.abs(event.deltaX);
-        const wantsHorizontalScroll = !wantsVerticalScroll && event.deltaX !== 0;
+        const wantsVerticalScroll =
+          Math.abs(event.deltaY) >= Math.abs(event.deltaX);
+        const wantsHorizontalScroll =
+          !wantsVerticalScroll && event.deltaX !== 0;
 
         if (
           (wantsVerticalScroll && canScrollVertically) ||

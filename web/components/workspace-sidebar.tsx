@@ -83,8 +83,17 @@ export function WorkspaceSidebar({
             Pipelines
           </div>
           <div className="flex items-center gap-2">
-            <Button size="icon-sm" type="button" variant="outline" onClick={onToggleTheme}>
-              {theme === "dark" ? <Sun className="size-3.5" /> : <Moon className="size-3.5" />}
+            <Button
+              size="icon-sm"
+              type="button"
+              variant="outline"
+              onClick={onToggleTheme}
+            >
+              {theme === "dark" ? (
+                <Sun className="size-3.5" />
+              ) : (
+                <Moon className="size-3.5" />
+              )}
             </Button>
             <Button
               size="icon-sm"
@@ -95,7 +104,12 @@ export function WorkspaceSidebar({
             >
               <Trash2 className="size-3.5" />
             </Button>
-            <Button size="sm" variant="outline" onClick={onCreatePipeline} type="button">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onCreatePipeline}
+              type="button"
+            >
               <Plus className="mr-1 inline size-3" />
               New
             </Button>
@@ -113,58 +127,64 @@ export function WorkspaceSidebar({
                 const isExpanded = expandedPipelineIds.has(item.id);
 
                 return (
-                <SidebarMenuItem key={item.id}>
-                  <SidebarMenuButton
-                    isActive={isActive}
-                    onClick={() => {
-                      if (isActive) {
+                  <SidebarMenuItem key={item.id}>
+                    <SidebarMenuButton
+                      isActive={isActive}
+                      onClick={() => {
+                        if (isActive) {
+                          setExpandedPipelineIds((previous) => {
+                            const next = new Set(previous);
+                            if (next.has(item.id)) {
+                              next.delete(item.id);
+                            } else {
+                              next.add(item.id);
+                            }
+                            return next;
+                          });
+                          return;
+                        }
+
                         setExpandedPipelineIds((previous) => {
                           const next = new Set(previous);
-                          if (next.has(item.id)) {
-                            next.delete(item.id);
-                          } else {
-                            next.add(item.id);
-                          }
+                          next.add(item.id);
                           return next;
                         });
-                        return;
-                      }
+                        onNavigateSelection(
+                          item.id,
+                          item.assets[0]?.id ?? null
+                        );
+                      }}
+                      type="button"
+                    >
+                      <ChevronRight
+                        className={`size-3 transition-transform ${
+                          isExpanded ? "rotate-90" : ""
+                        }`}
+                      />
+                      <span>{item.name}</span>
+                    </SidebarMenuButton>
 
-                      setExpandedPipelineIds((previous) => {
-                        const next = new Set(previous);
-                        next.add(item.id);
-                        return next;
-                      });
-                      onNavigateSelection(item.id, item.assets[0]?.id ?? null);
-                    }}
-                    type="button"
-                  >
-                    <ChevronRight
-                      className={`size-3 transition-transform ${
-                        isExpanded ? "rotate-90" : ""
-                      }`}
-                    />
-                    <span>{item.name}</span>
-                  </SidebarMenuButton>
-
-                  {isExpanded && (
-                    <SidebarMenu className="pl-3">
-                      {item.assets.map((asset) => (
-                        <SidebarMenuItem key={asset.id}>
-                          <SidebarMenuButton
-                            isActive={asset.id === selectedAsset}
-                            onClick={() => onNavigateSelection(item.id, asset.id)}
-                            size="sm"
-                            type="button"
-                          >
-                            <span>{asset.name}</span>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      ))}
-                    </SidebarMenu>
-                  )}
-                </SidebarMenuItem>
-              )})}
+                    {isExpanded && (
+                      <SidebarMenu className="pl-3">
+                        {item.assets.map((asset) => (
+                          <SidebarMenuItem key={asset.id}>
+                            <SidebarMenuButton
+                              isActive={asset.id === selectedAsset}
+                              onClick={() =>
+                                onNavigateSelection(item.id, asset.id)
+                              }
+                              size="sm"
+                              type="button"
+                            >
+                              <span>{asset.name}</span>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        ))}
+                      </SidebarMenu>
+                    )}
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

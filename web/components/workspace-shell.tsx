@@ -152,6 +152,14 @@ export function WorkspaceShell() {
     return names.map((name) => ({ name }));
   }, [asset, inspectByAssetId]);
 
+  const assetPreviewRows = useMemo(() => {
+    if (!asset) {
+      return [] as Record<string, unknown>[];
+    }
+
+    return inspectByAssetId[asset.id]?.rows ?? inspectResult?.rows ?? [];
+  }, [asset, inspectByAssetId, inspectResult]);
+
   const graph = useMemo(
     () =>
       buildFlowFromPipeline(
@@ -572,6 +580,7 @@ export function WorkspaceShell() {
                 assetEditorTab={assetEditorTab}
                 form={form}
                 assetColumns={assetColumns}
+                assetPreviewRows={assetPreviewRows}
                 onEditorTabChange={setAssetEditorTab}
                 onEditorChange={handleEditorChange}
                 onMaterializeSelectedAsset={handleMaterializeSelectedAsset}

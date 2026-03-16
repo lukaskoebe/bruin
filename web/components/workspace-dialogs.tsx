@@ -144,7 +144,9 @@ export function WorkspaceDialogs({
             <Input
               id="create-pipeline-path"
               value={createPipelinePath}
-              onChange={(event) => onCreatePipelinePathChange(event.target.value)}
+              onChange={(event) =>
+                onCreatePipelinePathChange(event.target.value)
+              }
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();

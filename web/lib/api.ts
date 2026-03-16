@@ -49,7 +49,7 @@ export async function createAsset(
     path?: string;
     content?: string;
     source_asset_id?: string;
-  },
+  }
 ) {
   const res = await fetch(`/api/pipelines/${pipelineId}/assets`, {
     method: "POST",
