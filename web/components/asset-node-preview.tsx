@@ -117,11 +117,7 @@ export function AssetNodeMeasurement({
           rows={previewRows}
         />
       ) : (
-        <div className="rounded border bg-background p-2">
-          <article className="max-w-none text-xs leading-5 text-foreground">
-            <ReactMarkdown>{markdown}</ReactMarkdown>
-          </article>
-        </div>
+        <MarkdownPreview markdown={markdown} />
       )}
     </div>
   );
