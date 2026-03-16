@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { Play } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Spinner } from "@/components/ui/spinner";
@@ -33,9 +34,19 @@ export function WorkspaceResultsPanel({
   materializeOutputHtml,
   onResultTabChange,
 }: Props) {
+  const materializeOutputRef = useRef<HTMLPreElement | null>(null);
   const inspectErrorDetails = extractInspectErrorDetails(
     inspectResult?.raw_output
   );
+
+  useEffect(() => {
+    const element = materializeOutputRef.current;
+    if (!element) {
+      return;
+    }
+
+    element.scrollTop = element.scrollHeight;
+  }, [materializeOutputHtml, materializeLoading, effectiveResultTab]);
 
   return (
     <div className="flex h-full min-h-0 flex-col border-t bg-muted/20">
@@ -110,6 +121,7 @@ export function WorkspaceResultsPanel({
                 </div>
               )}
               <pre
+                ref={materializeOutputRef}
                 className={`min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded border p-2 font-mono text-[11px] ${
                   materializeStatus === "error"
                     ? "border-destructive/40 bg-destructive/5"
