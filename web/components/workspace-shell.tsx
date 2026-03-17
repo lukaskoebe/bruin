@@ -38,8 +38,6 @@ import {
   editorValueAtom,
   enrichedSelectedAssetAtom,
   pipelineAtom,
-  selectedAssetColumnEntriesAtom,
-  selectedAssetInspectColumnsAtom,
 } from "@/lib/atoms";
 import {
   buildFlowFromPipeline,
@@ -67,8 +65,6 @@ export function WorkspaceShell() {
   const [assetEditorTab, setAssetEditorTab] = useAtom(assetEditorTabAtom);
   const editorValue = useAtomValue(editorValueAtom);
   const asset = useAtomValue(enrichedSelectedAssetAtom);
-  const assetColumns = useAtomValue(selectedAssetColumnEntriesAtom);
-  const assetInspectColumns = useAtomValue(selectedAssetInspectColumnsAtom);
   const pipeline = useAtomValue(pipelineAtom);
   const { activePipeline, selectedAsset, navigateSelection } =
     useWorkspaceSelection();
@@ -590,8 +586,6 @@ export function WorkspaceShell() {
               <WorkspaceEditorPane
                 asset={asset}
                 pipelineId={pipeline?.id ?? null}
-                selectedEnvironment={workspace?.selected_environment}
-                workspace={workspace}
                 helpMode={helpMode}
                 actionHighlighted={onboardingHelp.target === "actions"}
                 editorHighlighted={onboardingHelp.target === "editor"}
@@ -606,8 +600,6 @@ export function WorkspaceShell() {
                 monacoTheme={monacoTheme}
                 assetEditorTab={assetEditorTab}
                 form={form}
-                assetColumns={assetColumns}
-                assetInspectColumns={assetInspectColumns}
                 assetPreviewRows={assetPreviewRows}
                 onEditorTabChange={setAssetEditorTab}
                 onEditorChange={handleEditorChange}

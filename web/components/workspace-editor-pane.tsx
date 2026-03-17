@@ -27,10 +27,13 @@ import { useYAMLIntellisense } from "@/hooks/use-yaml-intellisense";
 import { inferAssetColumns } from "@/lib/api";
 import {
   registerAssetColumnsAtom,
+  selectedAssetColumnEntriesAtom,
+  selectedAssetInspectColumnsAtom,
+  selectedEnvironmentAtom,
   selectedAssetSchemaSuggestionTablesAtom,
   selectedAssetSchemaTablesAtom,
 } from "@/lib/atoms";
-import { WebAsset, WorkspaceState } from "@/lib/types";
+import { WebAsset } from "@/lib/types";
 
 export type AssetConfigForm = {
   name: string;
@@ -43,8 +46,6 @@ export type AssetConfigForm = {
 type WorkspaceEditorPaneProps = {
   asset: WebAsset | null;
   pipelineId: string | null;
-  selectedEnvironment?: string;
-  workspace: WorkspaceState | null;
   helpMode: boolean;
   actionHighlighted: boolean;
   editorHighlighted: boolean;
@@ -57,8 +58,6 @@ type WorkspaceEditorPaneProps = {
   monacoTheme: string;
   assetEditorTab: "configuration" | "checks" | "visualization";
   form: UseFormReturn<AssetConfigForm>;
-  assetColumns: Array<{ name?: string }>;
-  assetInspectColumns: string[];
   assetPreviewRows: Record<string, unknown>[];
   onEditorTabChange: (
     value: "configuration" | "checks" | "visualization"
@@ -80,8 +79,6 @@ const MATERIALIZATION_NONE_VALUE = "__none__";
 export function WorkspaceEditorPane({
   asset,
   pipelineId,
-  selectedEnvironment,
-  workspace,
   helpMode,
   actionHighlighted,
   editorHighlighted,
@@ -94,8 +91,6 @@ export function WorkspaceEditorPane({
   monacoTheme,
   assetEditorTab,
   form,
-  assetColumns,
-  assetInspectColumns,
   assetPreviewRows,
   onEditorTabChange,
   onEditorChange,
@@ -110,6 +105,9 @@ export function WorkspaceEditorPane({
   const [monacoInstance, setMonacoInstance] = useState<Monaco | null>(null);
   const [editorInstance, setEditorInstance] =
     useState<MonacoNS.editor.IStandaloneCodeEditor | null>(null);
+  const selectedEnvironment = useAtomValue(selectedEnvironmentAtom);
+  const assetColumns = useAtomValue(selectedAssetColumnEntriesAtom);
+  const assetInspectColumns = useAtomValue(selectedAssetInspectColumnsAtom);
   const schemaTables = useAtomValue(selectedAssetSchemaTablesAtom);
   const schemaSuggestionTables = useAtomValue(selectedAssetSchemaSuggestionTablesAtom);
   const registerAssetColumns = useSetAtom(registerAssetColumnsAtom);
@@ -161,7 +159,7 @@ export function WorkspaceEditorPane({
     asset?.upstreams ?? [],
     onGoToAsset
   );
-  useYAMLIntellisense(monacoInstance, asset, workspace, selectedEnvironment);
+  useYAMLIntellisense(monacoInstance, asset);
 
   const handleEditorMount = useCallback(
     (editor: MonacoNS.editor.IStandaloneCodeEditor, monaco: Monaco) => {

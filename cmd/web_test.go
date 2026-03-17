@@ -11,6 +11,47 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBuildInferAssetColumnsCommand(t *testing.T) {
+	t.Parallel()
+
+	pl := &pipeline.Pipeline{
+		DefaultConnections: pipeline.EmptyStringMap{
+			"postgres": "warehouse-postgres",
+		},
+	}
+	asset := &pipeline.Asset{
+		Name: "analytics.orders",
+		Type: pipeline.AssetTypePostgresQuery,
+	}
+
+	cmdArgs, err := buildInferAssetColumnsCommand(pl, asset)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"query",
+		"--connection",
+		"warehouse-postgres",
+		"--query",
+		`select * from "analytics"."orders" limit 1`,
+		"--output",
+		"json",
+	}, cmdArgs)
+}
+
+func TestBuildInferAssetColumnsCommand_RequiresAssetName(t *testing.T) {
+	t.Parallel()
+
+	pl := &pipeline.Pipeline{
+		DefaultConnections: pipeline.EmptyStringMap{
+			"postgres": "warehouse-postgres",
+		},
+	}
+	asset := &pipeline.Asset{Type: pipeline.AssetTypePostgresQuery}
+
+	_, err := buildInferAssetColumnsCommand(pl, asset)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "asset name is required")
+}
+
 func TestDefaultAssetContent_PythonTemplate(t *testing.T) {
 	t.Parallel()
 

@@ -10,10 +10,11 @@ import {
   getIngestrTableSuggestionsFromCatalog,
   registerConnectionTablesAtom,
   RegisterConnectionTablesPayload,
+  selectedEnvironmentAtom,
   SuggestionCatalogState,
   suggestionCatalogAtom,
 } from "@/lib/atoms";
-import { WebAsset, WorkspaceState } from "@/lib/types";
+import { WebAsset } from "@/lib/types";
 
 type YamlFieldContext = {
   key: string;
@@ -38,12 +39,11 @@ const SUPPORTED_DESTINATIONS = ["postgres", "duckdb", "s3"];
 
 export function useYAMLIntellisense(
   monaco: typeof MonacoNS | null,
-  asset: WebAsset | null,
-  workspace: WorkspaceState | null,
-  selectedEnvironment?: string
+  asset: WebAsset | null
 ) {
   const catalog = useAtomValue(suggestionCatalogAtom);
   const connections = useAtomValue(connectionSuggestionsAtom);
+  const selectedEnvironment = useAtomValue(selectedEnvironmentAtom);
   const registerConnectionTables = useSetAtom(registerConnectionTablesAtom);
   const cacheRef = useRef(new Map<string, Promise<Array<{ value: string; detail?: string; kind?: string }>>>());
 

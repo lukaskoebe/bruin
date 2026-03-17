@@ -1217,13 +1217,18 @@ func (s *webServer) handleFillColumnsFromDB(w http.ResponseWriter, r *http.Reque
 
 func (s *webServer) handleInferAssetColumns(w http.ResponseWriter, r *http.Request) {
 	assetID := chi.URLParam(r, "assetID")
-	relAssetPath, _, _, err := s.resolveAssetByID(r.Context(), assetID)
+	_, parsedPipeline, asset, err := s.resolveAssetByID(r.Context(), assetID)
 	if err != nil {
 		webapi.WriteBadRequest(w, "asset_resolve_failed", err.Error())
 		return
 	}
 
-	cmdArgs := []string{"query", "--asset", relAssetPath, "--output", "json", "--limit", "1"}
+	cmdArgs, err := buildInferAssetColumnsCommand(parsedPipeline, asset)
+	if err != nil {
+		webapi.WriteBadRequest(w, "infer_columns_command_build_failed", err.Error())
+		return
+	}
+
 	output, err := s.runner.Run(r.Context(), cmdArgs)
 	if err != nil {
 		s.writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -1243,6 +1248,34 @@ func (s *webServer) handleInferAssetColumns(w http.ResponseWriter, r *http.Reque
 		"raw_output": string(output),
 		"command":    cmdArgs,
 	})
+}
+
+func buildInferAssetColumnsCommand(parsedPipeline *pipeline.Pipeline, asset *pipeline.Asset) ([]string, error) {
+	if parsedPipeline == nil || asset == nil {
+		return nil, fmt.Errorf("asset context is required")
+	}
+
+	connectionName, err := parsedPipeline.GetConnectionNameForAsset(asset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve asset connection: %w", err)
+	}
+
+	targetTableName := strings.TrimSpace(asset.Name)
+	if targetTableName == "" {
+		return nil, fmt.Errorf("asset name is required to infer columns")
+	}
+
+	query := fmt.Sprintf("select * from %s limit 1", quoteQualifiedIdentifier(targetTableName))
+
+	return []string{
+		"query",
+		"--connection",
+		connectionName,
+		"--query",
+		query,
+		"--output",
+		"json",
+	}, nil
 }
 
 func (s *webServer) handleUpdateAssetColumns(w http.ResponseWriter, r *http.Request) {

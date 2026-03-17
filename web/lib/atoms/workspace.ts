@@ -16,3 +16,6 @@ export type WorkspaceSyncSource = {
 
 export const workspaceAtom = atom<WorkspaceState | null>(null);
 export const workspaceSyncSourceAtom = atom<WorkspaceSyncSource | null>(null);
+export const selectedEnvironmentAtom = atom<string | undefined>((get) =>
+  get(workspaceAtom)?.selected_environment || undefined
+);
