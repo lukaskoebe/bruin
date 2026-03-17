@@ -1,9 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
+import { useAtomValue, useSetAtom } from "jotai";
+import { useEffect, useRef, type MutableRefObject } from "react";
 import type * as MonacoNS from "monaco-editor";
 
 import { getIngestrSuggestions } from "@/lib/api";
+import {
+  connectionSuggestionsAtom,
+  getIngestrTableSuggestionsFromCatalog,
+  registerConnectionTablesAtom,
+  RegisterConnectionTablesPayload,
+  SuggestionCatalogState,
+  suggestionCatalogAtom,
+} from "@/lib/atoms";
 import { WebAsset, WorkspaceState } from "@/lib/types";
 
 type YamlFieldContext = {
@@ -22,14 +31,10 @@ type ParsedIngestrYaml = {
 type ConnectionEntry = {
   name: string;
   type: string;
+  databaseName?: string | null;
 };
 
 const SUPPORTED_DESTINATIONS = ["postgres", "duckdb", "s3"];
-const SOURCE_PRIORITY: Record<string, number> = {
-  postgres: 0,
-  duckdb: 1,
-  s3: 2,
-};
 
 export function useYAMLIntellisense(
   monaco: typeof MonacoNS | null,
@@ -37,24 +42,10 @@ export function useYAMLIntellisense(
   workspace: WorkspaceState | null,
   selectedEnvironment?: string
 ) {
+  const catalog = useAtomValue(suggestionCatalogAtom);
+  const connections = useAtomValue(connectionSuggestionsAtom);
+  const registerConnectionTables = useSetAtom(registerConnectionTablesAtom);
   const cacheRef = useRef(new Map<string, Promise<Array<{ value: string; detail?: string; kind?: string }>>>());
-
-  const connections = useMemo<ConnectionEntry[]>(() => {
-    if (!workspace?.connections) {
-      return [];
-    }
-
-    return Object.entries(workspace.connections)
-      .map(([name, type]) => ({ name, type }))
-      .sort((left, right) => {
-        const leftPriority = SOURCE_PRIORITY[left.type] ?? 99;
-        const rightPriority = SOURCE_PRIORITY[right.type] ?? 99;
-        if (leftPriority !== rightPriority) {
-          return leftPriority - rightPriority;
-        }
-        return left.name.localeCompare(right.name);
-      });
-  }, [workspace?.connections]);
 
   useEffect(() => {
     if (!monaco) {
@@ -83,10 +74,12 @@ export function useYAMLIntellisense(
 
         const parsed = parseIngestrYaml(content);
         const suggestions = await buildSuggestions({
+          catalog,
           cacheRef,
           connections,
           fieldContext,
           monaco,
+          onRegisterConnectionTables: registerConnectionTables,
           parsed,
           selectedEnvironment,
         });
@@ -98,24 +91,28 @@ export function useYAMLIntellisense(
     return () => {
       disposable.dispose();
     };
-  }, [asset, connections, monaco, selectedEnvironment]);
+  }, [asset, catalog, connections, monaco, registerConnectionTables, selectedEnvironment]);
 }
 
 async function buildSuggestions(args: {
+  catalog: SuggestionCatalogState;
   cacheRef: MutableRefObject<
     Map<string, Promise<Array<{ value: string; detail?: string; kind?: string }>>>
   >;
   connections: ConnectionEntry[];
   fieldContext: YamlFieldContext;
   monaco: typeof MonacoNS;
+  onRegisterConnectionTables: (payload: RegisterConnectionTablesPayload) => void;
   parsed: ParsedIngestrYaml;
   selectedEnvironment?: string;
 }) {
   const {
+    catalog,
     cacheRef,
     connections,
     fieldContext,
     monaco,
+    onRegisterConnectionTables,
     parsed,
     selectedEnvironment,
   } = args;
@@ -189,6 +186,23 @@ async function buildSuggestions(args: {
       return [];
     }
 
+    const cachedSuggestions = getIngestrTableSuggestionsFromCatalog(catalog, {
+      connectionName: sourceConnectionName,
+      environment: selectedEnvironment,
+      prefix: fieldContext.normalizedValue,
+    });
+    if (cachedSuggestions.length > 0) {
+      return cachedSuggestions.map((item) =>
+        toCompletionItem(monaco, {
+          detail: item.detail,
+          insertText: quoteValueIfNeeded(item.value, fieldContext.quoted),
+          kind: mapSuggestionKind(monaco, item.kind),
+          label: item.value,
+          range: fieldContext.range,
+        })
+      );
+    }
+
     const cacheKey = [
       sourceConnectionName,
       fieldContext.normalizedValue,
@@ -202,7 +216,17 @@ async function buildSuggestions(args: {
         environment: selectedEnvironment,
         prefix: fieldContext.normalizedValue,
       })
-        .then((response) => response.suggestions)
+        .then((response) => {
+          onRegisterConnectionTables({
+            connectionName: sourceConnectionName,
+            connectionType: response.connection_type,
+            environment: selectedEnvironment,
+            prefix: fieldContext.normalizedValue,
+            suggestions: response.suggestions,
+          });
+
+          return response.suggestions;
+        })
         .catch(() => []);
 
     if (!existing) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useAtom } from "jotai";
+import { useAtom, useSetAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { inspectAsset } from "@/lib/api";
@@ -8,7 +8,7 @@ import {
   getTablePreviewLimit,
   getAssetViewMode,
 } from "@/lib/asset-visualization";
-import { changedAssetIdsAtom } from "@/lib/atoms";
+import { changedAssetIdsAtom, registerAssetColumnsAtom as registerAssetColumnsSuggestionAtom } from "@/lib/atoms";
 import { AssetInspectResponse, WebAsset } from "@/lib/types";
 
 /** Stable empty objects — avoids new references on every render while idle. */
@@ -50,6 +50,7 @@ async function fetchInspectBatch(
  */
 export function useAssetPreviews(visualAssets: WebAsset[]) {
   const [changedIds, setChangedIds] = useAtom(changedAssetIdsAtom);
+  const registerAssetColumns = useSetAtom(registerAssetColumnsSuggestionAtom);
   const [inspectCache, setInspectCache] = useState<
     Record<string, AssetInspectResponse>
   >({});
@@ -116,8 +117,16 @@ export function useAssetPreviews(visualAssets: WebAsset[]) {
       }
 
       setInspectCache((prev) => ({ ...prev, ...results }));
+
+      for (const [assetId, result] of Object.entries(results)) {
+        registerAssetColumns({
+          assetId,
+          method: "asset-inspect",
+          columns: (result.columns ?? []).map((name) => ({ name })),
+        });
+      }
     },
-    []
+    [registerAssetColumns]
   );
 
   const markLoading = useCallback((ids: string[], isLoading: boolean) => {

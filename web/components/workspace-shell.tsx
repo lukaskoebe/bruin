@@ -38,6 +38,8 @@ import {
   editorValueAtom,
   enrichedSelectedAssetAtom,
   pipelineAtom,
+  selectedAssetColumnEntriesAtom,
+  selectedAssetInspectColumnsAtom,
 } from "@/lib/atoms";
 import {
   buildFlowFromPipeline,
@@ -65,6 +67,8 @@ export function WorkspaceShell() {
   const [assetEditorTab, setAssetEditorTab] = useAtom(assetEditorTabAtom);
   const editorValue = useAtomValue(editorValueAtom);
   const asset = useAtomValue(enrichedSelectedAssetAtom);
+  const assetColumns = useAtomValue(selectedAssetColumnEntriesAtom);
+  const assetInspectColumns = useAtomValue(selectedAssetInspectColumnsAtom);
   const pipeline = useAtomValue(pipelineAtom);
   const { activePipeline, selectedAsset, navigateSelection } =
     useWorkspaceSelection();
@@ -150,27 +154,6 @@ export function WorkspaceShell() {
       Boolean(inspectByAssetId[visualAsset.id])
     );
   }, [inspectByAssetId, visualAssets]);
-
-  // Derive available columns from both asset metadata and inspect results.
-  const assetColumns = useMemo(() => {
-    if (!asset) return [] as Array<{ name?: string }>;
-    const assetColumnNames =
-      asset.columns?.map((c: { name?: string }) => c.name ?? "") ?? [];
-    const inspectColumnNames: string[] =
-      inspectByAssetId[asset.id]?.columns ?? [];
-    const names: string[] = [
-      ...new Set([...assetColumnNames, ...inspectColumnNames]),
-    ];
-    return names.map((name) => ({ name }));
-  }, [asset, inspectByAssetId]);
-
-  const assetInspectColumns = useMemo(() => {
-    if (!asset) {
-      return [] as string[];
-    }
-
-    return inspectByAssetId[asset.id]?.columns ?? [];
-  }, [asset, inspectByAssetId]);
 
   const assetPreviewRows = useMemo(() => {
     if (!asset) {

@@ -1,5 +1,6 @@
 "use client";
 
+import { useSetAtom } from "jotai";
 import { Plus, Sparkles, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -7,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { registerAssetColumnsAtom } from "@/lib/atoms";
 import { inferAssetColumns, updateAssetColumns } from "@/lib/api";
 import { WebColumn, WebColumnCheck } from "@/lib/types";
 
@@ -17,6 +19,7 @@ type Props = {
 };
 
 export function ColumnEditor({ assetId, initialColumns, onSaved }: Props) {
+  const registerAssetColumns = useSetAtom(registerAssetColumnsAtom);
   const [columns, setColumns] = useState<WebColumn[]>(() => initialColumns ?? []);
   const [saving, setSaving] = useState(false);
   const [inferring, setInferring] = useState(false);
@@ -80,6 +83,17 @@ export function ColumnEditor({ assetId, initialColumns, onSaved }: Props) {
     setInferring(true);
     void inferAssetColumns(assetId)
       .then((result) => {
+        registerAssetColumns({
+          assetId,
+          method: "asset-column-inference",
+          columns: (result.columns ?? []).map((column) => ({
+            name: column.name,
+            type: column.type,
+            description: column.description,
+            primaryKey: column.primary_key,
+          })),
+        });
+
         if (result.columns.length > 0) {
           setColumns((prev) => mergeInferredColumns(prev, result.columns));
         }

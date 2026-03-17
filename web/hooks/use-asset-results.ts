@@ -5,7 +5,11 @@ import { useAtom, useSetAtom } from "jotai";
 import { useEffect, useMemo, useState } from "react";
 import useSWRMutation from "swr/mutation";
 
-import { assetResultsAtom, changedAssetIdsAtom } from "@/lib/atoms";
+import {
+  assetResultsAtom,
+  changedAssetIdsAtom,
+  registerAssetColumnsAtom,
+} from "@/lib/atoms";
 import {
   inspectAsset,
   materializeAsset,
@@ -16,6 +20,7 @@ import { AssetInspectResponse } from "@/lib/types";
 export function useAssetResults() {
   const [results, setResults] = useAtom(assetResultsAtom);
   const setChangedAssetIds = useSetAtom(changedAssetIdsAtom);
+  const registerAssetColumns = useSetAtom(registerAssetColumnsAtom);
   const [pipelineMaterializeLoading, setPipelineMaterializeLoading] =
     useState(false);
   const {
@@ -99,6 +104,11 @@ export function useAssetResults() {
   const runInspectForAsset = async (assetId: string) => {
     try {
       const result = await triggerInspect(assetId);
+      registerAssetColumns({
+        assetId,
+        method: "asset-inspect",
+        columns: (result.columns ?? []).map((name) => ({ name })),
+      });
       setResults((previous) => ({
         ...previous,
         inspectResult: result,
@@ -115,6 +125,11 @@ export function useAssetResults() {
         raw_output: "",
         error: String(error),
       };
+      registerAssetColumns({
+        assetId,
+        method: "asset-inspect",
+        columns: [],
+      });
       setResults((previous) => ({
         ...previous,
         inspectResult: failure,

@@ -1,5 +1,6 @@
 "use client";
 
+import { useAtomValue, useSetAtom } from "jotai";
 import Editor from "@monaco-editor/react";
 import type { Monaco } from "@monaco-editor/react";
 import type * as MonacoNS from "monaco-editor";
@@ -24,7 +25,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { useSQLIntellisense } from "@/hooks/use-sql-intellisense";
 import { useYAMLIntellisense } from "@/hooks/use-yaml-intellisense";
 import { inferAssetColumns } from "@/lib/api";
-import { buildSchemaForAsset, SchemaTable } from "@/lib/sql-schema";
+import {
+  registerAssetColumnsAtom,
+  selectedAssetSchemaSuggestionTablesAtom,
+  selectedAssetSchemaTablesAtom,
+} from "@/lib/atoms";
 import { WebAsset, WorkspaceState } from "@/lib/types";
 
 export type AssetConfigForm = {
@@ -105,17 +110,10 @@ export function WorkspaceEditorPane({
   const [monacoInstance, setMonacoInstance] = useState<Monaco | null>(null);
   const [editorInstance, setEditorInstance] =
     useState<MonacoNS.editor.IStandaloneCodeEditor | null>(null);
-  const [inferredColumnsByAssetId, setInferredColumnsByAssetId] = useState<
-    Record<string, Array<{ name: string; type?: string; description?: string; primaryKey?: boolean }>>
-  >({});
+  const schemaTables = useAtomValue(selectedAssetSchemaTablesAtom);
+  const schemaSuggestionTables = useAtomValue(selectedAssetSchemaSuggestionTablesAtom);
+  const registerAssetColumns = useSetAtom(registerAssetColumnsAtom);
   const requestedInferenceAssetIdsRef = useRef(new Set<string>());
-
-  const schemaTables = useMemo(() => {
-    if (!workspace || !asset) {
-      return [];
-    }
-    return buildSchemaForAsset(workspace, asset);
-  }, [workspace, asset]);
 
   useEffect(() => {
     if (!asset) {
@@ -123,7 +121,7 @@ export function WorkspaceEditorPane({
     }
 
     const upstreamNameSet = new Set((asset.upstreams ?? []).map((name) => name.toLowerCase()));
-    const tablesNeedingInference = schemaTables.filter(
+    const tablesNeedingInference = schemaSuggestionTables.filter(
       (table) =>
         table.assetId &&
         table.columns.length === 0 &&
@@ -139,46 +137,27 @@ export function WorkspaceEditorPane({
       requestedInferenceAssetIdsRef.current.add(tableAssetId);
       void inferAssetColumns(tableAssetId)
         .then((response) => {
-          const inferredColumns = (response.columns ?? []).map((column) => ({
-            name: column.name,
-            type: column.type,
-            description: column.description,
-            primaryKey: column.primary_key,
-          }));
-
-          setInferredColumnsByAssetId((prev) => ({
-            ...prev,
-            [tableAssetId]: inferredColumns,
-          }));
+          registerAssetColumns({
+            assetId: tableAssetId,
+            method: "asset-column-inference",
+            columns: (response.columns ?? []).map((column) => ({
+              name: column.name,
+              type: column.type,
+              description: column.description,
+              primaryKey: column.primary_key,
+            })),
+          });
         })
         .catch(() => {
           // noop: debug panel will still show missing columns
         });
     }
-  }, [asset, schemaTables]);
-
-  const effectiveSchemaTables = useMemo<SchemaTable[]>(() => {
-    return schemaTables.map((table) => {
-      if (!table.assetId || table.columns.length > 0) {
-        return table;
-      }
-
-      const inferredColumns = inferredColumnsByAssetId[table.assetId];
-      if (!inferredColumns || inferredColumns.length === 0) {
-        return table;
-      }
-
-      return {
-        ...table,
-        columns: inferredColumns,
-      };
-    });
-  }, [inferredColumnsByAssetId, schemaTables]);
+  }, [asset, registerAssetColumns, schemaSuggestionTables]);
 
   useSQLIntellisense(
     monacoInstance,
     editorInstance,
-    effectiveSchemaTables,
+    schemaTables,
     asset?.upstreams ?? [],
     onGoToAsset
   );
@@ -208,20 +187,29 @@ export function WorkspaceEditorPane({
 
     return (asset.upstreams ?? [])
       .map((upstreamName) => {
-        const table = effectiveSchemaTables.find(
+        const table = schemaSuggestionTables.find(
           (candidate) =>
             candidate.name.toLowerCase() === upstreamName.toLowerCase() ||
             candidate.shortName.toLowerCase() === upstreamName.toLowerCase()
         );
 
+        const hasWorkspaceColumns = table?.columns.some((column) =>
+          column.sourceMethods.some(
+            (method) => method === "workspace-load" || method === "workspace-event"
+          )
+        );
+        const hasInferredColumns = table?.columns.some((column) =>
+          column.sourceMethods.includes("asset-column-inference")
+        );
         const source = !table
           ? "unresolved"
           : table.columns.length === 0
             ? "resolved-without-columns"
-            : schemaTables.find((candidate) => candidate.assetId === table.assetId)?.columns
-                  .length
-              ? "declared"
-              : "inferred";
+            : hasWorkspaceColumns && hasInferredColumns
+              ? "declared+inferred"
+              : hasInferredColumns
+                ? "inferred"
+                : "declared";
 
         return {
           upstreamName,
@@ -234,11 +222,11 @@ export function WorkspaceEditorPane({
           item
         ): item is {
           upstreamName: string;
-          table: (typeof schemaTables)[number] | undefined;
+          table: (typeof schemaSuggestionTables)[number] | undefined;
           source: string;
         } => Boolean(item.upstreamName)
       );
-  }, [asset, effectiveSchemaTables, schemaTables]);
+  }, [asset, schemaSuggestionTables]);
 
   const declaredColumnNames = useMemo(
     () =>
@@ -489,14 +477,14 @@ export function WorkspaceEditorPane({
                         Same-connection schema tables ({schemaTables.length})
                       </div>
                       <div className="max-h-36 overflow-auto rounded border bg-background/70 p-2 font-mono">
-                        {schemaTables.length > 0 ? (
-                          effectiveSchemaTables.map((table) => (
+                        {schemaSuggestionTables.length > 0 ? (
+                          schemaSuggestionTables.map((table) => (
                             <div className="mb-1 break-all last:mb-0" key={table.name}>
                               <div>
                                 {table.name} · {table.columns.length} cols
-                                {table.assetId &&
-                                !schemaTables.find((candidate) => candidate.assetId === table.assetId)
-                                  ?.columns.length
+                                {table.columns.some((column) =>
+                                  column.sourceMethods.includes("asset-column-inference")
+                                )
                                   ? " · inferred"
                                   : " · declared"}
                               </div>

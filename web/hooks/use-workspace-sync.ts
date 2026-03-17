@@ -3,7 +3,7 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import { useEffect } from "react";
 
-import { workspaceAtom } from "@/lib/atoms";
+import { workspaceAtom, workspaceSyncSourceAtom } from "@/lib/atoms";
 import { getWorkspace } from "@/lib/api";
 import { WebAsset, WorkspaceEvent, WorkspaceState } from "@/lib/types";
 
@@ -57,6 +57,7 @@ function mergeWorkspaceWithPreservedContent(
 export function useWorkspaceSync() {
   const workspace = useAtomValue(workspaceAtom);
   const setWorkspace = useSetAtom(workspaceAtom);
+  const setWorkspaceSyncSource = useSetAtom(workspaceSyncSourceAtom);
 
   useEffect(() => {
     let mounted = true;
@@ -65,6 +66,11 @@ export function useWorkspaceSync() {
       .then((data) => {
         if (mounted) {
           setWorkspace(data);
+          setWorkspaceSyncSource({
+            method: "workspace-load",
+            recordedAt: new Date().toISOString(),
+            revision: data.revision,
+          });
         }
       })
       .catch(() => undefined);
@@ -73,6 +79,16 @@ export function useWorkspaceSync() {
     source.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as WorkspaceEvent;
+
+        setWorkspaceSyncSource({
+          method: "workspace-event",
+          recordedAt: new Date().toISOString(),
+          revision: payload.workspace?.revision,
+          eventType: payload.type,
+          eventPath: payload.path,
+          lite: payload.lite,
+          changedAssetIds: payload.changed_asset_ids,
+        });
 
         setWorkspace((current) => {
           const currentRevision = current?.revision ?? -1;
@@ -102,7 +118,7 @@ export function useWorkspaceSync() {
       mounted = false;
       source.close();
     };
-  }, [setWorkspace]);
+  }, [setWorkspace, setWorkspaceSyncSource]);
 
   return workspace as WorkspaceState | null;
 }

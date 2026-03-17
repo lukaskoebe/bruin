@@ -21,6 +21,14 @@ export type SchemaTable = {
   pipelineId?: string;
   /** Source asset file path, useful for definition hints. */
   assetPath?: string;
+  /** Resolved Bruin connection name when known. */
+  connectionName?: string;
+  /** Resolved connection platform type when known. */
+  connectionType?: string;
+  /** Parsed database/catalog name when known. */
+  databaseName?: string;
+  /** High-level provenance methods that contributed this table. */
+  sourceMethods?: string[];
 };
 
 export type SchemaColumn = {
@@ -54,7 +62,7 @@ const SQL_TYPE_PREFIXES: Record<string, string> = {
  * Derive the "platform family" for an asset type so we can decide which assets
  * share a connection namespace.  Returns `null` for non-SQL types.
  */
-function platformForAssetType(assetType: string): string | null {
+export function platformForAssetType(assetType: string): string | null {
   const lower = assetType.toLowerCase();
   return SQL_TYPE_PREFIXES[lower] ?? null;
 }
@@ -65,7 +73,10 @@ function platformForAssetType(assetType: string): string | null {
  * If the asset has an explicit `connection` field we use that.  Otherwise we
  * fall back to the platform-default connection.
  */
-function resolveConnection(asset: WebAsset, connections: Record<string, string>): string | null {
+export function resolveConnection(
+  asset: WebAsset,
+  connections: Record<string, string>
+): string | null {
   if (asset.connection) {
     return asset.connection;
   }
@@ -96,6 +107,31 @@ function toSchemaColumns(columns?: WebColumn[]): SchemaColumn[] {
     description: column.description,
     primaryKey: column.primary_key,
   }));
+}
+
+export function parseQualifiedTableName(name: string): {
+  shortName: string;
+  schemaName?: string;
+  databaseName?: string;
+} {
+  const parts = name
+    .split(".")
+    .map((part) => part.trim().replace(/^['"`]+|['"`]+$/g, ""))
+    .filter(Boolean);
+
+  if (parts.length === 0) {
+    return { shortName: name };
+  }
+
+  const shortName = parts[parts.length - 1];
+  const schemaName = parts.length >= 2 ? parts[parts.length - 2] : undefined;
+  const databaseName = parts.length >= 3 ? parts[parts.length - 3] : undefined;
+
+  return {
+    shortName,
+    schemaName,
+    databaseName,
+  };
 }
 
 /**
@@ -129,16 +165,20 @@ export function buildSchemaForAsset(
       }
       seen.add(name.toLowerCase());
 
-      const shortName = name.includes(".") ? name.split(".").pop()! : name;
+      const tableParts = parseQualifiedTableName(name);
 
       tables.push({
         name,
-        shortName,
+        shortName: tableParts.shortName,
         columns: toSchemaColumns(asset.columns),
         isBruinAsset: true,
         assetId: asset.id,
         pipelineId: pipeline.id,
         assetPath: asset.path,
+        connectionName: assetConnection,
+        connectionType: connections[assetConnection],
+        databaseName: tableParts.databaseName,
+        sourceMethods: ["workspace-load"],
       });
     }
   }
