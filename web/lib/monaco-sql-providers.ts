@@ -2,15 +2,7 @@ import type * as MonacoNS from "monaco-editor";
 
 import { SchemaTable, findTableByIdentifier } from "@/lib/sql-schema";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 type Monaco = typeof MonacoNS;
-
-// ---------------------------------------------------------------------------
-// SQL keywords (top completion group for context, but lower priority than schema)
-// ---------------------------------------------------------------------------
 
 const SQL_KEYWORDS = [
   "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "IS", "NULL",
@@ -24,28 +16,29 @@ const SQL_KEYWORDS = [
   "DENSE_RANK", "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE",
 ];
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+type SQLClauseContext =
+  | "select"
+  | "from"
+  | "join"
+  | "where"
+  | "group-by"
+  | "order-by"
+  | "having"
+  | "into"
+  | "update"
+  | "set"
+  | "values"
+  | null;
 
-/**
- * Extract the word immediately before the cursor (or the dot-qualified prefix)
- * so we can figure out if the user is requesting column completions for a
- * specific table alias/name.
- *
- * Returns `{ tablePart, columnPrefix }` when the text before cursor looks like
- * `tableName.col…`, otherwise returns `null`.
- */
 function parseDotPrefix(
   textBeforeCursor: string,
 ): { tablePart: string; columnPrefix: string } | null {
-  // Match `identifier.` possibly followed by a partial column name.
-  const match = textBeforeCursor.match(/([\w.]+)\.\s*([\w]*)$/);
+  const match = textBeforeCursor.match(/([\w."]+)\.\s*([\w]*)$/);
   if (!match) {
     return null;
   }
 
-  return { tablePart: match[1], columnPrefix: match[2] };
+  return { tablePart: match[1].replace(/"/g, ""), columnPrefix: match[2] };
 }
 
 function buildAliasMap(
@@ -54,10 +47,10 @@ function buildAliasMap(
 ): Map<string, SchemaTable> {
   const aliasMap = new Map<string, SchemaTable>();
   const relationPattern =
-    /\b(?:from|join|into|update)\s+([\w.]+)(?:\s+(?:as\s+)?([a-zA-Z_]\w*))?/gi;
+    /\b(?:from|join|into|update)\s+([\w."]+)(?:\s+(?:as\s+)?([a-zA-Z_]\w*))?/gi;
 
   for (const match of sqlText.matchAll(relationPattern)) {
-    const identifier = match[1];
+    const identifier = match[1]?.replace(/"/g, "");
     const alias = match[2];
     if (!identifier || !alias) {
       continue;
@@ -79,24 +72,56 @@ function resolveTableReference(
   aliasMap: Map<string, SchemaTable>,
   identifier: string,
 ): SchemaTable | undefined {
-  const aliasMatch = aliasMap.get(identifier.toLowerCase());
+  const normalized = identifier.replace(/"/g, "").toLowerCase();
+  const aliasMatch = aliasMap.get(normalized);
   if (aliasMatch) {
     return aliasMatch;
   }
 
-  return findTableByIdentifier(tables, identifier);
+  return findTableByIdentifier(tables, normalized);
+}
+
+function resolveReferencedTables(
+  tables: SchemaTable[],
+  upstreamNames: string[],
+  aliasMap: Map<string, SchemaTable>,
+): SchemaTable[] {
+  const referenced: SchemaTable[] = [];
+  const seen = new Set<string>();
+
+  for (const upstreamName of upstreamNames) {
+    const table = findTableByIdentifier(tables, upstreamName);
+    if (!table) {
+      continue;
+    }
+
+    const key = table.name.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    referenced.push(table);
+  }
+
+  for (const table of aliasMap.values()) {
+    const key = table.name.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    referenced.push(table);
+  }
+
+  return referenced;
 }
 
 function collectColumnSuggestions(
   monaco: Monaco,
-  tables: SchemaTable[],
-  aliasMap: Map<string, SchemaTable>,
+  scopedTables: SchemaTable[],
   range: MonacoNS.IRange,
 ): MonacoNS.languages.CompletionItem[] {
   const suggestions: MonacoNS.languages.CompletionItem[] = [];
   const seen = new Set<string>();
-
-  const scopedTables = aliasMap.size > 0 ? Array.from(new Set(aliasMap.values())) : tables;
 
   for (const table of scopedTables) {
     for (const column of table.columns) {
@@ -122,36 +147,189 @@ function collectColumnSuggestions(
   return suggestions;
 }
 
-/**
- * Extract the SQL identifier (possibly dot-qualified) under or adjacent to the
- * cursor position.  Used for go-to-definition.
- */
+function stripSQLCommentsAndStrings(sqlText: string): string {
+  let result = "";
+  let index = 0;
+
+  while (index < sqlText.length) {
+    const current = sqlText[index];
+    const next = sqlText[index + 1];
+
+    if (current === "-" && next === "-") {
+      while (index < sqlText.length && sqlText[index] !== "\n") {
+        result += " ";
+        index++;
+      }
+      continue;
+    }
+
+    if (current === "/" && next === "*") {
+      result += "  ";
+      index += 2;
+      while (index < sqlText.length) {
+        const blockCurrent = sqlText[index];
+        const blockNext = sqlText[index + 1];
+        if (blockCurrent === "*" && blockNext === "/") {
+          result += "  ";
+          index += 2;
+          break;
+        }
+        result += blockCurrent === "\n" ? "\n" : " ";
+        index++;
+      }
+      continue;
+    }
+
+    if (current === "'" || current === '"' || current === "`") {
+      const quote = current;
+      result += " ";
+      index++;
+      while (index < sqlText.length) {
+        const char = sqlText[index];
+        if (char === quote) {
+          if (quote === "'" && sqlText[index + 1] === quote) {
+            result += "  ";
+            index += 2;
+            continue;
+          }
+          result += " ";
+          index++;
+          break;
+        }
+        result += char === "\n" ? "\n" : " ";
+        index++;
+      }
+      continue;
+    }
+
+    result += current;
+    index++;
+  }
+
+  return result;
+}
+
+function getSQLClauseContext(sqlTextBeforeCursor: string): SQLClauseContext {
+  const sanitized = stripSQLCommentsAndStrings(sqlTextBeforeCursor);
+  const tokenPattern = /\b([a-zA-Z_][\w]*)\b|([(),;])/g;
+  let depth = 0;
+  let lastClause: SQLClauseContext = null;
+  let previousWord = "";
+
+  for (const match of sanitized.matchAll(tokenPattern)) {
+    const word = match[1]?.toLowerCase();
+    const punctuation = match[2];
+
+    if (punctuation === "(") {
+      depth++;
+      continue;
+    }
+    if (punctuation === ")") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (punctuation === ";") {
+      lastClause = null;
+      previousWord = "";
+      depth = 0;
+      continue;
+    }
+
+    if (!word || depth > 0) {
+      continue;
+    }
+
+    if (word === "group") {
+      previousWord = word;
+      continue;
+    }
+    if (word === "by" && previousWord === "group") {
+      lastClause = "group-by";
+      previousWord = word;
+      continue;
+    }
+    if (word === "order") {
+      previousWord = word;
+      continue;
+    }
+    if (word === "by" && previousWord === "order") {
+      lastClause = "order-by";
+      previousWord = word;
+      continue;
+    }
+
+    if (word === "select") {
+      lastClause = "select";
+    } else if (word === "from") {
+      lastClause = "from";
+    } else if (word === "join") {
+      lastClause = "join";
+    } else if (word === "where") {
+      lastClause = "where";
+    } else if (word === "having") {
+      lastClause = "having";
+    } else if (word === "into") {
+      lastClause = "into";
+    } else if (word === "update") {
+      lastClause = "update";
+    } else if (word === "set") {
+      lastClause = "set";
+    } else if (word === "values") {
+      lastClause = "values";
+    }
+
+    previousWord = word;
+  }
+
+  return lastClause;
+}
+
+function getCompletionContext(sqlTextBeforeCursor: string): {
+  inTableCtx: boolean;
+  inColumnCtx: boolean;
+} {
+  const clause = getSQLClauseContext(sqlTextBeforeCursor);
+
+  switch (clause) {
+    case "from":
+    case "join":
+    case "into":
+    case "update":
+      return { inTableCtx: true, inColumnCtx: false };
+    case "select":
+    case "where":
+    case "having":
+    case "group-by":
+    case "order-by":
+    case "set":
+    case "values":
+      return { inTableCtx: false, inColumnCtx: true };
+    default:
+      return { inTableCtx: false, inColumnCtx: false };
+  }
+}
+
 function identifierAtPosition(
   model: MonacoNS.editor.ITextModel,
   position: MonacoNS.Position,
 ): string | null {
   const line = model.getLineContent(position.lineNumber);
-  const col = position.column - 1; // 0-based
+  const col = position.column - 1;
 
-  // Walk left to find start of identifier.
   let start = col;
-  while (start > 0 && /[\w.]/.test(line[start - 1])) {
+  while (start > 0 && /[\w."]/.test(line[start - 1])) {
     start--;
   }
 
-  // Walk right to find end.
   let end = col;
-  while (end < line.length && /[\w.]/.test(line[end])) {
+  while (end < line.length && /[\w."]/.test(line[end])) {
     end++;
   }
 
-  const word = line.slice(start, end).trim();
+  const word = line.slice(start, end).trim().replace(/"/g, "");
   return word.length > 0 ? word : null;
 }
 
-/**
- * Resolve the table referenced at the cursor position, when any.
- */
 export function resolveTableAtPosition(
   model: MonacoNS.editor.ITextModel,
   position: MonacoNS.Position,
@@ -165,48 +343,13 @@ export function resolveTableAtPosition(
   return findTableByIdentifier(tables, identifier) ?? null;
 }
 
-/**
- * Check whether the cursor is in a position where table names are expected
- * (after FROM, JOIN, etc.).  This is a simple heuristic.
- */
-function isInTablePosition(textBeforeCursor: string): boolean {
-  const normalized = textBeforeCursor.replace(/\s+/g, " ").toUpperCase();
-  return /(?:FROM|JOIN|INTO|UPDATE|TABLE|VIEW)\s+[\w."]*$/i.test(normalized);
-}
-
-function isLikelyColumnPosition(textBeforeCursor: string): boolean {
-  const normalized = textBeforeCursor.replace(/\s+/g, " ").toUpperCase();
-
-  if (isInTablePosition(textBeforeCursor)) {
-    return false;
-  }
-
-  return /(?:SELECT|WHERE|AND|OR|ON|HAVING|GROUP BY|ORDER BY|BY|,|\()\s*[\w"]*$/i.test(
-    normalized,
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Provider registration
-// ---------------------------------------------------------------------------
-
-/**
- * Register SQL autocompletion and go-to-definition providers for the Monaco
- * editor.  Returns a `Disposable` that removes all registrations — call it on
- * unmount or when the schema changes.
- *
- * The providers close over the `tables` array so they always reflect the
- * latest workspace state.  When the workspace updates, dispose + re-register.
- */
 export function registerSQLProviders(
   monaco: Monaco,
   tables: SchemaTable[],
+  upstreamNames: string[],
 ): MonacoNS.IDisposable {
   const disposables: MonacoNS.IDisposable[] = [];
 
-  // -----------------------------------------------------------------------
-  // Completion
-  // -----------------------------------------------------------------------
   disposables.push(
     monaco.languages.registerCompletionItemProvider("sql", {
       triggerCharacters: ["."],
@@ -232,10 +375,19 @@ export function registerSQLProviders(
           endColumn: position.column,
         });
         const aliasMap = buildAliasMap(sqlTextBeforeCursor, tables);
+        const referencedTables = resolveReferencedTables(
+          tables,
+          upstreamNames,
+          aliasMap,
+        );
+        const columnSuggestionTables =
+          referencedTables.length > 0 ? referencedTables : tables;
+        const { inTableCtx, inColumnCtx } = getCompletionContext(
+          sqlTextBeforeCursor,
+        );
 
         const suggestions: MonacoNS.languages.CompletionItem[] = [];
 
-        // --- Column completions after `table.` ---
         const dotPrefix = parseDotPrefix(textBeforeCursor);
         if (dotPrefix) {
           const table = resolveTableReference(
@@ -244,7 +396,6 @@ export function registerSQLProviders(
             dotPrefix.tablePart,
           );
           if (table && table.columns.length > 0) {
-            // Adjust the replacement range to cover only the column prefix.
             const columnRange: MonacoNS.IRange = {
               startLineNumber: position.lineNumber,
               endLineNumber: position.lineNumber,
@@ -257,7 +408,7 @@ export function registerSQLProviders(
               suggestions.push({
                 label: column.name,
                 kind: monaco.languages.CompletionItemKind.Field,
-                detail: `${table.shortName}${typeLabel}`,
+                detail: `${table.shortName}.${column.name}${typeLabel}`,
                 documentation: column.description || undefined,
                 insertText: column.name,
                 range: columnRange,
@@ -269,14 +420,21 @@ export function registerSQLProviders(
           }
         }
 
-        // --- Table completions ---
-        const inTableCtx = isInTablePosition(textBeforeCursor);
-        const inColumnCtx = isLikelyColumnPosition(textBeforeCursor);
-
         if (inColumnCtx) {
-          suggestions.push(
-            ...collectColumnSuggestions(monaco, tables, aliasMap, range),
+          const scopedColumnSuggestions = collectColumnSuggestions(
+            monaco,
+            columnSuggestionTables,
+            range,
           );
+
+          suggestions.push(...scopedColumnSuggestions);
+
+          if (
+            scopedColumnSuggestions.length === 0 &&
+            columnSuggestionTables !== tables
+          ) {
+            suggestions.push(...collectColumnSuggestions(monaco, tables, range));
+          }
         }
 
         for (const table of tables) {
@@ -298,7 +456,6 @@ export function registerSQLProviders(
             sortText: inTableCtx ? priority : `4${priority}`,
           });
 
-          // Also offer the short name if it differs.
           if (table.shortName !== table.name) {
             suggestions.push({
               label: {
@@ -314,7 +471,6 @@ export function registerSQLProviders(
           }
         }
 
-        // --- SQL keyword completions (lowest priority) ---
         for (const keyword of SQL_KEYWORDS) {
           suggestions.push({
             label: keyword,
@@ -330,9 +486,6 @@ export function registerSQLProviders(
     }),
   );
 
-  // -----------------------------------------------------------------------
-  // Definition (used for Ctrl/Cmd-hover underline + F12 availability)
-  // -----------------------------------------------------------------------
   disposables.push(
     monaco.languages.registerDefinitionProvider("sql", {
       provideDefinition(
@@ -367,9 +520,6 @@ export function registerSQLProviders(
     }),
   );
 
-  // -----------------------------------------------------------------------
-  // Hover — table/column documentation
-  // -----------------------------------------------------------------------
   disposables.push(
     monaco.languages.registerHoverProvider("sql", {
       provideHover(
@@ -381,12 +531,19 @@ export function registerSQLProviders(
           return null;
         }
 
-        // Check for `table.column` pattern.
+        const sqlTextBeforeCursor = model.getValueInRange({
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column,
+        });
+        const aliasMap = buildAliasMap(sqlTextBeforeCursor, tables);
+
         const dotIndex = identifier.lastIndexOf(".");
         if (dotIndex > 0) {
           const tablePart = identifier.slice(0, dotIndex);
           const columnPart = identifier.slice(dotIndex + 1);
-          const table = findTableByIdentifier(tables, tablePart);
+          const table = resolveTableReference(tables, aliasMap, tablePart);
           if (table) {
             const column = table.columns.find(
               (c) => c.name.toLowerCase() === columnPart.toLowerCase(),
@@ -424,7 +581,6 @@ export function registerSQLProviders(
           }
         }
 
-        // Plain table name.
         const table = findTableByIdentifier(tables, identifier);
         if (!table) {
           return null;

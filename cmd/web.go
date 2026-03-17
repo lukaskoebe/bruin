@@ -20,7 +20,9 @@ import (
 	"github.com/bruin-data/bruin/internal/web/freshness"
 	"github.com/bruin-data/bruin/internal/web/service"
 	"github.com/bruin-data/bruin/internal/web/watch"
+	"github.com/bruin-data/bruin/pkg/connection"
 	"github.com/bruin-data/bruin/pkg/config"
+	"github.com/bruin-data/bruin/pkg/git"
 	"github.com/bruin-data/bruin/pkg/jinja"
 	bruinpath "github.com/bruin-data/bruin/pkg/path"
 	"github.com/bruin-data/bruin/pkg/pipeline"
@@ -93,6 +95,19 @@ type pipelineMaterializationInfo struct {
 	FreshnessStatus string
 	RowCount        *int64
 	DeclaredMatType string
+}
+
+type ingestrSuggestionItem struct {
+	Value  string `json:"value"`
+	Kind   string `json:"kind,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type ingestrSuggestionsResponse struct {
+	Status         string                  `json:"status"`
+	ConnectionType string                  `json:"connection_type,omitempty"`
+	Suggestions    []ingestrSuggestionItem `json:"suggestions"`
+	Error          string                  `json:"error,omitempty"`
 }
 
 type webPipeline struct {
@@ -281,6 +296,7 @@ func Web() *cli.Command {
 func (s *webServer) registerRoutes(router chi.Router) {
 	router.Get("/api/events", s.handleEvents)
 	router.Get("/api/workspace", s.handleGetWorkspace)
+	router.Get("/api/ingestr/suggestions", s.handleGetIngestrSuggestions)
 	router.Post("/api/pipelines", s.handleCreatePipeline)
 	router.Put("/api/pipelines", s.handleUpdatePipeline)
 	router.Delete("/api/pipelines/{id}", s.handleDeletePipeline)
@@ -343,7 +359,7 @@ func (s *webServer) computeWorkspaceState(ctx context.Context) (workspaceState, 
 		Metadata:    map[string][]string{},
 	}
 
-	configPath := filepath.Join(s.workspaceRoot, ".bruin.yml")
+	configPath := s.resolveConfigFilePath()
 	if _, err := os.Stat(configPath); err == nil {
 		cfg, cfgErr := config.LoadOrCreate(afero.NewOsFs(), configPath)
 		if cfgErr == nil {
@@ -432,6 +448,15 @@ func (s *webServer) computeWorkspaceState(ctx context.Context) (workspaceState, 
 	state.Metadata["asset_directories"] = assetsDirectoryNames
 
 	return state, nil
+}
+
+func (s *webServer) resolveConfigFilePath() string {
+	repoRoot, err := git.FindRepoFromPath(s.workspaceRoot)
+	if err == nil && repoRoot != nil && strings.TrimSpace(repoRoot.Path) != "" {
+		return filepath.Join(repoRoot.Path, ".bruin.yml")
+	}
+
+	return filepath.Join(s.workspaceRoot, ".bruin.yml")
 }
 
 func (s *webServer) writeJSON(w http.ResponseWriter, status int, body any) {
@@ -1346,7 +1371,7 @@ func (s *webServer) findDuckDBExecutionInfoByAsset(ctx context.Context, assetID 
 		return nil, nil
 	}
 
-	configPath := filepath.Join(s.workspaceRoot, ".bruin.yml")
+	configPath := s.resolveConfigFilePath()
 	if _, statErr := os.Stat(configPath); statErr != nil {
 		return nil, nil
 	}
@@ -1385,7 +1410,7 @@ func (s *webServer) buildReadOnlyConfigFile(
 		return "", nil, fmt.Errorf("duckdb read-only config requires connection info")
 	}
 
-	configPath := filepath.Join(s.workspaceRoot, ".bruin.yml")
+	configPath := s.resolveConfigFilePath()
 	cfg, err := config.LoadOrCreate(afero.NewOsFs(), configPath)
 	if err != nil {
 		return "", nil, err
@@ -1603,6 +1628,87 @@ func (s *webServer) handleInspectAsset(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *webServer) handleGetIngestrSuggestions(w http.ResponseWriter, r *http.Request) {
+	connectionName := strings.TrimSpace(r.URL.Query().Get("connection"))
+	if connectionName == "" {
+		webapi.WriteBadRequest(w, "connection_required", "connection query parameter is required")
+		return
+	}
+
+	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
+	environment := strings.TrimSpace(r.URL.Query().Get("environment"))
+
+	manager, err := s.newConnectionManager(r.Context(), environment)
+	if err != nil {
+		webapi.WriteInternalError(w, "connection_manager_failed", err.Error())
+		return
+	}
+
+	conn := manager.GetConnection(connectionName)
+	if conn == nil {
+		webapi.WriteBadRequest(w, "connection_not_found", fmt.Sprintf("connection '%s' not found", connectionName))
+		return
+	}
+
+	connType := strings.TrimSpace(manager.GetConnectionType(connectionName))
+	response := ingestrSuggestionsResponse{
+		Status:         "ok",
+		ConnectionType: connType,
+		Suggestions:    []ingestrSuggestionItem{},
+	}
+
+	if s3Conn, ok := conn.(interface {
+		ListBuckets(ctx context.Context) ([]string, error)
+		ListEntries(ctx context.Context, bucketName, prefix string) ([]string, error)
+	}); ok {
+		items, itemErr := buildS3SuggestionItems(r.Context(), s3Conn, prefix)
+		if itemErr != nil {
+			webapi.WriteBadRequest(w, "ingestr_s3_suggestions_failed", itemErr.Error())
+			return
+		}
+		response.Suggestions = items
+		s.writeJSON(w, http.StatusOK, response)
+		return
+	}
+
+	if fetcherWithSchemas, ok := conn.(interface {
+		GetTablesWithSchemas(ctx context.Context, databaseName string) (map[string][]string, error)
+	}); ok {
+		databaseName := databaseNameForConnectionDetails(manager.GetConnectionDetails(connectionName))
+		if databaseName == "" {
+			webapi.WriteBadRequest(w, "database_name_missing", fmt.Sprintf("connection '%s' has no database configured", connectionName))
+			return
+		}
+
+		tables, tableErr := fetcherWithSchemas.GetTablesWithSchemas(r.Context(), databaseName)
+		if tableErr != nil {
+			webapi.WriteBadRequest(w, "ingestr_table_suggestions_failed", tableErr.Error())
+			return
+		}
+
+		response.Suggestions = buildSchemaTableSuggestionItems(tables, prefix)
+		s.writeJSON(w, http.StatusOK, response)
+		return
+	}
+
+	if fetcher, ok := conn.(interface {
+		GetDatabases(ctx context.Context) ([]string, error)
+		GetTables(ctx context.Context, databaseName string) ([]string, error)
+	}); ok {
+		suggestions, tableErr := buildDuckDBSuggestionItems(r.Context(), fetcher, prefix)
+		if tableErr != nil {
+			webapi.WriteBadRequest(w, "ingestr_table_suggestions_failed", tableErr.Error())
+			return
+		}
+
+		response.Suggestions = suggestions
+		s.writeJSON(w, http.StatusOK, response)
+		return
+	}
+
+	webapi.WriteBadRequest(w, "connection_type_not_supported", fmt.Sprintf("connection '%s' does not support ingestr suggestions", connectionName))
+}
+
 type runRequest struct {
 	Command    string   `json:"command"`
 	PipelineID string   `json:"pipeline_id"`
@@ -1627,6 +1733,188 @@ func resolvePipelineRunTarget(pipelineID string) (string, error) {
 	}
 
 	return filepath.ToSlash(cleaned), nil
+}
+
+func (s *webServer) newConnectionManager(ctx context.Context, environment string) (config.ConnectionAndDetailsGetter, error) {
+	configPath := s.resolveConfigFilePath()
+	cfg, err := config.LoadOrCreate(afero.NewOsFs(), configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if environment != "" {
+		if err := cfg.SelectEnvironment(environment); err != nil {
+			return nil, fmt.Errorf("failed to select environment '%s': %w", environment, err)
+		}
+	}
+
+	manager, errs := connection.NewManagerFromConfigWithContext(ctx, cfg)
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+
+	return manager, nil
+}
+
+func databaseNameForConnectionDetails(details any) string {
+	switch connectionDetails := details.(type) {
+	case *config.PostgresConnection:
+		return strings.TrimSpace(connectionDetails.Database)
+	case *config.MySQLConnection:
+		return strings.TrimSpace(connectionDetails.Database)
+	case *config.MsSQLConnection:
+		return strings.TrimSpace(connectionDetails.Database)
+	case *config.ClickHouseConnection:
+		return strings.TrimSpace(connectionDetails.Database)
+	case *config.AthenaConnection:
+		return strings.TrimSpace(connectionDetails.Database)
+	case *config.SnowflakeConnection:
+		return strings.TrimSpace(connectionDetails.Database)
+	case *config.DatabricksConnection:
+		return strings.TrimSpace(connectionDetails.Catalog)
+	case *config.VerticaConnection:
+		return strings.TrimSpace(connectionDetails.Database)
+	default:
+		return ""
+	}
+}
+
+func buildSchemaTableSuggestionItems(tables map[string][]string, prefix string) []ingestrSuggestionItem {
+	normalizedPrefix := strings.ToLower(strings.TrimSpace(prefix))
+	items := make([]ingestrSuggestionItem, 0)
+
+	schemas := make([]string, 0, len(tables))
+	for schema := range tables {
+		schemas = append(schemas, schema)
+	}
+	sort.Strings(schemas)
+
+	for _, schema := range schemas {
+		schemaTables := append([]string{}, tables[schema]...)
+		sort.Strings(schemaTables)
+		for _, table := range schemaTables {
+			value := fmt.Sprintf("%s.%s", schema, table)
+			if normalizedPrefix != "" && !strings.HasPrefix(strings.ToLower(value), normalizedPrefix) {
+				continue
+			}
+			items = append(items, ingestrSuggestionItem{
+				Value:  value,
+				Kind:   "table",
+				Detail: schema,
+			})
+		}
+	}
+
+	return limitSuggestionItems(items, 200)
+}
+
+func buildDuckDBSuggestionItems(
+	ctx context.Context,
+	fetcher interface {
+		GetDatabases(ctx context.Context) ([]string, error)
+		GetTables(ctx context.Context, databaseName string) ([]string, error)
+	},
+	prefix string,
+) ([]ingestrSuggestionItem, error) {
+	schemas, err := fetcher.GetDatabases(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]ingestrSuggestionItem, 0)
+	normalizedPrefix := strings.ToLower(strings.TrimSpace(prefix))
+	sort.Strings(schemas)
+
+	for _, schema := range schemas {
+		tables, tableErr := fetcher.GetTables(ctx, schema)
+		if tableErr != nil {
+			return nil, tableErr
+		}
+		sort.Strings(tables)
+		for _, table := range tables {
+			fullName := fmt.Sprintf("%s.%s", schema, table)
+			if normalizedPrefix != "" &&
+				!strings.HasPrefix(strings.ToLower(fullName), normalizedPrefix) &&
+				!strings.HasPrefix(strings.ToLower(table), normalizedPrefix) {
+				continue
+			}
+
+			insertValue := fullName
+			if strings.EqualFold(schema, "main") && normalizedPrefix != "" && !strings.Contains(prefix, ".") {
+				insertValue = table
+			}
+
+			items = append(items, ingestrSuggestionItem{
+				Value:  insertValue,
+				Kind:   "table",
+				Detail: schema,
+			})
+		}
+	}
+
+	return limitSuggestionItems(items, 200), nil
+}
+
+func buildS3SuggestionItems(
+	ctx context.Context,
+	conn interface {
+		ListBuckets(ctx context.Context) ([]string, error)
+		ListEntries(ctx context.Context, bucketName, prefix string) ([]string, error)
+	},
+	prefix string,
+) ([]ingestrSuggestionItem, error) {
+	normalizedPrefix := strings.TrimSpace(prefix)
+	if normalizedPrefix == "" || !strings.Contains(normalizedPrefix, "/") {
+		buckets, err := conn.ListBuckets(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		items := make([]ingestrSuggestionItem, 0, len(buckets))
+		filter := strings.ToLower(normalizedPrefix)
+		for _, bucket := range buckets {
+			if filter != "" && !strings.HasPrefix(strings.ToLower(bucket), filter) {
+				continue
+			}
+			items = append(items, ingestrSuggestionItem{
+				Value:  bucket + "/",
+				Kind:   "bucket",
+				Detail: "S3 bucket",
+			})
+		}
+
+		return limitSuggestionItems(items, 200), nil
+	}
+
+	bucketName, keyPrefix, _ := strings.Cut(normalizedPrefix, "/")
+	items, err := conn.ListEntries(ctx, bucketName, keyPrefix)
+	if err != nil {
+		return nil, err
+	}
+
+	suggestions := make([]ingestrSuggestionItem, 0, len(items))
+	for _, item := range items {
+		kind := "file"
+		detail := "S3 object"
+		if strings.HasSuffix(item, "/") {
+			kind = "prefix"
+			detail = "S3 prefix"
+		}
+		suggestions = append(suggestions, ingestrSuggestionItem{
+			Value:  bucketName + "/" + item,
+			Kind:   kind,
+			Detail: detail,
+		})
+	}
+
+	return limitSuggestionItems(suggestions, 200), nil
+}
+
+func limitSuggestionItems(items []ingestrSuggestionItem, max int) []ingestrSuggestionItem {
+	if max <= 0 || len(items) <= max {
+		return items
+	}
+	return items[:max]
 }
 
 func (s *webServer) handleMaterializePipelineStream(w http.ResponseWriter, r *http.Request) {
@@ -2184,11 +2472,11 @@ func extensionForAssetType(assetType string) string {
 	if strings.Contains(assetType, "python") || strings.HasSuffix(assetType, ".py") {
 		return ".py"
 	}
+	if strings.Contains(assetType, "ingestr") {
+		return ".asset.yaml"
+	}
 	if strings.Contains(assetType, "r") || strings.HasSuffix(assetType, ".r") {
 		return ".r"
-	}
-	if strings.Contains(assetType, "yaml") || strings.Contains(assetType, "yml") {
-		return ".yml"
 	}
 	return ".sql"
 }

@@ -20,6 +20,7 @@ export function useSQLIntellisense(
   monaco: typeof MonacoNS | null,
   editor: MonacoNS.editor.IStandaloneCodeEditor | null,
   tables: SchemaTable[],
+  upstreamNames: string[],
   onGoToAsset?: (pipelineId: string, assetId: string) => void,
 ) {
   // Keep a stable ref to the latest callback so we don't re-register on
@@ -32,12 +33,12 @@ export function useSQLIntellisense(
       return;
     }
 
-    const disposable = registerSQLProviders(monaco, tables);
+    const disposable = registerSQLProviders(monaco, tables, upstreamNames);
 
     return () => {
       disposable.dispose();
     };
-  }, [monaco, tables]);
+  }, [monaco, tables, upstreamNames]);
 
   useEffect(() => {
     if (!editor || tables.length === 0) {

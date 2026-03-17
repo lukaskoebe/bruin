@@ -104,8 +104,15 @@ export function resolveChartSelection(
     return null;
   }
 
-  const configuredXKey = resolveKeyCaseInsensitive(meta?.web_chart_x, availableKeys);
-  const configuredSeries = parseConfiguredSeries(meta, availableKeys, configuredXKey);
+  const configuredXKey = resolveKeyCaseInsensitive(
+    meta?.web_chart_x,
+    availableKeys
+  );
+  const configuredSeries = parseConfiguredSeries(
+    meta,
+    availableKeys,
+    configuredXKey
+  );
 
   const inferredXKey = inferReasonableXKey(availableKeys);
   const xKey = configuredXKey ?? inferredXKey;
@@ -114,7 +121,8 @@ export function resolveChartSelection(
   }
 
   const inferredSeries = inferReasonableSeriesKeys(rows, availableKeys, xKey);
-  const series = configuredSeries.length > 0 ? configuredSeries : inferredSeries;
+  const series =
+    configuredSeries.length > 0 ? configuredSeries : inferredSeries;
   if (series.length === 0) {
     return null;
   }

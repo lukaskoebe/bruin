@@ -4,6 +4,8 @@ import { Edge, Node } from "reactflow";
 import { AssetViewMode, getAssetViewMode } from "@/lib/asset-visualization";
 import { AssetInspectResponse, WebPipeline } from "@/lib/types";
 
+const DOWNSTREAM_NODE_VERTICAL_GAP = 40;
+
 export type AssetNodeData = {
   name: string;
   assetType: string;
@@ -40,10 +42,22 @@ export function buildFlowFromPipeline(
     return { nodes: [], edges: [] };
   }
 
+  const assetsById = new Map(pipeline.assets.map((asset) => [asset.id, asset]));
   const byName = new Map(
     pipeline.assets.map((asset) => [asset.name, asset.id])
   );
   const edges: Edge[] = [];
+  const sizeByAssetId = new Map<string, { width: number; height: number }>();
+
+  for (const asset of pipeline.assets) {
+    const inspect = inspectByAssetID?.[asset.id];
+    const previewMode = getAssetViewMode(asset.meta);
+    const isPreviewLoading = inspectLoadingByAssetID?.[asset.id] === true;
+    sizeByAssetId.set(
+      asset.id,
+      estimateNodeSize(previewMode, inspect, isPreviewLoading)
+    );
+  }
 
   for (const asset of pipeline.assets) {
     for (const upstream of asset.upstreams ?? []) {
@@ -60,23 +74,81 @@ export function buildFlowFromPipeline(
     }
   }
 
+  const resolvedPositionsByAssetId = new Map<
+    string,
+    { x: number; y: number }
+  >();
+
+  const resolveNodePosition = (
+    assetId: string,
+    index: number,
+    visiting = new Set<string>()
+  ): { x: number; y: number } => {
+    const cachedPosition = resolvedPositionsByAssetId.get(assetId);
+    if (cachedPosition) {
+      return cachedPosition;
+    }
+
+    const storedPosition = positionsByAssetId?.[assetId];
+    if (storedPosition) {
+      resolvedPositionsByAssetId.set(assetId, storedPosition);
+      return storedPosition;
+    }
+
+    if (visiting.has(assetId)) {
+      const fallbackPosition = defaultNodePosition(index);
+      resolvedPositionsByAssetId.set(assetId, fallbackPosition);
+      return fallbackPosition;
+    }
+
+    visiting.add(assetId);
+
+    const asset = assetsById.get(assetId);
+    const upstreamName = asset?.upstreams?.[0];
+    const hasSingleUpstream = (asset?.upstreams?.length ?? 0) === 1;
+    const upstreamId = upstreamName ? byName.get(upstreamName) : undefined;
+
+    if (hasSingleUpstream && upstreamId) {
+      const upstreamIndex = pipeline.assets.findIndex(
+        (candidate) => candidate.id === upstreamId
+      );
+      const upstreamPosition = resolveNodePosition(
+        upstreamId,
+        upstreamIndex >= 0 ? upstreamIndex : index,
+        visiting
+      );
+      const upstreamSize = sizeByAssetId.get(upstreamId);
+
+      if (upstreamSize) {
+        const downstreamPosition: { x: number; y: number } = {
+          x: upstreamPosition.x,
+          y:
+            upstreamPosition.y +
+            upstreamSize.height +
+            DOWNSTREAM_NODE_VERTICAL_GAP,
+        };
+        resolvedPositionsByAssetId.set(assetId, downstreamPosition);
+        visiting.delete(assetId);
+        return downstreamPosition;
+      }
+    }
+
+    const fallbackPosition = defaultNodePosition(index);
+    resolvedPositionsByAssetId.set(assetId, fallbackPosition);
+    visiting.delete(assetId);
+    return fallbackPosition;
+  };
+
   const nodes: Node[] = pipeline.assets.map((asset, index) => {
     const inspect = inspectByAssetID?.[asset.id];
     const previewMode = getAssetViewMode(asset.meta);
     const isPreviewLoading = inspectLoadingByAssetID?.[asset.id] === true;
-    const size = estimateNodeSize(previewMode, inspect, isPreviewLoading);
-    const storedPosition = positionsByAssetId?.[asset.id];
-    const fallbackPosition = defaultNodePosition(index);
-    const x = storedPosition?.x ?? fallbackPosition.x;
-    const y = storedPosition?.y ?? fallbackPosition.y;
+    const resolvedPosition = resolveNodePosition(asset.id, index);
 
     return {
       id: asset.id,
       type: "assetNode",
-      position: {
-        x: x - size.width / 2,
-        y: y - size.height / 2,
-      },
+      position: resolvedPosition,
       data: {
         name: asset.name,
         assetType: asset.type,

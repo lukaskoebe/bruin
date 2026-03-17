@@ -141,6 +141,16 @@ export function WorkspaceShell() {
     clearPreviewForAsset,
   } = useAssetPreviews(visualAssets);
 
+  const areVisualPreviewsReady = useMemo(() => {
+    if (visualAssets.length === 0) {
+      return true;
+    }
+
+    return visualAssets.every((visualAsset) =>
+      Boolean(inspectByAssetId[visualAsset.id])
+    );
+  }, [inspectByAssetId, visualAssets]);
+
   // Derive available columns from both asset metadata and inspect results.
   const assetColumns = useMemo(() => {
     if (!asset) return [] as Array<{ name?: string }>;
@@ -152,6 +162,14 @@ export function WorkspaceShell() {
       ...new Set([...assetColumnNames, ...inspectColumnNames]),
     ];
     return names.map((name) => ({ name }));
+  }, [asset, inspectByAssetId]);
+
+  const assetInspectColumns = useMemo(() => {
+    if (!asset) {
+      return [] as string[];
+    }
+
+    return inspectByAssetId[asset.id]?.columns ?? [];
   }, [asset, inspectByAssetId]);
 
   const assetPreviewRows = useMemo(() => {
@@ -217,6 +235,10 @@ export function WorkspaceShell() {
       return;
     }
 
+    if (!areVisualPreviewsReady) {
+      return;
+    }
+
     const assetIds = enrichedPipeline.assets.map(
       (currentAsset) => currentAsset.id
     );
@@ -239,6 +261,7 @@ export function WorkspaceShell() {
       ...initialPositions,
     }));
   }, [
+    areVisualPreviewsReady,
     enrichedPipeline,
     inspectByAssetId,
     inspectLoadingByAssetId,
@@ -601,6 +624,7 @@ export function WorkspaceShell() {
                 assetEditorTab={assetEditorTab}
                 form={form}
                 assetColumns={assetColumns}
+                assetInspectColumns={assetInspectColumns}
                 assetPreviewRows={assetPreviewRows}
                 onEditorTabChange={setAssetEditorTab}
                 onEditorChange={handleEditorChange}

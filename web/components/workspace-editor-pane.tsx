@@ -3,8 +3,8 @@
 import Editor from "@monaco-editor/react";
 import type { Monaco } from "@monaco-editor/react";
 import type * as MonacoNS from "monaco-editor";
-import { Database, Eye, Hammer, Trash2 } from "lucide-react";
-import { CSSProperties, useCallback, useMemo, useState } from "react";
+import { Bug, ChevronDown, Database, Eye, Hammer, Trash2 } from "lucide-react";
+import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Controller, UseFormReturn } from "react-hook-form";
 import { Panel } from "react-resizable-panels";
 
@@ -22,7 +22,9 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useSQLIntellisense } from "@/hooks/use-sql-intellisense";
-import { buildSchemaForAsset } from "@/lib/sql-schema";
+import { useYAMLIntellisense } from "@/hooks/use-yaml-intellisense";
+import { inferAssetColumns } from "@/lib/api";
+import { buildSchemaForAsset, SchemaTable } from "@/lib/sql-schema";
 import { WebAsset, WorkspaceState } from "@/lib/types";
 
 export type AssetConfigForm = {
@@ -51,6 +53,7 @@ type WorkspaceEditorPaneProps = {
   assetEditorTab: "configuration" | "checks" | "visualization";
   form: UseFormReturn<AssetConfigForm>;
   assetColumns: Array<{ name?: string }>;
+  assetInspectColumns: string[];
   assetPreviewRows: Record<string, unknown>[];
   onEditorTabChange: (
     value: "configuration" | "checks" | "visualization"
@@ -87,6 +90,7 @@ export function WorkspaceEditorPane({
   assetEditorTab,
   form,
   assetColumns,
+  assetInspectColumns,
   assetPreviewRows,
   onEditorTabChange,
   onEditorChange,
@@ -101,6 +105,10 @@ export function WorkspaceEditorPane({
   const [monacoInstance, setMonacoInstance] = useState<Monaco | null>(null);
   const [editorInstance, setEditorInstance] =
     useState<MonacoNS.editor.IStandaloneCodeEditor | null>(null);
+  const [inferredColumnsByAssetId, setInferredColumnsByAssetId] = useState<
+    Record<string, Array<{ name: string; type?: string; description?: string; primaryKey?: boolean }>>
+  >({});
+  const requestedInferenceAssetIdsRef = useRef(new Set<string>());
 
   const schemaTables = useMemo(() => {
     if (!workspace || !asset) {
@@ -109,7 +117,72 @@ export function WorkspaceEditorPane({
     return buildSchemaForAsset(workspace, asset);
   }, [workspace, asset]);
 
-  useSQLIntellisense(monacoInstance, editorInstance, schemaTables, onGoToAsset);
+  useEffect(() => {
+    if (!asset) {
+      return;
+    }
+
+    const upstreamNameSet = new Set((asset.upstreams ?? []).map((name) => name.toLowerCase()));
+    const tablesNeedingInference = schemaTables.filter(
+      (table) =>
+        table.assetId &&
+        table.columns.length === 0 &&
+        upstreamNameSet.has(table.name.toLowerCase())
+    );
+
+    for (const table of tablesNeedingInference) {
+      const tableAssetId = table.assetId;
+      if (!tableAssetId || requestedInferenceAssetIdsRef.current.has(tableAssetId)) {
+        continue;
+      }
+
+      requestedInferenceAssetIdsRef.current.add(tableAssetId);
+      void inferAssetColumns(tableAssetId)
+        .then((response) => {
+          const inferredColumns = (response.columns ?? []).map((column) => ({
+            name: column.name,
+            type: column.type,
+            description: column.description,
+            primaryKey: column.primary_key,
+          }));
+
+          setInferredColumnsByAssetId((prev) => ({
+            ...prev,
+            [tableAssetId]: inferredColumns,
+          }));
+        })
+        .catch(() => {
+          // noop: debug panel will still show missing columns
+        });
+    }
+  }, [asset, schemaTables]);
+
+  const effectiveSchemaTables = useMemo<SchemaTable[]>(() => {
+    return schemaTables.map((table) => {
+      if (!table.assetId || table.columns.length > 0) {
+        return table;
+      }
+
+      const inferredColumns = inferredColumnsByAssetId[table.assetId];
+      if (!inferredColumns || inferredColumns.length === 0) {
+        return table;
+      }
+
+      return {
+        ...table,
+        columns: inferredColumns,
+      };
+    });
+  }, [inferredColumnsByAssetId, schemaTables]);
+
+  useSQLIntellisense(
+    monacoInstance,
+    editorInstance,
+    effectiveSchemaTables,
+    asset?.upstreams ?? [],
+    onGoToAsset
+  );
+  useYAMLIntellisense(monacoInstance, asset, workspace, selectedEnvironment);
 
   const handleEditorMount = useCallback(
     (editor: MonacoNS.editor.IStandaloneCodeEditor, monaco: Monaco) => {
@@ -127,6 +200,61 @@ export function WorkspaceEditorPane({
     const extension = asset.path.split(".").pop()?.toLowerCase() ?? "sql";
     return `inmemory://bruin/assets/${asset.id}.${extension}`;
   }, [asset]);
+
+  const debugResolvedUpstreamTables = useMemo(() => {
+    if (!asset) {
+      return [];
+    }
+
+    return (asset.upstreams ?? [])
+      .map((upstreamName) => {
+        const table = effectiveSchemaTables.find(
+          (candidate) =>
+            candidate.name.toLowerCase() === upstreamName.toLowerCase() ||
+            candidate.shortName.toLowerCase() === upstreamName.toLowerCase()
+        );
+
+        const source = !table
+          ? "unresolved"
+          : table.columns.length === 0
+            ? "resolved-without-columns"
+            : schemaTables.find((candidate) => candidate.assetId === table.assetId)?.columns
+                  .length
+              ? "declared"
+              : "inferred";
+
+        return {
+          upstreamName,
+          table,
+          source,
+        };
+      })
+      .filter(
+        (
+          item
+        ): item is {
+          upstreamName: string;
+          table: (typeof schemaTables)[number] | undefined;
+          source: string;
+        } => Boolean(item.upstreamName)
+      );
+  }, [asset, effectiveSchemaTables, schemaTables]);
+
+  const declaredColumnNames = useMemo(
+    () =>
+      (asset?.columns ?? [])
+        .map((column) => column.name)
+        .filter(Boolean) as string[],
+    [asset]
+  );
+
+  const mergedColumnNames = useMemo(
+    () =>
+      (assetColumns ?? [])
+        .map((column) => column.name)
+        .filter(Boolean) as string[],
+    [assetColumns]
+  );
 
   return (
     <Panel defaultSize={32} minSize={24}>
@@ -326,6 +454,95 @@ export function WorkspaceEditorPane({
                 <Database className="size-3" />
                 Environment: {selectedEnvironment || "default"}
               </div>
+
+              {asset && (
+                <details className="mt-3 rounded-md border bg-muted/20 p-2 text-[10px] leading-4">
+                  <summary className="flex cursor-pointer list-none items-center gap-1 font-medium text-muted-foreground">
+                    <Bug className="size-3" />
+                    SQL column debug
+                    <ChevronDown className="size-3" />
+                  </summary>
+
+                  <div className="mt-2 grid gap-2 text-[10px]">
+                    <DebugList
+                      items={asset.upstreams ?? []}
+                      title={`Parsed upstreams (${asset.upstreams?.length ?? 0})`}
+                    />
+
+                    <DebugList
+                      items={declaredColumnNames}
+                      title={`Selected asset declared columns (${declaredColumnNames.length})`}
+                    />
+
+                    <DebugList
+                      items={assetInspectColumns}
+                      title={`Selected asset inspect columns (${assetInspectColumns.length})`}
+                    />
+
+                    <DebugList
+                      items={mergedColumnNames}
+                      title={`Merged visualization/editor columns (${mergedColumnNames.length})`}
+                    />
+
+                    <div className="grid gap-1">
+                      <div className="font-medium text-muted-foreground">
+                        Same-connection schema tables ({schemaTables.length})
+                      </div>
+                      <div className="max-h-36 overflow-auto rounded border bg-background/70 p-2 font-mono">
+                        {schemaTables.length > 0 ? (
+                          effectiveSchemaTables.map((table) => (
+                            <div className="mb-1 break-all last:mb-0" key={table.name}>
+                              <div>
+                                {table.name} · {table.columns.length} cols
+                                {table.assetId &&
+                                !schemaTables.find((candidate) => candidate.assetId === table.assetId)
+                                  ?.columns.length
+                                  ? " · inferred"
+                                  : " · declared"}
+                              </div>
+                              <div className="text-muted-foreground">
+                                {table.columns.map((column) => column.name).join(", ") ||
+                                  "(no columns)"}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-muted-foreground">No schema tables available.</div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-1">
+                      <div className="font-medium text-muted-foreground">
+                        Upstream tables resolved for completion ({debugResolvedUpstreamTables.length})
+                      </div>
+                      <div className="max-h-36 overflow-auto rounded border bg-background/70 p-2 font-mono">
+                        {debugResolvedUpstreamTables.length > 0 ? (
+                          debugResolvedUpstreamTables.map(({ upstreamName, table, source }) => (
+                            <div className="mb-1 break-all last:mb-0" key={upstreamName}>
+                              <div>
+                                {upstreamName}
+                                {table ? ` → ${table.name}` : " → unresolved"}
+                                {source ? ` · ${source}` : ""}
+                              </div>
+                              <div className="text-muted-foreground">
+                                {table
+                                  ? table.columns.map((column) => column.name).join(", ") ||
+                                    "(resolved, but no columns)"
+                                  : "(not found in same-connection schema tables)"}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-muted-foreground">
+                            No parsed upstreams on the selected asset.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </details>
+              )}
             </div>
           </div>
         </div>
@@ -343,4 +560,15 @@ function editorLanguageForAssetPath(path: string): "sql" | "python" | "yaml" {
     return "yaml";
   }
   return "sql";
+}
+
+function DebugList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="grid gap-1">
+      <div className="font-medium text-muted-foreground">{title}</div>
+      <div className="rounded border bg-background/70 p-2 font-mono break-all">
+        {items.length > 0 ? items.join(", ") : "(empty)"}
+      </div>
+    </div>
+  );
 }

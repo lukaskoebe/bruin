@@ -2,6 +2,7 @@ import {
   AssetFreshnessResponse,
   AssetInspectResponse,
   InferColumnsResponse,
+  IngestrSuggestionsResponse,
   MaterializeResponse,
   WebColumn,
   PipelineMaterializationResponse,
@@ -257,6 +258,27 @@ export async function materializePipelineStream(
   }
 
   return donePayload;
+}
+
+export async function getIngestrSuggestions(options: {
+  connection: string;
+  prefix?: string;
+  environment?: string;
+}) {
+  const params = new URLSearchParams();
+  params.set("connection", options.connection);
+  if (options.prefix) {
+    params.set("prefix", options.prefix);
+  }
+  if (options.environment) {
+    params.set("environment", options.environment);
+  }
+
+  const res = await fetch(`/api/ingestr/suggestions?${params.toString()}`, {
+    cache: "no-store",
+  });
+
+  return readJSON<IngestrSuggestionsResponse>(res);
 }
 
 function parseSSEEvent(rawEvent: string): {

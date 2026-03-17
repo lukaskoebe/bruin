@@ -101,6 +101,19 @@ export type InferColumnsResponse = {
   error?: string;
 };
 
+export type IngestrSuggestion = {
+  value: string;
+  kind?: string;
+  detail?: string;
+};
+
+export type IngestrSuggestionsResponse = {
+  status: "ok" | "error";
+  connection_type?: string;
+  suggestions: IngestrSuggestion[];
+  error?: string;
+};
+
 export type AssetFreshnessEntry = {
   asset_name: string;
   materialized_at?: string;

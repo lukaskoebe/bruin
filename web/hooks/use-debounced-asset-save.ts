@@ -14,34 +14,39 @@ type PendingAssetSave = {
 
 export function useDebouncedAssetSave(delay = 500) {
   const setChangedAssetIds = useSetAtom(changedAssetIdsAtom);
-  const timersByAssetRef = useRef<Record<string, ReturnType<typeof setTimeout>>>(
-    {}
-  );
+  const timersByAssetRef = useRef<
+    Record<string, ReturnType<typeof setTimeout>>
+  >({});
   const pendingByAssetRef = useRef<Record<string, PendingAssetSave>>({});
 
-  const runSaveNow = useCallback((assetId: string) => {
-    const pending = pendingByAssetRef.current[assetId];
-    if (!pending) {
-      return;
-    }
+  const runSaveNow = useCallback(
+    (assetId: string) => {
+      const pending = pendingByAssetRef.current[assetId];
+      if (!pending) {
+        return;
+      }
 
-    delete pendingByAssetRef.current[assetId];
-    void updateAsset(pending.pipelineId, pending.assetId, {
-      content: pending.content,
-    }).then(() => {
-      setChangedAssetIds((prev: Set<string>) => {
-        if (prev.has(pending.assetId)) {
-          return prev;
-        }
+      delete pendingByAssetRef.current[assetId];
+      void updateAsset(pending.pipelineId, pending.assetId, {
+        content: pending.content,
+      })
+        .then(() => {
+          setChangedAssetIds((prev: Set<string>) => {
+            if (prev.has(pending.assetId)) {
+              return prev;
+            }
 
-        const next = new Set(prev);
-        next.add(pending.assetId);
-        return next;
-      });
-    }).catch(() => {
-      // noop: failed saves should not trigger preview refresh
-    });
-  }, [setChangedAssetIds]);
+            const next = new Set(prev);
+            next.add(pending.assetId);
+            return next;
+          });
+        })
+        .catch(() => {
+          // noop: failed saves should not trigger preview refresh
+        });
+    },
+    [setChangedAssetIds]
+  );
 
   const flushAssetSave = useCallback(
     (assetId: string) => {
