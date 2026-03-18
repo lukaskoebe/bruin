@@ -158,6 +158,7 @@ export function WorkspaceEditorPane({
     asset,
     schemaTables,
     asset?.upstreams ?? [],
+    selectedEnvironment,
     onGoToAsset
   );
   useYAMLIntellisense(monacoInstance, editorInstance, asset);

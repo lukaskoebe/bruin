@@ -20,8 +20,8 @@ import (
 	"github.com/bruin-data/bruin/internal/web/freshness"
 	"github.com/bruin-data/bruin/internal/web/service"
 	"github.com/bruin-data/bruin/internal/web/watch"
-	"github.com/bruin-data/bruin/pkg/connection"
 	"github.com/bruin-data/bruin/pkg/config"
+	"github.com/bruin-data/bruin/pkg/connection"
 	"github.com/bruin-data/bruin/pkg/git"
 	"github.com/bruin-data/bruin/pkg/jinja"
 	bruinpath "github.com/bruin-data/bruin/pkg/path"
@@ -142,6 +142,12 @@ type ingestrSuggestionsResponse struct {
 	ConnectionType string                  `json:"connection_type,omitempty"`
 	Suggestions    []ingestrSuggestionItem `json:"suggestions"`
 	Error          string                  `json:"error,omitempty"`
+}
+
+type sqlPathSuggestionsResponse struct {
+	Status      string                  `json:"status"`
+	Suggestions []ingestrSuggestionItem `json:"suggestions"`
+	Error       string                  `json:"error,omitempty"`
 }
 
 type webPipeline struct {
@@ -331,6 +337,7 @@ func (s *webServer) registerRoutes(router chi.Router) {
 	router.Get("/api/events", s.handleEvents)
 	router.Get("/api/workspace", s.handleGetWorkspace)
 	router.Get("/api/ingestr/suggestions", s.handleGetIngestrSuggestions)
+	router.Get("/api/assets/{assetID}/sql-path-suggestions", s.handleGetSQLPathSuggestions)
 	router.Get("/api/sql/databases", s.handleGetSQLDatabases)
 	router.Get("/api/sql/tables", s.handleGetSQLTables)
 	router.Get("/api/sql/table-columns", s.handleGetSQLTableColumns)
@@ -1808,6 +1815,60 @@ func (s *webServer) handleGetIngestrSuggestions(w http.ResponseWriter, r *http.R
 	webapi.WriteBadRequest(w, "connection_type_not_supported", fmt.Sprintf("connection '%s' does not support ingestr suggestions", connectionName))
 }
 
+func (s *webServer) handleGetSQLPathSuggestions(w http.ResponseWriter, r *http.Request) {
+	assetID := strings.TrimSpace(chi.URLParam(r, "assetID"))
+	if assetID == "" {
+		webapi.WriteBadRequest(w, "asset_id_required", "asset ID is required")
+		return
+	}
+
+	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
+	if prefix == "" {
+		s.writeJSON(w, http.StatusOK, sqlPathSuggestionsResponse{
+			Status:      "ok",
+			Suggestions: []ingestrSuggestionItem{},
+		})
+		return
+	}
+
+	if _, _, _, err := s.resolveAssetByID(r.Context(), assetID); err != nil {
+		webapi.WriteBadRequest(w, "asset_not_found", err.Error())
+		return
+	}
+
+	response := sqlPathSuggestionsResponse{
+		Status:      "ok",
+		Suggestions: []ingestrSuggestionItem{},
+	}
+
+	switch {
+	case strings.HasPrefix(prefix, "s3://"):
+		environment := strings.TrimSpace(r.URL.Query().Get("environment"))
+		items, err := s.buildSQLS3PathSuggestionItems(r.Context(), prefix, environment)
+		if err != nil {
+			webapi.WriteBadRequest(w, "sql_path_suggestions_failed", err.Error())
+			return
+		}
+		response.Suggestions = items
+	case strings.HasPrefix(prefix, "./"):
+		items, err := buildWorkspacePathSuggestionItems(s.workspaceRoot, prefix)
+		if err != nil {
+			webapi.WriteBadRequest(w, "sql_path_suggestions_failed", err.Error())
+			return
+		}
+		response.Suggestions = items
+	case strings.HasPrefix(prefix, "/"):
+		items, err := buildAbsolutePathSuggestionItems(prefix)
+		if err != nil {
+			webapi.WriteBadRequest(w, "sql_path_suggestions_failed", err.Error())
+			return
+		}
+		response.Suggestions = items
+	}
+
+	s.writeJSON(w, http.StatusOK, response)
+}
+
 func (s *webServer) handleGetSQLDatabases(w http.ResponseWriter, r *http.Request) {
 	connectionName := strings.TrimSpace(r.URL.Query().Get("connection"))
 	if connectionName == "" {
@@ -2212,6 +2273,92 @@ func buildS3SuggestionItems(
 	return buildS3EntrySuggestionItemsWithBucket(bucketName, items), nil
 }
 
+func (s *webServer) buildSQLS3PathSuggestionItems(
+	ctx context.Context,
+	prefix string,
+	environment string,
+) ([]ingestrSuggestionItem, error) {
+	manager, err := s.newConnectionManager(ctx, environment)
+	if err != nil {
+		return nil, err
+	}
+
+	configPath := s.resolveConfigFilePath()
+	cfg, err := config.LoadOrCreate(afero.NewOsFs(), configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if environment != "" {
+		if err := cfg.SelectEnvironment(environment); err != nil {
+			return nil, fmt.Errorf("failed to select environment '%s': %w", environment, err)
+		}
+	}
+
+	if cfg.SelectedEnvironment == nil || cfg.SelectedEnvironment.Connections == nil {
+		return []ingestrSuggestionItem{}, nil
+	}
+
+	lookupPrefix := strings.TrimPrefix(prefix, "s3://")
+	items := make([]ingestrSuggestionItem, 0)
+	seen := make(map[string]struct{})
+	var firstErr error
+
+	for _, connConfig := range cfg.SelectedEnvironment.Connections.S3 {
+		conn := manager.GetConnection(connConfig.Name)
+		if conn == nil {
+			continue
+		}
+
+		listableConn, ok := conn.(interface {
+			ListBuckets(ctx context.Context) ([]string, error)
+			ListEntries(ctx context.Context, bucketName, prefix string) ([]string, error)
+		})
+		if !ok {
+			continue
+		}
+
+		connectionDetails := manager.GetConnectionDetails(connConfig.Name)
+		if connectionDetails == nil {
+			connectionDetails = &connConfig
+		}
+
+		connItems, itemErr := buildS3SuggestionItems(ctx, listableConn, lookupPrefix, connectionDetails)
+		if itemErr != nil {
+			if firstErr == nil {
+				firstErr = itemErr
+			}
+			continue
+		}
+
+		for _, item := range connItems {
+			item.Value = "s3://" + strings.TrimPrefix(item.Value, "s3://")
+			if item.Detail != "" {
+				item.Detail = fmt.Sprintf("%s (%s)", item.Detail, connConfig.Name)
+			} else {
+				item.Detail = connConfig.Name
+			}
+
+			key := strings.ToLower(item.Value) + "::" + item.Kind
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			items = append(items, item)
+		}
+	}
+
+	if len(items) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Value < items[j].Value
+	})
+
+	return limitSuggestionItems(items, 200), nil
+}
+
 func s3SuggestionContext(connectionDetails any) (string, string) {
 	s3Connection, ok := connectionDetails.(*config.S3Connection)
 	if !ok || s3Connection == nil {
@@ -2242,10 +2389,140 @@ func buildS3EntrySuggestionItems(items []string) []ingestrSuggestionItem {
 			Detail: detail,
 		})
 	}
-
 	return limitSuggestionItems(suggestions, 200)
 }
 
+// DuckDB queries executed from Bruin Web inherit the workspace root as cwd,
+// so relative file suggestions should resolve from that same location.
+func buildWorkspacePathSuggestionItems(workspaceRoot string, prefix string) ([]ingestrSuggestionItem, error) {
+	relativePrefix := strings.TrimPrefix(prefix, "./")
+	searchDir, typedDirectory, fragment := splitRelativePathLookup(workspaceRoot, relativePrefix, prefix)
+
+	entries, err := os.ReadDir(searchDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []ingestrSuggestionItem{}, nil
+		}
+		return nil, err
+	}
+
+	items := make([]ingestrSuggestionItem, 0, len(entries))
+	filter := strings.ToLower(fragment)
+	for _, entry := range entries {
+		name := entry.Name()
+		if filter != "" && !strings.HasPrefix(strings.ToLower(name), filter) {
+			continue
+		}
+
+		displayPath := "./" + name
+		if typedDirectory != "" {
+			displayPath = "./" + filepath.ToSlash(filepath.Join(typedDirectory, name))
+		}
+
+		kind := "file"
+		detail := "Workspace file"
+		if entry.IsDir() {
+			displayPath += "/"
+			kind = "directory"
+			detail = "Workspace directory"
+		}
+
+		items = append(items, ingestrSuggestionItem{
+			Value:  displayPath,
+			Kind:   kind,
+			Detail: detail,
+		})
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Value < items[j].Value
+	})
+
+	return limitSuggestionItems(items, 200), nil
+}
+
+func buildAbsolutePathSuggestionItems(prefix string) ([]ingestrSuggestionItem, error) {
+	searchDir, displayDirectory, fragment := splitAbsolutePathLookup(prefix)
+
+	entries, err := os.ReadDir(searchDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []ingestrSuggestionItem{}, nil
+		}
+		return nil, err
+	}
+
+	items := make([]ingestrSuggestionItem, 0, len(entries))
+	filter := strings.ToLower(fragment)
+	for _, entry := range entries {
+		name := entry.Name()
+		if filter != "" && !strings.HasPrefix(strings.ToLower(name), filter) {
+			continue
+		}
+
+		displayPath := filepath.ToSlash(filepath.Join(displayDirectory, name))
+		if displayDirectory == string(filepath.Separator) {
+			displayPath = string(filepath.Separator) + name
+		}
+
+		kind := "file"
+		detail := "Local file"
+		if entry.IsDir() {
+			displayPath += "/"
+			kind = "directory"
+			detail = "Local directory"
+		}
+
+		items = append(items, ingestrSuggestionItem{
+			Value:  displayPath,
+			Kind:   kind,
+			Detail: detail,
+		})
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Value < items[j].Value
+	})
+
+	return limitSuggestionItems(items, 200), nil
+}
+
+func splitRelativePathLookup(workspaceRoot string, relativePrefix string, rawPrefix string) (string, string, string) {
+	trimmed := relativePrefix
+	if strings.HasSuffix(rawPrefix, "/") {
+		typedDirectory := strings.TrimSuffix(trimmed, "/")
+		if typedDirectory == "." {
+			typedDirectory = ""
+		}
+		return filepath.Join(workspaceRoot, typedDirectory), typedDirectory, ""
+	}
+
+	fragment := filepath.Base(trimmed)
+	typedDirectory := filepath.Dir(trimmed)
+	if typedDirectory == "." {
+		typedDirectory = ""
+	}
+
+	return filepath.Join(workspaceRoot, typedDirectory), typedDirectory, fragment
+}
+
+func splitAbsolutePathLookup(prefix string) (string, string, string) {
+	if strings.HasSuffix(prefix, "/") {
+		directory := filepath.Clean(prefix)
+		if directory == "." {
+			directory = string(filepath.Separator)
+		}
+		return directory, directory, ""
+	}
+
+	searchDir := filepath.Dir(prefix)
+	displayDirectory := searchDir
+	if displayDirectory == "." {
+		displayDirectory = string(filepath.Separator)
+	}
+
+	return searchDir, displayDirectory, filepath.Base(prefix)
+}
 
 func buildS3EntrySuggestionItemsWithBucket(bucketName string, items []string) []ingestrSuggestionItem {
 	suggestions := make([]ingestrSuggestionItem, 0, len(items))

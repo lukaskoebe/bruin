@@ -104,6 +104,12 @@ export type IngestrSuggestionsResponse = {
   error?: string;
 };
 
+export type SqlPathSuggestionsResponse = {
+  status: "ok" | "error";
+  suggestions: IngestrSuggestion[];
+  error?: string;
+};
+
 export type SqlDiscoveryDatabasesResponse = {
   status: "ok" | "error";
   connection_name: string;

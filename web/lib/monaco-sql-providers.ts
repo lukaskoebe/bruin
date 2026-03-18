@@ -16,6 +16,11 @@ type RemoteSQLResolver = {
     columnPrefix: string;
     range: MonacoNS.IRange;
   }): Promise<MonacoNS.languages.CompletionItem[]>;
+  providePathSuggestions(args: {
+    monaco: Monaco;
+    prefix: string;
+    range: MonacoNS.IRange;
+  }): Promise<MonacoNS.languages.CompletionItem[]>;
 };
 
 const SQL_KEYWORDS = [
@@ -323,6 +328,67 @@ function getCompletionContext(sqlTextBeforeCursor: string): {
   }
 }
 
+function getQuotedPathContext(
+  lineContent: string,
+  position: MonacoNS.Position,
+): { prefix: string; range: MonacoNS.IRange } | null {
+  const cursorIndex = position.column - 1;
+  let activeQuote: "'" | '"' | null = null;
+  let quoteStart = -1;
+
+  for (let index = 0; index < cursorIndex; index += 1) {
+    const current = lineContent[index];
+    const next = lineContent[index + 1];
+
+    if (!activeQuote && current === "-" && next === "-") {
+      break;
+    }
+
+    if (!activeQuote) {
+      if (current === "'" || current === '"') {
+        activeQuote = current;
+        quoteStart = index;
+      }
+      continue;
+    }
+
+    if (current !== activeQuote) {
+      continue;
+    }
+
+    if (next === activeQuote) {
+      index += 1;
+      continue;
+    }
+
+    activeQuote = null;
+    quoteStart = -1;
+  }
+
+  if (!activeQuote || quoteStart < 0) {
+    return null;
+  }
+
+  const prefix = lineContent.slice(quoteStart + 1, cursorIndex);
+  if (
+    !prefix.startsWith("s3://") &&
+    !prefix.startsWith("./") &&
+    !prefix.startsWith("/")
+  ) {
+    return null;
+  }
+
+  return {
+    prefix,
+    range: {
+      startLineNumber: position.lineNumber,
+      endLineNumber: position.lineNumber,
+      startColumn: quoteStart + 2,
+      endColumn: position.column,
+    },
+  };
+}
+
 function identifierAtPosition(
   model: MonacoNS.editor.ITextModel,
   position: MonacoNS.Position,
@@ -386,7 +452,7 @@ export function registerSQLProviders(
 
   disposables.push(
     monaco.languages.registerCompletionItemProvider("sql", {
-      triggerCharacters: ["."],
+      triggerCharacters: [".", "/", "'", '"'],
 
       async provideCompletionItems(
         model: MonacoNS.editor.ITextModel,
@@ -404,6 +470,19 @@ export function registerSQLProviders(
 
         const lineContent = model.getLineContent(position.lineNumber);
         const textBeforeCursor = lineContent.slice(0, position.column - 1);
+        const quotedPathContext = getQuotedPathContext(lineContent, position);
+        if (quotedPathContext && remoteResolver) {
+          const pathSuggestions = await remoteResolver.providePathSuggestions({
+            monaco,
+            prefix: quotedPathContext.prefix,
+            range: quotedPathContext.range,
+          });
+
+          if (pathSuggestions.length > 0) {
+            return { suggestions: pathSuggestions };
+          }
+        }
+
         const sqlTextBeforeCursor = model.getValueInRange({
           startLineNumber: 1,
           startColumn: 1,

@@ -3,6 +3,7 @@ import {
   AssetInspectResponse,
   InferColumnsResponse,
   IngestrSuggestionsResponse,
+  SqlPathSuggestionsResponse,
   SqlDiscoveryDatabasesResponse,
   SqlDiscoveryTableColumnsResponse,
   SqlDiscoveryTablesResponse,
@@ -342,6 +343,27 @@ export async function getSQLDatabases(options: {
   });
 
   return readJSON<SqlDiscoveryDatabasesResponse>(res);
+}
+
+export async function getSQLPathSuggestions(options: {
+  assetId: string;
+  prefix: string;
+  environment?: string;
+}) {
+  const params = new URLSearchParams();
+  params.set("prefix", options.prefix);
+  if (options.environment) {
+    params.set("environment", options.environment);
+  }
+
+  const res = await fetch(
+    `/api/assets/${options.assetId}/sql-path-suggestions?${params.toString()}`,
+    {
+      cache: "no-store",
+    }
+  );
+
+  return readJSON<SqlPathSuggestionsResponse>(res);
 }
 
 export async function getSQLTables(options: {
