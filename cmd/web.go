@@ -347,7 +347,6 @@ func (s *webServer) registerRoutes(router chi.Router) {
 	router.Delete("/api/pipelines/{pipelineID}/assets/{assetID}", s.handleDeleteAsset)
 	router.Get("/api/assets/{assetID}/inspect", s.handleInspectAsset)
 	router.Post("/api/assets/{assetID}/materialize/stream", s.handleMaterializeAssetStream)
-	router.Post("/api/assets/{assetID}/materialize", s.handleMaterializeAsset)
 	router.Get("/api/assets/freshness", s.handleGetAssetFreshness)
 	router.Post("/api/run", s.handleRun)
 
@@ -1554,77 +1553,6 @@ func (s *webServer) buildReadOnlyConfigFile(
 	}
 
 	return tempFile.Name(), cleanup, nil
-}
-
-func (s *webServer) handleMaterializeAsset(w http.ResponseWriter, r *http.Request) {
-	assetID := chi.URLParam(r, "assetID")
-	relAssetPath, err := decodeID(assetID)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_asset_id", "invalid asset id")
-		return
-	}
-
-	duckDBInfo, infoErr := s.findDuckDBExecutionInfoByAsset(r.Context(), assetID)
-	if infoErr != nil {
-		webapi.WriteBadRequest(w, "duckdb_info_failed", infoErr.Error())
-		return
-	}
-
-	cmdArgs := []string{"run", relAssetPath}
-
-	var output []byte
-	var attempts int
-	run := func() {
-		output, err, attempts = s.runner.RunWithRetry(r.Context(), cmdArgs, 4, 200*time.Millisecond)
-	}
-
-	if duckDBInfo != nil {
-		mu := s.getDuckDBOperationMutex(duckDBInfo.LockKey)
-		mu.Lock()
-		run()
-		mu.Unlock()
-	} else {
-		run()
-	}
-
-	if err != nil {
-		statusCode := http.StatusBadRequest
-		errorMessage := err.Error()
-		if service.IsDuckDBLockError(err, output) {
-			statusCode = http.StatusConflict
-			errorMessage = "duckdb database is busy (lock held by another process), please retry"
-		}
-
-		s.writeJSON(w, statusCode, map[string]any{
-			"status":    "error",
-			"command":   cmdArgs,
-			"output":    string(output),
-			"error":     errorMessage,
-			"exit_code": 1,
-			"attempts":  attempts,
-			"retryable": statusCode == http.StatusConflict,
-		})
-		return
-	}
-
-	// Record successful materialization and compute affected downstream assets.
-	// For inspect refresh: the materialized asset + direct (1-level) downstreams.
-	// Transitive downstreams still read from un-materialized intermediate tables.
-	materializedAt := time.Now().UTC()
-	if assetName := s.findAssetNameByID(assetID); assetName != "" {
-		s.freshness.RecordMaterialization(assetName, materializedAt, "succeeded")
-	}
-	affected := s.findMaterializationInspectIDs(assetID)
-
-	s.writeJSON(w, http.StatusOK, map[string]any{
-		"status":            "ok",
-		"command":           cmdArgs,
-		"output":            string(output),
-		"exit_code":         0,
-		"attempts":          attempts,
-		"materialized_at":   materializedAt,
-		"changed_asset_ids": affected,
-	})
 }
 
 func (s *webServer) handleMaterializeAssetStream(w http.ResponseWriter, r *http.Request) {

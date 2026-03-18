@@ -169,7 +169,7 @@ Frontend code already calls these Go endpoints through [lib/api.ts](lib/api.ts):
 - `PUT /api/pipelines/:pipelineId/assets/:assetId`
 - `DELETE /api/pipelines/:pipelineId/assets/:assetId`
 - `GET /api/assets/:assetId/inspect`
-- `POST /api/assets/:assetId/materialize`
+- `POST /api/assets/:assetId/materialize/stream`
 - `GET /api/pipelines/:pipelineId/materialization`
 - `GET /api/assets/freshness`
 - `GET /api/assets/:assetId/columns/infer`

@@ -3,7 +3,7 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useState } from "react";
 
-import { materializeAsset } from "@/lib/api";
+import { materializeAssetStream } from "@/lib/api";
 import {
   assetEditorTabAtom,
   editorDraftAtom,
@@ -160,7 +160,7 @@ export function useOnboardingActions({
 
         for (const current of onboarding.tutorialAssets) {
           try {
-            const result = await materializeAsset(current.id);
+            const result = await materializeAssetStream(current.id, {});
             outputs.push(
               `# ${current.name}\n${(result.output ?? "").trim() || result.status}`
             );

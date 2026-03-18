@@ -70,16 +70,6 @@ export type AssetInspectResponse = {
   error?: string;
 };
 
-export type MaterializeResponse = {
-  status: "ok" | "error";
-  command: string[];
-  output: string;
-  exit_code: number;
-  error?: string;
-  materialized_at?: string;
-  changed_asset_ids?: string[];
-};
-
 export type PipelineMaterializationResponse = {
   pipeline_id: string;
   assets: Array<{

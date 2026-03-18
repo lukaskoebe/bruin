@@ -3,7 +3,6 @@ import {
   AssetInspectResponse,
   InferColumnsResponse,
   IngestrSuggestionsResponse,
-  MaterializeResponse,
   SqlDiscoveryDatabasesResponse,
   SqlDiscoveryTableColumnsResponse,
   SqlDiscoveryTablesResponse,
@@ -164,27 +163,6 @@ function extractErrorFromRawInspectOutput(rawOutput: string): string | null {
   }
 
   return null;
-}
-
-export async function materializeAsset(assetId: string) {
-  const res = await fetch(`/api/assets/${assetId}/materialize`, {
-    method: "POST",
-  });
-
-  const text = await res.text();
-  let parsed: MaterializeResponse | null = null;
-
-  try {
-    parsed = JSON.parse(text) as MaterializeResponse;
-  } catch {
-    parsed = null;
-  }
-
-  if (parsed) {
-    return parsed;
-  }
-
-  throw new Error(text || `Request failed: ${res.status}`);
 }
 
 type MaterializeStreamPayload = {
