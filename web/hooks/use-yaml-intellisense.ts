@@ -39,6 +39,7 @@ const SUPPORTED_DESTINATIONS = ["postgres", "duckdb", "s3"];
 
 export function useYAMLIntellisense(
   monaco: typeof MonacoNS | null,
+  editor: MonacoNS.editor.IStandaloneCodeEditor | null,
   asset: WebAsset | null
 ) {
   const catalog = useAtomValue(suggestionCatalogAtom);
@@ -92,6 +93,48 @@ export function useYAMLIntellisense(
       disposable.dispose();
     };
   }, [asset, catalog, connections, monaco, registerConnectionTables, selectedEnvironment]);
+
+  useEffect(() => {
+    if (!monaco || !editor || !asset || !isYamlPath(asset.path)) {
+      return;
+    }
+
+    const disposable = editor.onDidChangeModelContent(
+      (event: MonacoNS.editor.IModelContentChangedEvent) => {
+        if (!event.changes.some((change: { text: string }) => change.text.includes("/"))) {
+          return;
+        }
+
+        const model = editor.getModel();
+        const position = editor.getPosition();
+        if (!model || !position) {
+          return;
+        }
+
+        const content = model.getValue();
+        if (!isIngestrYaml(content)) {
+          return;
+        }
+
+        const fieldContext = getYamlFieldContext(monaco, model, position);
+        if (!fieldContext) {
+          return;
+        }
+
+        if (!(fieldContext.inParameters && fieldContext.key === "source_table")) {
+          return;
+        }
+
+        queueMicrotask(() => {
+          void editor.getAction("editor.action.triggerSuggest")?.run();
+        });
+      }
+    );
+
+    return () => {
+      disposable.dispose();
+    };
+  }, [asset, editor, monaco]);
 }
 
 async function buildSuggestions(args: {
@@ -222,7 +265,11 @@ async function buildSuggestions(args: {
             connectionType: response.connection_type,
             environment: selectedEnvironment,
             prefix: fieldContext.normalizedValue,
-            suggestions: response.suggestions,
+            tables: response.suggestions.map((suggestion) => ({
+              name: suggestion.value,
+              kind: suggestion.kind,
+              detail: suggestion.detail,
+            })),
           });
 
           return response.suggestions;

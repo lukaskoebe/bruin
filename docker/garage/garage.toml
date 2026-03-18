@@ -1,0 +1,18 @@
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+
+replication_factor = 1
+
+rpc_bind_addr = "0.0.0.0:3901"
+rpc_public_addr = "garage:3901"
+rpc_secret = "f23a7dbadf582e37ae3a40d3b9a1811f7c64cb6cc37ed4f7949fe2f08776a0d1"
+
+[s3_api]
+s3_region = "us-east-1"
+api_bind_addr = "0.0.0.0:3900"
+
+[admin]
+api_bind_addr = "0.0.0.0:3903"
+admin_token = "bruin-garage-admin-token"
+metrics_token = "bruin-garage-metrics-token"

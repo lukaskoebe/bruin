@@ -12,6 +12,7 @@ import {
   SuggestionCatalogState,
   SuggestionColumnState,
   SuggestionConnectionState,
+  SuggestionDatabaseState,
   SuggestionObservation,
   SuggestionObservationMethod,
   SuggestionTableState,
@@ -49,6 +50,10 @@ function assetTableKey(assetId: string, pipelineId?: string): string {
   return `asset::${pipelineId ?? ""}::${assetId}`;
 }
 
+function databaseKey(connectionName: string, databaseName: string): string {
+  return `${connectionName.toLowerCase()}::${databaseName.toLowerCase()}`;
+}
+
 function externalTableKey(
   connectionName: string,
   tableName: string,
@@ -67,6 +72,7 @@ function columnKey(tableKey: string, name: string): string {
 function sourceSignature(source: SuggestionObservation): string {
   return [
     source.method,
+    source.prefix ?? "",
     source.pipelineId ?? "",
     source.assetId ?? "",
     source.connectionName ?? "",
@@ -192,6 +198,42 @@ function upsertConnection(
   });
 }
 
+function upsertDatabase(
+  databases: Map<string, SuggestionDatabaseState>,
+  input: {
+    name: string;
+    connectionName: string;
+    connectionType?: string | null;
+  },
+  source: SuggestionObservation
+) {
+  const normalizedName = input.name.trim();
+  if (!normalizedName) {
+    return;
+  }
+
+  const key = databaseKey(input.connectionName, normalizedName);
+  const current = databases.get(key);
+  const next: SuggestionDatabaseState = current
+    ? {
+        ...current,
+        connectionType: current.connectionType ?? input.connectionType,
+        sourceMethods: addSourceMethod(current.sourceMethods, source.method),
+        sources: addSource(current.sources, source),
+      }
+    : {
+        key,
+        name: normalizedName,
+        connectionKey: connectionKey(input.connectionName, null),
+        connectionName: input.connectionName,
+        connectionType: input.connectionType,
+        sourceMethods: [source.method],
+        sources: [source],
+      };
+
+  databases.set(key, next);
+}
+
 function upsertTable(
   tables: Map<string, SuggestionTableState>,
   input: Omit<SuggestionTableState, "sourceMethods" | "sources" | "columns">,
@@ -287,6 +329,8 @@ function emptyCatalog(): SuggestionCatalogState {
   return {
     connections: [],
     connectionsByKey: {},
+    databases: [],
+    databasesByKey: {},
     tables: [],
     tablesByKey: {},
   };
@@ -301,6 +345,7 @@ function buildCatalogFromWorkspace(
   }
 
   const connections = new Map<string, SuggestionConnectionState>();
+  const databases = new Map<string, SuggestionDatabaseState>();
   const tables = new Map<string, SuggestionTableState>();
   const recordedAt = syncSource?.recordedAt ?? new Date(0).toISOString();
   const method = syncSource?.method ?? "workspace-load";
@@ -354,6 +399,18 @@ function buildCatalogFromWorkspace(
           },
           tableSource
         );
+
+        if (tableParts.databaseName) {
+          upsertDatabase(
+            databases,
+            {
+              name: tableParts.databaseName,
+              connectionName,
+              connectionType,
+            },
+            tableSource
+          );
+        }
       }
 
       upsertTable(
@@ -381,7 +438,7 @@ function buildCatalogFromWorkspace(
     }
   }
 
-  return toCatalogResult(connections, tables);
+  return toCatalogResult(connections, databases, tables);
 }
 
 function findWorkspaceAsset(
@@ -410,9 +467,55 @@ function mergeDynamicSuggestions(
       connection,
     ])
   );
+  const databases = new Map(
+    Object.values(baseCatalog.databasesByKey).map((database) => [
+      database.key,
+      database,
+    ])
+  );
   const tables = new Map(
     Object.values(baseCatalog.tablesByKey).map((table) => [table.key, table])
   );
+
+  for (const observations of Object.values(
+    dynamicState.remoteDatabasesByConnectionKey
+  )) {
+    for (const observation of observations) {
+      const source: SuggestionObservation = {
+        method: observation.method,
+        recordedAt: observation.recordedAt,
+        connectionName: observation.connectionName,
+        connectionType: observation.connectionType,
+        environment: observation.environment,
+      };
+
+      if (observation.connectionType) {
+        upsertConnection(
+          connections,
+          {
+            name: observation.connectionName,
+            type: observation.connectionType,
+          },
+          source
+        );
+      }
+
+      for (const databaseName of observation.databases) {
+        upsertDatabase(
+          databases,
+          {
+            name: databaseName,
+            connectionName: observation.connectionName,
+            connectionType: observation.connectionType,
+          },
+          {
+            ...source,
+            databaseName,
+          }
+        );
+      }
+    }
+  }
 
   for (const [assetId, observations] of Object.entries(
     dynamicState.assetColumnsByAssetId
@@ -481,6 +584,7 @@ function mergeDynamicSuggestions(
       const source: SuggestionObservation = {
         method: observation.method,
         recordedAt: observation.recordedAt,
+        prefix: observation.prefix,
         connectionName: observation.connectionName,
         connectionType: observation.connectionType,
         databaseName: observation.databaseName,
@@ -499,32 +603,64 @@ function mergeDynamicSuggestions(
         );
       }
 
-      for (const suggestion of observation.suggestions) {
-        const normalizedName = normalizeTableName(suggestion.value);
+      if (observation.databaseName) {
+        upsertDatabase(
+          databases,
+          {
+            name: observation.databaseName,
+            connectionName: observation.connectionName,
+            connectionType: observation.connectionType,
+          },
+          source
+        );
+      }
+
+      for (const remoteTable of observation.tables) {
+        const normalizedName = normalizeTableName(remoteTable.name);
         if (!normalizedName) {
           continue;
         }
 
         const tableParts = parseQualifiedTableName(normalizedName);
+        const databaseName =
+          remoteTable.databaseName ??
+          observation.databaseName ??
+          tableParts.databaseName ??
+          null;
+
+        if (databaseName) {
+          upsertDatabase(
+            databases,
+            {
+              name: databaseName,
+              connectionName: observation.connectionName,
+              connectionType: observation.connectionType,
+            },
+            {
+              ...source,
+              databaseName,
+            }
+          );
+        }
+
         upsertTable(
           tables,
           {
             key: externalTableKey(
               observation.connectionName,
               normalizedName,
-              observation.databaseName ?? tableParts.databaseName
+              databaseName
             ),
             name: normalizedName,
             shortName: tableParts.shortName,
-            schemaName: tableParts.schemaName,
-            databaseName:
-              observation.databaseName ?? tableParts.databaseName ?? null,
+            schemaName: remoteTable.schemaName ?? tableParts.schemaName,
+            databaseName,
             connectionKey: key,
             connectionName: observation.connectionName,
             connectionType: observation.connectionType ?? null,
             isBruinAsset: false,
-            remoteSuggestionKind: suggestion.kind,
-            remoteSuggestionDetail: suggestion.detail,
+            remoteSuggestionKind: remoteTable.kind,
+            remoteSuggestionDetail: remoteTable.detail,
           },
           source
         );
@@ -532,20 +668,104 @@ function mergeDynamicSuggestions(
     }
   }
 
-  return toCatalogResult(connections, tables);
+  for (const observations of Object.values(
+    dynamicState.remoteTableColumnsByTableKey
+  )) {
+    for (const observation of observations) {
+      const normalizedName = normalizeTableName(observation.tableName);
+      if (!normalizedName) {
+        continue;
+      }
+
+      const tableParts = parseQualifiedTableName(normalizedName);
+      const databaseName =
+        observation.databaseName ?? tableParts.databaseName ?? null;
+      const source: SuggestionObservation = {
+        method: observation.method,
+        recordedAt: observation.recordedAt,
+        connectionName: observation.connectionName,
+        connectionType: observation.connectionType,
+        databaseName,
+        environment: observation.environment,
+      };
+      const key = connectionKey(observation.connectionName, databaseName);
+      const tableKey = externalTableKey(
+        observation.connectionName,
+        normalizedName,
+        databaseName
+      );
+
+      if (observation.connectionType) {
+        upsertConnection(
+          connections,
+          {
+            name: observation.connectionName,
+            type: observation.connectionType,
+            databaseName,
+          },
+          source
+        );
+      }
+
+      if (databaseName) {
+        upsertDatabase(
+          databases,
+          {
+            name: databaseName,
+            connectionName: observation.connectionName,
+            connectionType: observation.connectionType,
+          },
+          source
+        );
+      }
+
+      upsertTable(
+        tables,
+        {
+          key: tableKey,
+          name: normalizedName,
+          shortName: tableParts.shortName,
+          schemaName: tableParts.schemaName,
+          databaseName,
+          connectionKey: key,
+          connectionName: observation.connectionName,
+          connectionType: observation.connectionType ?? null,
+          isBruinAsset: false,
+        },
+        source
+      );
+
+      upsertColumns(tables, tableKey, observation.columns, source);
+    }
+  }
+
+  return toCatalogResult(connections, databases, tables);
 }
 
 function toCatalogResult(
   connections: Map<string, SuggestionConnectionState>,
+  databases: Map<string, SuggestionDatabaseState>,
   tables: Map<string, SuggestionTableState>
 ): SuggestionCatalogState {
   const sortedConnections = sortConnections(Array.from(connections.values()));
+  const sortedDatabases = [...databases.values()].sort((left, right) => {
+    const connectionCompare = left.connectionName.localeCompare(right.connectionName);
+    if (connectionCompare !== 0) {
+      return connectionCompare;
+    }
+
+    return left.name.localeCompare(right.name);
+  });
   const sortedTables = sortTables(Array.from(tables.values()));
 
   return {
     connections: sortedConnections,
     connectionsByKey: Object.fromEntries(
       sortedConnections.map((connection) => [connection.key, connection])
+    ),
+    databases: sortedDatabases,
+    databasesByKey: Object.fromEntries(
+      sortedDatabases.map((database) => [database.key, database])
     ),
     tables: sortedTables,
     tablesByKey: Object.fromEntries(
@@ -598,6 +818,41 @@ export function getConnectionSuggestions(
   }));
 }
 
+export function getDatabaseSuggestions(
+  catalog: SuggestionCatalogState,
+  options: {
+    connectionName: string;
+    environment?: string;
+    prefix?: string;
+  }
+): string[] {
+  const prefix = options.prefix?.trim().toLowerCase() ?? "";
+
+  return catalog.databases
+    .filter((database) => {
+      if (database.connectionName !== options.connectionName) {
+        return false;
+      }
+
+      const matchingSource = database.sources.some(
+        (source) =>
+          source.method === "connection-database-discovery" &&
+          (!options.environment || source.environment === options.environment)
+      );
+      if (!matchingSource) {
+        return false;
+      }
+
+      if (!prefix) {
+        return true;
+      }
+
+      return database.name.toLowerCase().includes(prefix);
+    })
+    .map((database) => database.name)
+    .sort((left, right) => left.localeCompare(right));
+}
+
 export function getSelectedAssetSuggestionTable(
   catalog: SuggestionCatalogState,
   assetId: string | null | undefined
@@ -642,7 +897,7 @@ export function getSchemaSuggestionTablesForAsset(
   }
 
   return catalog.tables.filter(
-    (table) => table.isBruinAsset && table.connectionName === currentConnection
+    (table) => table.connectionName === currentConnection
   );
 }
 
@@ -686,7 +941,8 @@ export function getIngestrTableSuggestionsFromCatalog(
       const matchingSource = table.sources.some(
         (source) =>
           source.method === "ingestr-suggestions" &&
-          (!options.environment || source.environment === options.environment)
+          (!options.environment || source.environment === options.environment) &&
+          doesIngestrSourceMatchPrefix(source.prefix, prefix)
       );
 
       if (!matchingSource) {
@@ -705,4 +961,28 @@ export function getIngestrTableSuggestionsFromCatalog(
       detail: table.remoteSuggestionDetail,
     }))
     .sort((left, right) => left.value.localeCompare(right.value));
+}
+
+function doesIngestrSourceMatchPrefix(
+  sourcePrefix: string | undefined,
+  requestedPrefix: string
+): boolean {
+  const normalizedSourcePrefix = sourcePrefix?.trim().toLowerCase() ?? "";
+
+  if (requestedPrefix === "") {
+    return normalizedSourcePrefix === "";
+  }
+
+  if (normalizedSourcePrefix === requestedPrefix) {
+    return true;
+  }
+
+   if (requestedPrefix.endsWith("/")) {
+    return false;
+  }
+
+  return (
+    normalizedSourcePrefix.endsWith("/") &&
+    requestedPrefix.startsWith(normalizedSourcePrefix)
+  );
 }

@@ -6,11 +6,15 @@ export type SuggestionObservationMethod =
   | "workspace-event"
   | "asset-inspect"
   | "asset-column-inference"
-  | "ingestr-suggestions";
+  | "ingestr-suggestions"
+  | "connection-database-discovery"
+  | "connection-table-discovery"
+  | "connection-column-discovery";
 
 export type SuggestionObservation = {
   method: SuggestionObservationMethod;
   recordedAt: string;
+  prefix?: string;
   pipelineId?: string;
   assetId?: string;
   assetPath?: string;
@@ -64,9 +68,21 @@ export type SuggestionConnectionState = {
   sources: SuggestionObservation[];
 };
 
+export type SuggestionDatabaseState = {
+  key: string;
+  name: string;
+  connectionKey: string;
+  connectionName: string;
+  connectionType?: string | null;
+  sourceMethods: SuggestionObservationMethod[];
+  sources: SuggestionObservation[];
+};
+
 export type SuggestionCatalogState = {
   connections: SuggestionConnectionState[];
   connectionsByKey: Record<string, SuggestionConnectionState>;
+  databases: SuggestionDatabaseState[];
+  databasesByKey: Record<string, SuggestionDatabaseState>;
   tables: SuggestionTableState[];
   tablesByKey: Record<string, SuggestionTableState>;
 };
@@ -82,19 +98,41 @@ export type DynamicAssetColumnObservation = {
 };
 
 export type DynamicRemoteTableObservation = {
-  method: "ingestr-suggestions";
+  method: "ingestr-suggestions" | "connection-table-discovery";
   recordedAt: string;
   environment?: string;
   prefix?: string;
   connectionName: string;
   connectionType?: string;
   databaseName?: string | null;
-  suggestions: IngestrSuggestion[];
+  tables: RemoteTableSuggestionEntry[];
+};
+
+export type DynamicRemoteDatabaseObservation = {
+  method: "connection-database-discovery";
+  recordedAt: string;
+  environment?: string;
+  connectionName: string;
+  connectionType?: string;
+  databases: string[];
+};
+
+export type DynamicRemoteTableColumnObservation = {
+  method: "connection-column-discovery";
+  recordedAt: string;
+  environment?: string;
+  connectionName: string;
+  connectionType?: string;
+  databaseName?: string | null;
+  tableName: string;
+  columns: SchemaColumn[];
 };
 
 export type DynamicSuggestionState = {
   assetColumnsByAssetId: Record<string, DynamicAssetColumnObservation[]>;
+  remoteDatabasesByConnectionKey: Record<string, DynamicRemoteDatabaseObservation[]>;
   remoteTablesByConnectionKey: Record<string, DynamicRemoteTableObservation[]>;
+  remoteTableColumnsByTableKey: Record<string, DynamicRemoteTableColumnObservation[]>;
 };
 
 export type RegisterAssetColumnsPayload = {
@@ -113,18 +151,51 @@ export type RegisterAssetColumnsPayload = {
 };
 
 export type RegisterConnectionTablesPayload = {
+  method?: Extract<
+    SuggestionObservationMethod,
+    "ingestr-suggestions" | "connection-table-discovery"
+  >;
   connectionName: string;
   connectionType?: string;
   databaseName?: string | null;
   environment?: string;
   prefix?: string;
-  suggestions: IngestrSuggestion[];
+  tables: RemoteTableSuggestionEntry[];
+};
+
+export type RegisterConnectionDatabasesPayload = {
+  connectionName: string;
+  connectionType?: string;
+  environment?: string;
+  databases: string[];
+};
+
+export type RegisterRemoteTableColumnsPayload = {
+  connectionName: string;
+  connectionType?: string;
+  databaseName?: string | null;
+  tableName: string;
+  environment?: string;
+  columns: Array<{
+    name: string;
+    type?: string;
+    description?: string;
+    primaryKey?: boolean;
+  }>;
 };
 
 export type ConnectionSuggestionEntry = {
   name: string;
   type: string;
   databaseName?: string | null;
+};
+
+export type RemoteTableSuggestionEntry = {
+  name: string;
+  schemaName?: string;
+  databaseName?: string | null;
+  kind?: string;
+  detail?: string;
 };
 
 export type SuggestionWorkspaceSyncSource = {
@@ -138,5 +209,7 @@ export type SuggestionWorkspaceSyncSource = {
 
 export const emptyDynamicSuggestionState: DynamicSuggestionState = {
   assetColumnsByAssetId: {},
+  remoteDatabasesByConnectionKey: {},
   remoteTablesByConnectionKey: {},
+  remoteTableColumnsByTableKey: {},
 };

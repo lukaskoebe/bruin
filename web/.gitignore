@@ -16,6 +16,7 @@
 # vite
 /dist/
 /out/
+/public/monaco/
 
 # production
 /build

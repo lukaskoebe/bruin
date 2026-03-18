@@ -1,0 +1,31 @@
+services:
+  garage:
+    build:
+      context: .
+      dockerfile: docker/garage/Dockerfile
+    image: bruin-garage-local:latest
+    container_name: bruin-garage
+    restart: unless-stopped
+    ports:
+      - "3900:3900"
+      - "3901:3901"
+      - "3903:3903"
+    environment:
+      GARAGE_DEFAULT_ACCESS_KEY: "GK27b67355b37cae18a1db0056"
+      GARAGE_DEFAULT_SECRET_KEY: "ae28cf97e17f0164f2de853398be2db6d6da8d13be60d22a84465d37b47bc1a6"
+      GARAGE_DEFAULT_BUCKET: "bruin-autocomplete"
+      RUST_LOG: "garage=info"
+    volumes:
+      - ./docker/garage/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    healthcheck:
+      test: ["CMD", "/garage", "-c", "/etc/garage.toml", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  garage-meta:
+  garage-data:

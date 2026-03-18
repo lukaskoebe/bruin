@@ -103,6 +103,40 @@ type ingestrSuggestionItem struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+type sqlDiscoveryDatabaseResponse struct {
+	Status         string   `json:"status"`
+	ConnectionName string   `json:"connection_name"`
+	ConnectionType string   `json:"connection_type,omitempty"`
+	Databases      []string `json:"databases"`
+	Error          string   `json:"error,omitempty"`
+}
+
+type sqlDiscoveryTableItem struct {
+	Name         string `json:"name"`
+	ShortName    string `json:"short_name"`
+	SchemaName   string `json:"schema_name,omitempty"`
+	DatabaseName string `json:"database_name,omitempty"`
+}
+
+type sqlDiscoveryTablesResponse struct {
+	Status         string                  `json:"status"`
+	ConnectionName string                  `json:"connection_name"`
+	ConnectionType string                  `json:"connection_type,omitempty"`
+	Database       string                  `json:"database"`
+	Tables         []sqlDiscoveryTableItem `json:"tables"`
+	Error          string                  `json:"error,omitempty"`
+}
+
+type sqlDiscoveryTableColumnsResponse struct {
+	Status         string      `json:"status"`
+	ConnectionName string      `json:"connection_name"`
+	Table          string      `json:"table"`
+	Columns        []webColumn `json:"columns"`
+	RawOutput      string      `json:"raw_output"`
+	Command        []string    `json:"command,omitempty"`
+	Error          string      `json:"error,omitempty"`
+}
+
 type ingestrSuggestionsResponse struct {
 	Status         string                  `json:"status"`
 	ConnectionType string                  `json:"connection_type,omitempty"`
@@ -297,6 +331,9 @@ func (s *webServer) registerRoutes(router chi.Router) {
 	router.Get("/api/events", s.handleEvents)
 	router.Get("/api/workspace", s.handleGetWorkspace)
 	router.Get("/api/ingestr/suggestions", s.handleGetIngestrSuggestions)
+	router.Get("/api/sql/databases", s.handleGetSQLDatabases)
+	router.Get("/api/sql/tables", s.handleGetSQLTables)
+	router.Get("/api/sql/table-columns", s.handleGetSQLTableColumns)
 	router.Post("/api/pipelines", s.handleCreatePipeline)
 	router.Put("/api/pipelines", s.handleUpdatePipeline)
 	router.Delete("/api/pipelines/{id}", s.handleDeletePipeline)
@@ -1267,7 +1304,11 @@ func buildInferAssetColumnsCommand(parsedPipeline *pipeline.Pipeline, asset *pip
 
 	query := fmt.Sprintf("select * from %s limit 1", quoteQualifiedIdentifier(targetTableName))
 
-	return []string{
+	return buildRemoteTableColumnsCommand(connectionName, query, ""), nil
+}
+
+func buildRemoteTableColumnsCommand(connectionName, query, environment string) []string {
+	args := []string{
 		"query",
 		"--connection",
 		connectionName,
@@ -1275,7 +1316,13 @@ func buildInferAssetColumnsCommand(parsedPipeline *pipeline.Pipeline, asset *pip
 		query,
 		"--output",
 		"json",
-	}, nil
+	}
+
+	if strings.TrimSpace(environment) != "" {
+		args = append(args, "--environment", environment)
+	}
+
+	return args
 }
 
 func (s *webServer) handleUpdateAssetColumns(w http.ResponseWriter, r *http.Request) {
@@ -1694,7 +1741,12 @@ func (s *webServer) handleGetIngestrSuggestions(w http.ResponseWriter, r *http.R
 		ListBuckets(ctx context.Context) ([]string, error)
 		ListEntries(ctx context.Context, bucketName, prefix string) ([]string, error)
 	}); ok {
-		items, itemErr := buildS3SuggestionItems(r.Context(), s3Conn, prefix)
+		items, itemErr := buildS3SuggestionItems(
+			r.Context(),
+			s3Conn,
+			prefix,
+			manager.GetConnectionDetails(connectionName),
+		)
 		if itemErr != nil {
 			webapi.WriteBadRequest(w, "ingestr_s3_suggestions_failed", itemErr.Error())
 			return
@@ -1740,6 +1792,153 @@ func (s *webServer) handleGetIngestrSuggestions(w http.ResponseWriter, r *http.R
 	}
 
 	webapi.WriteBadRequest(w, "connection_type_not_supported", fmt.Sprintf("connection '%s' does not support ingestr suggestions", connectionName))
+}
+
+func (s *webServer) handleGetSQLDatabases(w http.ResponseWriter, r *http.Request) {
+	connectionName := strings.TrimSpace(r.URL.Query().Get("connection"))
+	if connectionName == "" {
+		webapi.WriteBadRequest(w, "connection_required", "connection query parameter is required")
+		return
+	}
+
+	environment := strings.TrimSpace(r.URL.Query().Get("environment"))
+	manager, err := s.newConnectionManager(r.Context(), environment)
+	if err != nil {
+		webapi.WriteInternalError(w, "connection_manager_failed", err.Error())
+		return
+	}
+
+	conn := manager.GetConnection(connectionName)
+	if conn == nil {
+		webapi.WriteBadRequest(w, "connection_not_found", fmt.Sprintf("connection '%s' not found", connectionName))
+		return
+	}
+
+	connType := strings.TrimSpace(manager.GetConnectionType(connectionName))
+	fetcher, ok := conn.(interface {
+		GetDatabases(ctx context.Context) ([]string, error)
+	})
+	if !ok {
+		webapi.WriteBadRequest(w, "connection_type_not_supported", fmt.Sprintf("connection '%s' does not support database discovery", connectionName))
+		return
+	}
+
+	databases, err := fetcher.GetDatabases(r.Context())
+	if err != nil {
+		webapi.WriteBadRequest(w, "sql_database_discovery_failed", err.Error())
+		return
+	}
+
+	sort.Strings(databases)
+	s.writeJSON(w, http.StatusOK, sqlDiscoveryDatabaseResponse{
+		Status:         "ok",
+		ConnectionName: connectionName,
+		ConnectionType: connType,
+		Databases:      databases,
+	})
+}
+
+func (s *webServer) handleGetSQLTables(w http.ResponseWriter, r *http.Request) {
+	connectionName := strings.TrimSpace(r.URL.Query().Get("connection"))
+	if connectionName == "" {
+		webapi.WriteBadRequest(w, "connection_required", "connection query parameter is required")
+		return
+	}
+
+	databaseName := strings.TrimSpace(r.URL.Query().Get("database"))
+	if databaseName == "" {
+		webapi.WriteBadRequest(w, "database_required", "database query parameter is required")
+		return
+	}
+
+	environment := strings.TrimSpace(r.URL.Query().Get("environment"))
+	manager, err := s.newConnectionManager(r.Context(), environment)
+	if err != nil {
+		webapi.WriteInternalError(w, "connection_manager_failed", err.Error())
+		return
+	}
+
+	conn := manager.GetConnection(connectionName)
+	if conn == nil {
+		webapi.WriteBadRequest(w, "connection_not_found", fmt.Sprintf("connection '%s' not found", connectionName))
+		return
+	}
+
+	connType := strings.TrimSpace(manager.GetConnectionType(connectionName))
+	tables := make([]sqlDiscoveryTableItem, 0)
+
+	if fetcherWithSchemas, ok := conn.(interface {
+		GetTablesWithSchemas(ctx context.Context, databaseName string) (map[string][]string, error)
+	}); ok {
+		items, err := fetcherWithSchemas.GetTablesWithSchemas(r.Context(), databaseName)
+		if err != nil {
+			webapi.WriteBadRequest(w, "sql_table_discovery_failed", err.Error())
+			return
+		}
+
+		tables = buildSQLDiscoveryTableItems(databaseName, items)
+	} else if fetcher, ok := conn.(interface {
+		GetTables(ctx context.Context, databaseName string) ([]string, error)
+	}); ok {
+		items, err := fetcher.GetTables(r.Context(), databaseName)
+		if err != nil {
+			webapi.WriteBadRequest(w, "sql_table_discovery_failed", err.Error())
+			return
+		}
+
+		tables = buildSQLDiscoveryTableItemsWithoutSchemas(databaseName, items)
+	} else {
+		webapi.WriteBadRequest(w, "connection_type_not_supported", fmt.Sprintf("connection '%s' does not support table discovery", connectionName))
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, sqlDiscoveryTablesResponse{
+		Status:         "ok",
+		ConnectionName: connectionName,
+		ConnectionType: connType,
+		Database:       databaseName,
+		Tables:         tables,
+	})
+}
+
+func (s *webServer) handleGetSQLTableColumns(w http.ResponseWriter, r *http.Request) {
+	connectionName := strings.TrimSpace(r.URL.Query().Get("connection"))
+	if connectionName == "" {
+		webapi.WriteBadRequest(w, "connection_required", "connection query parameter is required")
+		return
+	}
+
+	tableName := strings.TrimSpace(r.URL.Query().Get("table"))
+	if tableName == "" {
+		webapi.WriteBadRequest(w, "table_required", "table query parameter is required")
+		return
+	}
+
+	environment := strings.TrimSpace(r.URL.Query().Get("environment"))
+	query := fmt.Sprintf("select * from %s limit 1", quoteQualifiedIdentifier(tableName))
+	cmdArgs := buildRemoteTableColumnsCommand(connectionName, query, environment)
+	output, err := s.runner.Run(r.Context(), cmdArgs)
+	if err != nil {
+		s.writeJSON(w, http.StatusBadRequest, sqlDiscoveryTableColumnsResponse{
+			Status:         "error",
+			ConnectionName: connectionName,
+			Table:          tableName,
+			Columns:        []webColumn{},
+			RawOutput:      string(output),
+			Command:        cmdArgs,
+			Error:          err.Error(),
+		})
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, sqlDiscoveryTableColumnsResponse{
+		Status:         "ok",
+		ConnectionName: connectionName,
+		Table:          tableName,
+		Columns:        inferWebColumnsFromQueryOutput(output),
+		RawOutput:      string(output),
+		Command:        cmdArgs,
+	})
 }
 
 type runRequest struct {
@@ -1841,6 +2040,61 @@ func buildSchemaTableSuggestionItems(tables map[string][]string, prefix string) 
 	return limitSuggestionItems(items, 200)
 }
 
+func buildSQLDiscoveryTableItems(databaseName string, tables map[string][]string) []sqlDiscoveryTableItem {
+	items := make([]sqlDiscoveryTableItem, 0)
+	schemas := make([]string, 0, len(tables))
+	for schema := range tables {
+		schemas = append(schemas, schema)
+	}
+	sort.Strings(schemas)
+
+	for _, schema := range schemas {
+		schemaTables := append([]string{}, tables[schema]...)
+		sort.Strings(schemaTables)
+		for _, table := range schemaTables {
+			items = append(items, sqlDiscoveryTableItem{
+				Name:         fmt.Sprintf("%s.%s.%s", databaseName, schema, table),
+				ShortName:    table,
+				SchemaName:   schema,
+				DatabaseName: databaseName,
+			})
+		}
+	}
+
+	return items
+}
+
+func buildSQLDiscoveryTableItemsWithoutSchemas(databaseName string, tables []string) []sqlDiscoveryTableItem {
+	items := make([]sqlDiscoveryTableItem, 0, len(tables))
+	sortedTables := append([]string{}, tables...)
+	sort.Strings(sortedTables)
+
+	for _, table := range sortedTables {
+		trimmed := strings.TrimSpace(table)
+		if trimmed == "" {
+			continue
+		}
+
+		shortName := trimmed
+		if dotIndex := strings.LastIndex(trimmed, "."); dotIndex >= 0 && dotIndex < len(trimmed)-1 {
+			shortName = trimmed[dotIndex+1:]
+		}
+
+		name := trimmed
+		if !strings.Contains(trimmed, ".") {
+			name = fmt.Sprintf("%s.%s", databaseName, trimmed)
+		}
+
+		items = append(items, sqlDiscoveryTableItem{
+			Name:         name,
+			ShortName:    shortName,
+			DatabaseName: databaseName,
+		})
+	}
+
+	return items
+}
+
 func buildDuckDBSuggestionItems(
 	ctx context.Context,
 	fetcher interface {
@@ -1895,8 +2149,24 @@ func buildS3SuggestionItems(
 		ListEntries(ctx context.Context, bucketName, prefix string) ([]string, error)
 	},
 	prefix string,
+	connectionDetails any,
 ) ([]ingestrSuggestionItem, error) {
 	normalizedPrefix := strings.TrimSpace(prefix)
+	configuredBucket, configuredPrefix := s3SuggestionContext(connectionDetails)
+	if configuredBucket != "" {
+		lookupPrefix := normalizedPrefix
+		if lookupPrefix == "" {
+			lookupPrefix = configuredPrefix
+		}
+
+		items, err := conn.ListEntries(ctx, configuredBucket, lookupPrefix)
+		if err != nil {
+			return nil, err
+		}
+
+		return buildS3EntrySuggestionItems(items), nil
+	}
+
 	if normalizedPrefix == "" || !strings.Contains(normalizedPrefix, "/") {
 		buckets, err := conn.ListBuckets(ctx)
 		if err != nil {
@@ -1925,6 +2195,45 @@ func buildS3SuggestionItems(
 		return nil, err
 	}
 
+	return buildS3EntrySuggestionItemsWithBucket(bucketName, items), nil
+}
+
+func s3SuggestionContext(connectionDetails any) (string, string) {
+	s3Connection, ok := connectionDetails.(*config.S3Connection)
+	if !ok || s3Connection == nil {
+		return "", ""
+	}
+
+	bucketName := strings.TrimSpace(s3Connection.BucketName)
+	pathPrefix := strings.TrimSpace(s3Connection.PathToFile)
+	if pathPrefix != "" && !strings.HasSuffix(pathPrefix, "/") {
+		pathPrefix += "/"
+	}
+
+	return bucketName, pathPrefix
+}
+
+func buildS3EntrySuggestionItems(items []string) []ingestrSuggestionItem {
+	suggestions := make([]ingestrSuggestionItem, 0, len(items))
+	for _, item := range items {
+		kind := "file"
+		detail := "S3 object"
+		if strings.HasSuffix(item, "/") {
+			kind = "prefix"
+			detail = "S3 prefix"
+		}
+		suggestions = append(suggestions, ingestrSuggestionItem{
+			Value:  item,
+			Kind:   kind,
+			Detail: detail,
+		})
+	}
+
+	return limitSuggestionItems(suggestions, 200)
+}
+
+
+func buildS3EntrySuggestionItemsWithBucket(bucketName string, items []string) []ingestrSuggestionItem {
 	suggestions := make([]ingestrSuggestionItem, 0, len(items))
 	for _, item := range items {
 		kind := "file"
@@ -1940,7 +2249,7 @@ func buildS3SuggestionItems(
 		})
 	}
 
-	return limitSuggestionItems(suggestions, 200), nil
+	return limitSuggestionItems(suggestions, 200)
 }
 
 func limitSuggestionItems(items []ingestrSuggestionItem, max int) []ingestrSuggestionItem {

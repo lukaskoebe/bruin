@@ -114,6 +114,40 @@ export type IngestrSuggestionsResponse = {
   error?: string;
 };
 
+export type SqlDiscoveryDatabasesResponse = {
+  status: "ok" | "error";
+  connection_name: string;
+  connection_type?: string;
+  databases: string[];
+  error?: string;
+};
+
+export type SqlDiscoveryTable = {
+  name: string;
+  short_name: string;
+  schema_name?: string;
+  database_name?: string;
+};
+
+export type SqlDiscoveryTablesResponse = {
+  status: "ok" | "error";
+  connection_name: string;
+  connection_type?: string;
+  database: string;
+  tables: SqlDiscoveryTable[];
+  error?: string;
+};
+
+export type SqlDiscoveryTableColumnsResponse = {
+  status: "ok" | "error";
+  connection_name: string;
+  table: string;
+  columns: WebColumn[];
+  raw_output: string;
+  command?: string[];
+  error?: string;
+};
+
 export type AssetFreshnessEntry = {
   asset_name: string;
   materialized_at?: string;

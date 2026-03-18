@@ -242,12 +242,12 @@ function TablePreview({
       <table className="w-full border-collapse text-[11px]">
         <thead className="sticky top-0 bg-muted/70">
           <tr>
-            {columns.map((column) => (
+            {columns.map((column, columnIndex) => (
               <th
                 className={`border-b text-left font-medium whitespace-nowrap ${
                   dense ? "px-2 py-1" : "px-2 py-1.5"
                 }`}
-                key={column}
+                key={`${column}-${columnIndex}`}
               >
                 {column}
               </th>
@@ -257,12 +257,12 @@ function TablePreview({
         <tbody>
           {rows.map((row, rowIndex) => (
             <tr className="odd:bg-muted/20" key={rowIndex}>
-              {columns.map((column) => (
+              {columns.map((column, columnIndex) => (
                 <td
                   className={`border-b align-top whitespace-nowrap ${
                     dense ? "px-2 py-0.5" : "px-2 py-1"
                   }`}
-                  key={`${rowIndex}-${column}`}
+                  key={`${rowIndex}-${column}-${columnIndex}`}
                 >
                   {stringifyCellValue(row[column])}
                 </td>

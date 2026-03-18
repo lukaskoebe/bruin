@@ -155,11 +155,12 @@ export function WorkspaceEditorPane({
   useSQLIntellisense(
     monacoInstance,
     editorInstance,
+    asset,
     schemaTables,
     asset?.upstreams ?? [],
     onGoToAsset
   );
-  useYAMLIntellisense(monacoInstance, asset);
+  useYAMLIntellisense(monacoInstance, editorInstance, asset);
 
   const handleEditorMount = useCallback(
     (editor: MonacoNS.editor.IStandaloneCodeEditor, monaco: Monaco) => {

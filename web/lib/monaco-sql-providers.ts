@@ -4,6 +4,20 @@ import { SchemaTable, findTableByIdentifier } from "@/lib/sql-schema";
 
 type Monaco = typeof MonacoNS;
 
+type RemoteSQLResolver = {
+  provideTableContextSuggestions(args: {
+    monaco: Monaco;
+    prefix: string;
+    range: MonacoNS.IRange;
+  }): Promise<MonacoNS.languages.CompletionItem[]>;
+  provideColumnSuggestions(args: {
+    monaco: Monaco;
+    tableIdentifier: string;
+    columnPrefix: string;
+    range: MonacoNS.IRange;
+  }): Promise<MonacoNS.languages.CompletionItem[]>;
+};
+
 const SQL_KEYWORDS = [
   "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "IS", "NULL",
   "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "CROSS", "FULL", "ON",
@@ -313,6 +327,13 @@ function identifierAtPosition(
   model: MonacoNS.editor.ITextModel,
   position: MonacoNS.Position,
 ): string | null {
+  return identifierInfoAtPosition(model, position)?.identifier ?? null;
+}
+
+function identifierInfoAtPosition(
+  model: MonacoNS.editor.ITextModel,
+  position: MonacoNS.Position,
+): { identifier: string; range: MonacoNS.IRange } | null {
   const line = model.getLineContent(position.lineNumber);
   const col = position.column - 1;
 
@@ -327,7 +348,19 @@ function identifierAtPosition(
   }
 
   const word = line.slice(start, end).trim().replace(/"/g, "");
-  return word.length > 0 ? word : null;
+  if (word.length === 0) {
+    return null;
+  }
+
+  return {
+    identifier: word,
+    range: {
+      startLineNumber: position.lineNumber,
+      endLineNumber: position.lineNumber,
+      startColumn: start + 1,
+      endColumn: end + 1,
+    },
+  };
 }
 
 export function resolveTableAtPosition(
@@ -347,6 +380,7 @@ export function registerSQLProviders(
   monaco: Monaco,
   tables: SchemaTable[],
   upstreamNames: string[],
+  remoteResolver?: RemoteSQLResolver,
 ): MonacoNS.IDisposable {
   const disposables: MonacoNS.IDisposable[] = [];
 
@@ -354,17 +388,19 @@ export function registerSQLProviders(
     monaco.languages.registerCompletionItemProvider("sql", {
       triggerCharacters: ["."],
 
-      provideCompletionItems(
+      async provideCompletionItems(
         model: MonacoNS.editor.ITextModel,
         position: MonacoNS.Position,
       ) {
+        const identifierInfo = identifierInfoAtPosition(model, position);
         const wordInfo = model.getWordUntilPosition(position);
-        const range: MonacoNS.IRange = {
+        const range: MonacoNS.IRange = identifierInfo?.range ?? {
           startLineNumber: position.lineNumber,
           endLineNumber: position.lineNumber,
           startColumn: wordInfo.startColumn,
           endColumn: wordInfo.endColumn,
         };
+        const identifierPrefix = identifierInfo?.identifier ?? "";
 
         const lineContent = model.getLineContent(position.lineNumber);
         const textBeforeCursor = lineContent.slice(0, position.column - 1);
@@ -417,6 +453,26 @@ export function registerSQLProviders(
             }
 
             return { suggestions };
+          }
+
+          if (remoteResolver) {
+            const remoteSuggestions = await remoteResolver.provideColumnSuggestions(
+              {
+                monaco,
+                tableIdentifier: dotPrefix.tablePart,
+                columnPrefix: dotPrefix.columnPrefix,
+                range: {
+                  startLineNumber: position.lineNumber,
+                  endLineNumber: position.lineNumber,
+                  startColumn: position.column - dotPrefix.columnPrefix.length,
+                  endColumn: position.column,
+                },
+              },
+            );
+
+            if (remoteSuggestions.length > 0) {
+              return { suggestions: remoteSuggestions };
+            }
           }
         }
 
@@ -471,6 +527,16 @@ export function registerSQLProviders(
           }
         }
 
+        if (inTableCtx && remoteResolver) {
+          suggestions.push(
+            ...(await remoteResolver.provideTableContextSuggestions({
+              monaco,
+              prefix: identifierPrefix,
+              range,
+            }))
+          );
+        }
+
         for (const keyword of SQL_KEYWORDS) {
           suggestions.push({
             label: keyword,
@@ -481,7 +547,24 @@ export function registerSQLProviders(
           });
         }
 
-        return { suggestions };
+        const dedupedSuggestions: MonacoNS.languages.CompletionItem[] = [];
+        const seen = new Set<string>();
+
+        for (const suggestion of suggestions) {
+          const label =
+            typeof suggestion.label === "string"
+              ? suggestion.label
+              : suggestion.label.label;
+          const key = `${label.toLowerCase()}::${suggestion.kind}`;
+          if (seen.has(key)) {
+            continue;
+          }
+
+          seen.add(key);
+          dedupedSuggestions.push(suggestion);
+        }
+
+        return { suggestions: dedupedSuggestions };
       },
     }),
   );

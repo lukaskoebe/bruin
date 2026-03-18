@@ -4,6 +4,9 @@ import {
   InferColumnsResponse,
   IngestrSuggestionsResponse,
   MaterializeResponse,
+  SqlDiscoveryDatabasesResponse,
+  SqlDiscoveryTableColumnsResponse,
+  SqlDiscoveryTablesResponse,
   WebColumn,
   PipelineMaterializationResponse,
   WorkspaceState,
@@ -279,6 +282,61 @@ export async function getIngestrSuggestions(options: {
   });
 
   return readJSON<IngestrSuggestionsResponse>(res);
+}
+
+export async function getSQLDatabases(options: {
+  connection: string;
+  environment?: string;
+}) {
+  const params = new URLSearchParams();
+  params.set("connection", options.connection);
+  if (options.environment) {
+    params.set("environment", options.environment);
+  }
+
+  const res = await fetch(`/api/sql/databases?${params.toString()}`, {
+    cache: "no-store",
+  });
+
+  return readJSON<SqlDiscoveryDatabasesResponse>(res);
+}
+
+export async function getSQLTables(options: {
+  connection: string;
+  database: string;
+  environment?: string;
+}) {
+  const params = new URLSearchParams();
+  params.set("connection", options.connection);
+  params.set("database", options.database);
+  if (options.environment) {
+    params.set("environment", options.environment);
+  }
+
+  const res = await fetch(`/api/sql/tables?${params.toString()}`, {
+    cache: "no-store",
+  });
+
+  return readJSON<SqlDiscoveryTablesResponse>(res);
+}
+
+export async function getSQLTableColumns(options: {
+  connection: string;
+  table: string;
+  environment?: string;
+}) {
+  const params = new URLSearchParams();
+  params.set("connection", options.connection);
+  params.set("table", options.table);
+  if (options.environment) {
+    params.set("environment", options.environment);
+  }
+
+  const res = await fetch(`/api/sql/table-columns?${params.toString()}`, {
+    cache: "no-store",
+  });
+
+  return readJSON<SqlDiscoveryTableColumnsResponse>(res);
 }
 
 function parseSSEEvent(rawEvent: string): {

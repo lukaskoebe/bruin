@@ -1,15 +1,34 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/bruin-data/bruin/pkg/config"
 	"github.com/bruin-data/bruin/pkg/pipeline"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type stubS3SuggestionClient struct {
+	buckets      []string
+	entries      []string
+	calledBucket string
+	calledPrefix string
+}
+
+func (s *stubS3SuggestionClient) ListBuckets(_ context.Context) ([]string, error) {
+	return append([]string{}, s.buckets...), nil
+}
+
+func (s *stubS3SuggestionClient) ListEntries(_ context.Context, bucketName, prefix string) ([]string, error) {
+	s.calledBucket = bucketName
+	s.calledPrefix = prefix
+	return append([]string{}, s.entries...), nil
+}
 
 func TestBuildInferAssetColumnsCommand(t *testing.T) {
 	t.Parallel()
@@ -50,6 +69,154 @@ func TestBuildInferAssetColumnsCommand_RequiresAssetName(t *testing.T) {
 	_, err := buildInferAssetColumnsCommand(pl, asset)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "asset name is required")
+}
+
+func TestBuildRemoteTableColumnsCommand(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, []string{
+		"query",
+		"--connection",
+		"warehouse-postgres",
+		"--query",
+		`select * from "analytics"."orders" limit 1`,
+		"--output",
+		"json",
+	}, buildRemoteTableColumnsCommand(
+		"warehouse-postgres",
+		`select * from "analytics"."orders" limit 1`,
+		"",
+	))
+
+	assert.Equal(t, []string{
+		"query",
+		"--connection",
+		"warehouse-postgres",
+		"--query",
+		`select * from "analytics"."orders" limit 1`,
+		"--output",
+		"json",
+		"--environment",
+		"staging",
+	}, buildRemoteTableColumnsCommand(
+		"warehouse-postgres",
+		`select * from "analytics"."orders" limit 1`,
+		"staging",
+	))
+}
+
+func TestBuildSQLDiscoveryTableItems(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, []sqlDiscoveryTableItem{
+		{
+			Name:         "scraping_pipeline.my_pipeline.my_sql_asset_2",
+			ShortName:    "my_sql_asset_2",
+			SchemaName:   "my_pipeline",
+			DatabaseName: "scraping_pipeline",
+		},
+		{
+			Name:         "scraping_pipeline.public.pipeline_tasks",
+			ShortName:    "pipeline_tasks",
+			SchemaName:   "public",
+			DatabaseName: "scraping_pipeline",
+		},
+	}, buildSQLDiscoveryTableItems("scraping_pipeline", map[string][]string{
+		"public":      {"pipeline_tasks"},
+		"my_pipeline": {"my_sql_asset_2"},
+	}))
+}
+
+func TestBuildSQLDiscoveryTableItemsWithoutSchemas(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, []sqlDiscoveryTableItem{
+		{
+			Name:         "warehouse.orders",
+			ShortName:    "orders",
+			DatabaseName: "warehouse",
+		},
+		{
+			Name:         "public.customers",
+			ShortName:    "customers",
+			DatabaseName: "warehouse",
+		},
+	}, buildSQLDiscoveryTableItemsWithoutSchemas("warehouse", []string{
+		"public.customers",
+		"orders",
+	}))
+}
+
+func TestBuildS3SuggestionItems_UsesConfiguredBucketAndOmitsBucketPrefix(t *testing.T) {
+	t.Parallel()
+
+	client := &stubS3SuggestionClient{
+		entries: []string{
+			"autocomplete/public/orders.csv",
+			"autocomplete/public/subdir/",
+		},
+	}
+
+	items, err := buildS3SuggestionItems(
+		context.Background(),
+		client,
+		"autocomplete/public/",
+		&config.S3Connection{
+			BucketName: "bruin-autocomplete",
+			PathToFile: "autocomplete/",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "bruin-autocomplete", client.calledBucket)
+	assert.Equal(t, "autocomplete/public/", client.calledPrefix)
+	assert.Equal(t, []ingestrSuggestionItem{
+		{
+			Value:  "autocomplete/public/orders.csv",
+			Kind:   "file",
+			Detail: "S3 object",
+		},
+		{
+			Value:  "autocomplete/public/subdir/",
+			Kind:   "prefix",
+			Detail: "S3 prefix",
+		},
+	}, items)
+}
+
+func TestBuildS3SuggestionItems_UsesConfiguredBasePrefixWhenValueEmpty(t *testing.T) {
+	t.Parallel()
+
+	client := &stubS3SuggestionClient{
+		entries: []string{
+			"autocomplete/public/",
+			"autocomplete/private/",
+		},
+	}
+
+	items, err := buildS3SuggestionItems(
+		context.Background(),
+		client,
+		"",
+		&config.S3Connection{
+			BucketName: "bruin-autocomplete",
+			PathToFile: "autocomplete",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "bruin-autocomplete", client.calledBucket)
+	assert.Equal(t, "autocomplete/", client.calledPrefix)
+	assert.Equal(t, []ingestrSuggestionItem{
+		{
+			Value:  "autocomplete/private/",
+			Kind:   "prefix",
+			Detail: "S3 prefix",
+		},
+		{
+			Value:  "autocomplete/public/",
+			Kind:   "prefix",
+			Detail: "S3 prefix",
+		},
+	}, items)
 }
 
 func TestDefaultAssetContent_PythonTemplate(t *testing.T) {

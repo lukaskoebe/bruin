@@ -1,9 +1,40 @@
+import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
-import { defineConfig } from "rolldown-vite";
+import { defineConfig, type Plugin } from "rolldown-vite";
 import react from "@vitejs/plugin-react";
 
+const require = createRequire(import.meta.url);
+
+function prepareMonacoAssetsPlugin(): Plugin {
+  let hasPreparedAssets = false;
+
+  const prepareAssets = () => {
+    if (hasPreparedAssets) {
+      return;
+    }
+
+    const loaderPath = require.resolve("monaco-editor/min/vs/loader.js");
+    const sourceDir = path.dirname(loaderPath);
+    const targetDir = path.resolve(__dirname, "public/monaco/vs");
+
+    fs.rmSync(targetDir, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(targetDir), { recursive: true });
+    fs.cpSync(sourceDir, targetDir, { recursive: true, force: true });
+
+    hasPreparedAssets = true;
+  };
+
+  return {
+    name: "prepare-monaco-assets",
+    configResolved() {
+      prepareAssets();
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), prepareMonacoAssetsPlugin()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname),
