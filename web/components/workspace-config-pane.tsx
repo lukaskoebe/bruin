@@ -2,8 +2,6 @@
 
 import {
   AlertCircle,
-  CopyPlus,
-  Plus,
   RefreshCcw,
   Save,
   Trash2,
@@ -22,7 +20,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   WorkspaceConfigConnection,
   WorkspaceConfigConnectionType,
@@ -31,9 +28,11 @@ import {
 } from "@/lib/types";
 
 type WorkspaceConfigPaneProps = {
+  view: "environments" | "connections";
   configPath: string;
   defaultEnvironment?: string;
   selectedEnvironment?: string;
+  selectedConnectionName?: string | null;
   environments: WorkspaceConfigEnvironment[];
   connectionTypes: WorkspaceConfigConnectionType[];
   loading: boolean;
@@ -44,6 +43,12 @@ type WorkspaceConfigPaneProps = {
   highlightStyle?: CSSProperties;
   statusMessage?: string | null;
   statusTone?: "error" | "success" | null;
+  environmentMode: EnvironmentMode;
+  connectionMode: ConnectionMode;
+  onEnvironmentModeChange: (mode: EnvironmentMode) => void;
+  onConnectionModeChange: (mode: ConnectionMode) => void;
+  onSelectedEnvironmentChange: (name: string | null) => void;
+  onSelectedConnectionChange: (name: string | null) => void;
   onReload: () => void;
   onCreateEnvironment: (input: {
     name: string;
@@ -86,9 +91,11 @@ type EnvironmentMode = "edit" | "create" | "clone";
 type ConnectionMode = "edit" | "create";
 
 export function WorkspaceConfigPane({
+  view,
   configPath,
   defaultEnvironment,
   selectedEnvironment,
+  selectedConnectionName,
   environments,
   connectionTypes,
   loading,
@@ -99,6 +106,12 @@ export function WorkspaceConfigPane({
   highlightStyle,
   statusMessage,
   statusTone,
+  environmentMode,
+  connectionMode,
+  onEnvironmentModeChange,
+  onConnectionModeChange,
+  onSelectedEnvironmentChange,
+  onSelectedConnectionChange,
   onReload,
   onCreateEnvironment,
   onUpdateEnvironment,
@@ -108,11 +121,7 @@ export function WorkspaceConfigPane({
   onUpdateConnection,
   onDeleteConnection,
 }: WorkspaceConfigPaneProps) {
-  const [activeTab, setActiveTab] = useState<"environments" | "connections">("environments");
-  const [environmentMode, setEnvironmentMode] = useState<EnvironmentMode>("edit");
-  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("edit");
-  const [selectedEnvironmentName, setSelectedEnvironmentName] = useState<string | null>(null);
-  const [selectedConnectionName, setSelectedConnectionName] = useState<string | null>(null);
+  const selectedEnvironmentName = selectedEnvironment ?? null;
   const [environmentForm, setEnvironmentForm] = useState({
     name: "",
     schemaPrefix: "",
@@ -148,7 +157,7 @@ export function WorkspaceConfigPane({
 
   useEffect(() => {
     if (normalizedEnvironments.length === 0) {
-      setSelectedEnvironmentName(null);
+      onSelectedEnvironmentChange(null);
       return;
     }
 
@@ -159,12 +168,20 @@ export function WorkspaceConfigPane({
       return;
     }
 
-    setSelectedEnvironmentName(selectedEnvironment || defaultEnvironment || normalizedEnvironments[0]?.name || null);
-  }, [defaultEnvironment, normalizedEnvironments, selectedEnvironment, selectedEnvironmentName]);
+    onSelectedEnvironmentChange(
+      selectedEnvironment || defaultEnvironment || normalizedEnvironments[0]?.name || null
+    );
+  }, [
+    defaultEnvironment,
+    normalizedEnvironments,
+    onSelectedEnvironmentChange,
+    selectedEnvironment,
+    selectedEnvironmentName,
+  ]);
 
   useEffect(() => {
     if (!activeEnvironment) {
-      setSelectedConnectionName(null);
+      onSelectedConnectionChange(null);
       return;
     }
 
@@ -175,8 +192,8 @@ export function WorkspaceConfigPane({
       return;
     }
 
-    setSelectedConnectionName(activeEnvironment.connections[0]?.name ?? null);
-  }, [activeEnvironment, selectedConnectionName]);
+    onSelectedConnectionChange(activeEnvironment.connections[0]?.name ?? null);
+  }, [activeEnvironment, onSelectedConnectionChange, selectedConnectionName]);
 
   useEffect(() => {
     if (environmentMode === "create") {
@@ -256,8 +273,13 @@ export function WorkspaceConfigPane({
         schema_prefix: environmentForm.schemaPrefix.trim(),
         set_as_default: environmentForm.setAsDefault,
       });
-      setEnvironmentMode("edit");
-      setSelectedEnvironmentName(environmentForm.name.trim() || response.default_environment || response.environments[0]?.name || null);
+      onEnvironmentModeChange("edit");
+      onSelectedEnvironmentChange(
+        environmentForm.name.trim() ||
+          response.default_environment ||
+          response.environments[0]?.name ||
+          null
+      );
       return;
     }
 
@@ -268,8 +290,13 @@ export function WorkspaceConfigPane({
         schema_prefix: environmentForm.schemaPrefix.trim(),
         set_as_default: environmentForm.setAsDefault,
       });
-      setEnvironmentMode("edit");
-      setSelectedEnvironmentName(environmentForm.name.trim() || response.default_environment || response.environments[0]?.name || null);
+      onEnvironmentModeChange("edit");
+      onSelectedEnvironmentChange(
+        environmentForm.name.trim() ||
+          response.default_environment ||
+          response.environments[0]?.name ||
+          null
+      );
       return;
     }
 
@@ -283,7 +310,9 @@ export function WorkspaceConfigPane({
       schema_prefix: environmentForm.schemaPrefix.trim(),
       set_as_default: environmentForm.setAsDefault,
     });
-    setSelectedEnvironmentName(environmentForm.name.trim() || response.default_environment || activeEnvironment.name);
+    onSelectedEnvironmentChange(
+      environmentForm.name.trim() || response.default_environment || activeEnvironment.name
+    );
   };
 
   const handleEnvironmentDelete = async () => {
@@ -292,8 +321,10 @@ export function WorkspaceConfigPane({
     }
 
     const response = await onDeleteEnvironment(activeEnvironment.name);
-    setEnvironmentMode("edit");
-    setSelectedEnvironmentName(response.default_environment || response.environments[0]?.name || null);
+    onEnvironmentModeChange("edit");
+    onSelectedEnvironmentChange(
+      response.default_environment || response.environments[0]?.name || null
+    );
   };
 
   const handleConnectionSave = async () => {
@@ -309,10 +340,11 @@ export function WorkspaceConfigPane({
       const environment = response.environments.find(
         (candidate) => candidate.name === connectionForm.environmentName
       );
-      setConnectionMode("edit");
-      setSelectedEnvironmentName(connectionForm.environmentName);
-      setSelectedConnectionName(connectionForm.name.trim() || environment?.connections[0]?.name || null);
-      setActiveTab("connections");
+      onConnectionModeChange("edit");
+      onSelectedEnvironmentChange(connectionForm.environmentName);
+      onSelectedConnectionChange(
+        connectionForm.name.trim() || environment?.connections[0]?.name || null
+      );
       return;
     }
 
@@ -323,7 +355,9 @@ export function WorkspaceConfigPane({
     const environment = response.environments.find(
       (candidate) => candidate.name === connectionForm.environmentName
     );
-    setSelectedConnectionName(connectionForm.name.trim() || environment?.connections[0]?.name || null);
+    onSelectedConnectionChange(
+      connectionForm.name.trim() || environment?.connections[0]?.name || null
+    );
   };
 
   const handleConnectionDelete = async () => {
@@ -338,7 +372,7 @@ export function WorkspaceConfigPane({
     const environment = response.environments.find(
       (candidate) => candidate.name === activeEnvironment.name
     );
-    setSelectedConnectionName(environment?.connections[0]?.name ?? null);
+    onSelectedConnectionChange(environment?.connections[0]?.name ?? null);
   };
 
   return (
@@ -350,7 +384,9 @@ export function WorkspaceConfigPane({
           }`}
           style={helpMode && highlighted ? highlightStyle : undefined}
         >
-          <div className="mb-2 text-sm font-semibold">Connections & Environments</div>
+          <div className="mb-2 text-sm font-semibold">
+            {view === "environments" ? "Environment Editor" : "Connection Editor"}
+          </div>
           <div className="text-xs opacity-70">{configPath}</div>
           <div className="mt-2 flex gap-2">
             <Button size="sm" type="button" variant="outline" disabled={loading || busy} onClick={onReload}>
@@ -381,183 +417,131 @@ export function WorkspaceConfigPane({
         </div>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-4">
-          <Tabs
-            className="flex min-h-0 min-w-0 flex-1 flex-col"
-            value={activeTab}
-            onValueChange={(value) => setActiveTab(value as "environments" | "connections")}
-          >
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="environments">Environments</TabsTrigger>
-              <TabsTrigger value="connections">Connections</TabsTrigger>
-            </TabsList>
-
-            <TabsContent className="mt-3 min-h-0 flex-1 overflow-auto" value="environments">
-              <div className="grid gap-3">
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <SummaryCard label="Default environment" value={defaultEnvironment || "default"} />
-                  <SummaryCard label="Configured environments" value={String(environments.length)} />
-                </div>
-
-                <div className="flex gap-2">
-                  <Button size="sm" type="button" variant="outline" onClick={() => setEnvironmentMode("create")} disabled={busy}>
-                    <Plus className="mr-1 inline size-3" />
-                    New Environment
-                  </Button>
-                  <Button
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                    onClick={() => setEnvironmentMode("clone")}
-                    disabled={busy || environments.length === 0}
-                  >
-                    <CopyPlus className="mr-1 inline size-3" />
-                    Clone
-                  </Button>
-                </div>
-
-                <SelectionList
-                  emptyMessage="No environments configured yet."
-                  items={normalizedEnvironments.map((environment) => ({
-                    id: environment.name,
-                    title: environment.name,
-                    subtitle: environment.schema_prefix || "No schema prefix",
-                    active: environment.name === selectedEnvironmentName,
-                  }))}
-                  onSelect={(id) => {
-                    setSelectedEnvironmentName(id);
-                    setEnvironmentMode("edit");
-                  }}
-                />
-
-                <div className="rounded-lg border bg-card/60 p-3">
-                  <div className="mb-3 flex items-center justify-between gap-2">
-                    <div className="font-medium">
-                      {environmentMode === "create"
-                        ? "Create Environment"
-                        : environmentMode === "clone"
-                          ? "Clone Environment"
-                          : "Edit Environment"}
-                    </div>
-                    {environmentMode === "edit" && activeEnvironment && (
-                      <Button
-                        size="sm"
-                        type="button"
-                        variant="destructive"
-                        onClick={() => void handleEnvironmentDelete()}
-                        disabled={busy}
-                      >
-                        <Trash2 className="mr-1 inline size-3" />
-                        Delete
-                      </Button>
-                    )}
+          <div className="min-h-0 flex-1 overflow-auto">
+            {view === "environments" ? (
+              <div className="rounded-lg border bg-card/60 p-3">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="font-medium">
+                    {environmentMode === "create"
+                      ? "Create Environment"
+                      : environmentMode === "clone"
+                        ? "Clone Environment"
+                        : "Edit Environment"}
                   </div>
-
-                  <div className="grid gap-3">
-                    {environmentMode === "clone" && (
-                      <div className="grid gap-1">
-                        <Label>Source environment</Label>
-                        <Select
-                          value={environmentForm.cloneSourceName}
-                          onValueChange={(value) =>
-                            setEnvironmentForm((current) => {
-                              const sourceEnvironment = normalizedEnvironments.find(
-                                (environment) => environment.name === value
-                              );
-                              return {
-                                ...current,
-                                cloneSourceName: value,
-                                schemaPrefix: sourceEnvironment?.schema_prefix ?? current.schemaPrefix,
-                              };
-                            })
-                          }
-                        >
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Select source environment" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {normalizedEnvironments.map((environment) => (
-                              <SelectItem key={environment.name} value={environment.name}>
-                                {environment.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
-
-                    <div className="grid gap-1">
-                      <Label>Name</Label>
-                      <Input
-                        value={environmentForm.name}
-                        onChange={(event) =>
-                          setEnvironmentForm((current) => ({
-                            ...current,
-                            name: event.target.value,
-                          }))
-                        }
-                        placeholder="staging"
-                      />
-                    </div>
-                    <div className="grid gap-1">
-                      <Label>Schema prefix</Label>
-                      <Input
-                        value={environmentForm.schemaPrefix}
-                        onChange={(event) =>
-                          setEnvironmentForm((current) => ({
-                            ...current,
-                            schemaPrefix: event.target.value,
-                          }))
-                        }
-                        placeholder="staging_"
-                      />
-                    </div>
-                    <div className="flex items-center justify-between rounded-md border bg-background/70 px-3 py-2 text-sm">
-                      <div>
-                        <div className="font-medium">Use as default environment</div>
-                        <div className="text-xs text-muted-foreground">
-                          This becomes the active environment across the workspace.
-                        </div>
-                      </div>
-                      <Switch
-                        checked={environmentForm.setAsDefault}
-                        onCheckedChange={(checked) =>
-                          setEnvironmentForm((current) => ({
-                            ...current,
-                            setAsDefault: checked,
-                          }))
-                        }
-                      />
-                    </div>
-                    <Button type="button" onClick={() => void handleEnvironmentSave()} disabled={busy || !environmentForm.name.trim()}>
-                      <Save className="mr-1 inline size-3" />
-                      {environmentMode === "create"
-                        ? "Create Environment"
-                        : environmentMode === "clone"
-                          ? "Clone Environment"
-                          : "Save Environment"}
+                  {environmentMode === "edit" && activeEnvironment && (
+                    <Button
+                      size="sm"
+                      type="button"
+                      variant="destructive"
+                      onClick={() => void handleEnvironmentDelete()}
+                      disabled={busy}
+                    >
+                      <Trash2 className="mr-1 inline size-3" />
+                      Delete
                     </Button>
+                  )}
+                </div>
+
+                <div className="grid gap-3">
+                  {environmentMode === "clone" && (
+                    <div className="grid gap-1">
+                      <Label>Source environment</Label>
+                      <Select
+                        value={environmentForm.cloneSourceName}
+                        onValueChange={(value) =>
+                          setEnvironmentForm((current) => {
+                            const sourceEnvironment = normalizedEnvironments.find(
+                              (environment) => environment.name === value
+                            );
+                            return {
+                              ...current,
+                              cloneSourceName: value,
+                              schemaPrefix:
+                                sourceEnvironment?.schema_prefix ?? current.schemaPrefix,
+                            };
+                          })
+                        }
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select source environment" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {normalizedEnvironments.map((environment) => (
+                            <SelectItem key={environment.name} value={environment.name}>
+                              {environment.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+
+                  <div className="grid gap-1">
+                    <Label>Name</Label>
+                    <Input
+                      value={environmentForm.name}
+                      onChange={(event) =>
+                        setEnvironmentForm((current) => ({
+                          ...current,
+                          name: event.target.value,
+                        }))
+                      }
+                      placeholder="staging"
+                    />
                   </div>
+                  <div className="grid gap-1">
+                    <Label>Schema prefix</Label>
+                    <Input
+                      value={environmentForm.schemaPrefix}
+                      onChange={(event) =>
+                        setEnvironmentForm((current) => ({
+                          ...current,
+                          schemaPrefix: event.target.value,
+                        }))
+                      }
+                      placeholder="staging_"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between rounded-md border bg-background/70 px-3 py-2 text-sm">
+                    <div>
+                      <div className="font-medium">Use as default environment</div>
+                      <div className="text-xs text-muted-foreground">
+                        This becomes the active environment across the workspace.
+                      </div>
+                    </div>
+                    <Switch
+                      checked={environmentForm.setAsDefault}
+                      onCheckedChange={(checked) =>
+                        setEnvironmentForm((current) => ({
+                          ...current,
+                          setAsDefault: checked,
+                        }))
+                      }
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() => void handleEnvironmentSave()}
+                    disabled={busy || !environmentForm.name.trim()}
+                  >
+                    <Save className="mr-1 inline size-3" />
+                    {environmentMode === "create"
+                      ? "Create Environment"
+                      : environmentMode === "clone"
+                        ? "Clone Environment"
+                        : "Save Environment"}
+                  </Button>
                 </div>
               </div>
-            </TabsContent>
-
-            <TabsContent className="mt-3 min-h-0 flex-1 overflow-auto" value="connections">
+            ) : (
               <div className="grid gap-3">
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <SummaryCard label="Active environment" value={selectedEnvironment || defaultEnvironment || "default"} />
-                  <SummaryCard
-                    label="Connections in selected environment"
-                    value={String(activeEnvironment?.connections.length ?? 0)}
-                  />
-                </div>
-
                 <div className="grid gap-1">
                   <Label>Environment</Label>
                   <Select
                     value={connectionForm.environmentName || selectedEnvironmentName || undefined}
                     onValueChange={(value) => {
-                      setSelectedEnvironmentName(value);
-                      setConnectionMode("edit");
+                      onSelectedEnvironmentChange(value);
+                      onConnectionModeChange("edit");
                       setConnectionForm((current) => ({
                         ...current,
                         environmentName: value,
@@ -576,27 +560,6 @@ export function WorkspaceConfigPane({
                     </SelectContent>
                   </Select>
                 </div>
-
-                <div className="flex gap-2">
-                  <Button size="sm" type="button" variant="outline" onClick={() => setConnectionMode("create")} disabled={busy || normalizedEnvironments.length === 0}>
-                    <Plus className="mr-1 inline size-3" />
-                    New Connection
-                  </Button>
-                </div>
-
-                <SelectionList
-                  emptyMessage="No connections in this environment yet."
-                  items={(activeEnvironment?.connections ?? []).map((connection) => ({
-                    id: connection.name,
-                    title: connection.name,
-                    subtitle: connection.type,
-                    active: connection.name === selectedConnectionName,
-                  }))}
-                  onSelect={(id) => {
-                    setSelectedConnectionName(id);
-                    setConnectionMode("edit");
-                  }}
-                />
 
                 <div className="rounded-lg border bg-card/60 p-3">
                   <div className="mb-3 flex items-center justify-between gap-2">
@@ -722,67 +685,11 @@ export function WorkspaceConfigPane({
                   </div>
                 </div>
               </div>
-            </TabsContent>
-          </Tabs>
+            )}
+          </div>
         </div>
       </div>
     </Panel>
-  );
-}
-
-function SummaryCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border bg-card/60 p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 text-sm font-medium">{value}</div>
-    </div>
-  );
-}
-
-function SelectionList({
-  items,
-  emptyMessage,
-  onSelect,
-}: {
-  items: Array<{
-    id: string;
-    title: string;
-    subtitle?: string;
-    active?: boolean;
-  }>;
-  emptyMessage: string;
-  onSelect: (id: string) => void;
-}) {
-  if (items.length === 0) {
-    return (
-      <div className="rounded-md border border-dashed bg-muted/20 px-3 py-4 text-sm text-muted-foreground">
-        {emptyMessage}
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid gap-2">
-      {items.map((item) => (
-        <button
-          key={item.id}
-          className={`rounded-md border px-3 py-2 text-left transition-colors ${
-            item.active
-              ? "border-primary/50 bg-primary/10"
-              : "bg-background/70 hover:bg-muted/40"
-          }`}
-          onClick={() => onSelect(item.id)}
-          type="button"
-        >
-          <div className="font-medium">{item.title}</div>
-          {item.subtitle && (
-            <div className="text-xs uppercase tracking-wide text-muted-foreground">
-              {item.subtitle}
-            </div>
-          )}
-        </button>
-      ))}
-    </div>
   );
 }
 

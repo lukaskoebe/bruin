@@ -16,12 +16,13 @@ import {
   useEdgesState,
   useNodesState,
 } from "reactflow";
-import { Cable, Plus, Settings2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import "reactflow/dist/style.css";
 
 import { AssetNode } from "@/components/asset-node";
 import { NewAssetNode } from "@/components/new-asset-node";
+import { WorkspaceConfigContent } from "@/components/workspace-config-content";
 import { WorkspaceConfigPane } from "@/components/workspace-config-pane";
 import {
   AssetConfigForm,
@@ -73,10 +74,16 @@ import { useWorkspaceSync } from "@/hooks/use-workspace-sync";
 import { useWorkspaceTheme } from "@/hooks/use-workspace-theme";
 
 type WorkspaceShellProps = {
-  view?: "workspace" | "settings";
+  view?: "workspace" | "environments" | "connections";
+  selectedConfigEnvironment?: string;
+  onSelectedConfigEnvironmentChange?: (environment: string | null) => void;
 };
 
-export function WorkspaceShell({ view = "workspace" }: WorkspaceShellProps) {
+export function WorkspaceShell({
+  view = "workspace",
+  selectedConfigEnvironment,
+  onSelectedConfigEnvironmentChange,
+}: WorkspaceShellProps) {
   const workspace = useWorkspaceSync();
   const [assetEditorTab, setAssetEditorTab] = useAtom(assetEditorTabAtom);
   const editorValue = useAtomValue(editorValueAtom);
@@ -108,6 +115,17 @@ export function WorkspaceShell({ view = "workspace" }: WorkspaceShellProps) {
   const [workspaceConfigStatusTone, setWorkspaceConfigStatusTone] = useState<
     "error" | "success" | null
   >(null);
+  const [selectedEnvironmentEditorName, setSelectedEnvironmentEditorName] =
+    useState<string | null>(null);
+  const [environmentEditorMode, setEnvironmentEditorMode] = useState<
+    "edit" | "create" | "clone"
+  >("edit");
+  const [selectedConnectionName, setSelectedConnectionName] = useState<
+    string | null
+  >(null);
+  const [connectionEditorMode, setConnectionEditorMode] = useState<
+    "edit" | "create"
+  >("edit");
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
 
   const { scheduleSave, flushAssetSave } = useDebouncedAssetSave(500);
@@ -509,12 +527,118 @@ export function WorkspaceShell({ view = "workspace" }: WorkspaceShellProps) {
   }, []);
 
   useEffect(() => {
-    if (view !== "settings") {
+    if (view === "workspace") {
       return;
     }
 
     void loadWorkspaceConfig();
   }, [loadWorkspaceConfig, view]);
+
+  const normalizedConfigEnvironments = useMemo(
+    () =>
+      [...(workspaceConfig?.environments ?? [])].sort((left, right) =>
+        left.name.localeCompare(right.name)
+      ),
+    [workspaceConfig]
+  );
+
+  const fallbackConfigEnvironment = useMemo(
+    () =>
+      workspaceConfig?.selected_environment ||
+      workspaceConfig?.default_environment ||
+      normalizedConfigEnvironments[0]?.name ||
+      null,
+    [normalizedConfigEnvironments, workspaceConfig]
+  );
+
+  const activeConnectionsEnvironmentName = useMemo(() => {
+    if (
+      selectedConfigEnvironment &&
+      normalizedConfigEnvironments.some(
+        (environment) => environment.name === selectedConfigEnvironment
+      )
+    ) {
+      return selectedConfigEnvironment;
+    }
+
+    return fallbackConfigEnvironment;
+  }, [
+    fallbackConfigEnvironment,
+    normalizedConfigEnvironments,
+    selectedConfigEnvironment,
+  ]);
+
+  useEffect(() => {
+    if (view !== "connections") {
+      return;
+    }
+
+    if (
+      activeConnectionsEnvironmentName &&
+      activeConnectionsEnvironmentName !== selectedConfigEnvironment
+    ) {
+      onSelectedConfigEnvironmentChange?.(activeConnectionsEnvironmentName);
+    }
+  }, [
+    activeConnectionsEnvironmentName,
+    onSelectedConfigEnvironmentChange,
+    selectedConfigEnvironment,
+    view,
+  ]);
+
+  useEffect(() => {
+    if (view !== "environments") {
+      return;
+    }
+
+    if (
+      selectedEnvironmentEditorName &&
+      normalizedConfigEnvironments.some(
+        (environment) => environment.name === selectedEnvironmentEditorName
+      )
+    ) {
+      return;
+    }
+
+    setSelectedEnvironmentEditorName(fallbackConfigEnvironment);
+  }, [
+    fallbackConfigEnvironment,
+    normalizedConfigEnvironments,
+    selectedEnvironmentEditorName,
+    view,
+  ]);
+
+  useEffect(() => {
+    const environmentName =
+      view === "connections"
+        ? activeConnectionsEnvironmentName
+        : selectedEnvironmentEditorName;
+    const activeEnvironment = normalizedConfigEnvironments.find(
+      (environment) => environment.name === environmentName
+    );
+
+    if (!activeEnvironment) {
+      setSelectedConnectionName(null);
+      return;
+    }
+
+    if (
+      selectedConnectionName &&
+      activeEnvironment.connections.some(
+        (connection) => connection.name === selectedConnectionName
+      )
+    ) {
+      return;
+    }
+
+    setSelectedConnectionName(activeEnvironment.connections[0]?.name ?? null);
+  }, [
+    activeConnectionsEnvironmentName,
+    normalizedConfigEnvironments,
+    selectedConnectionName,
+    selectedEnvironmentEditorName,
+    view,
+  ]);
 
   const runWorkspaceConfigMutation = useCallback(
     async (operation: () => Promise<WorkspaceConfigResponse>, successMessage: string) => {
@@ -630,26 +754,51 @@ export function WorkspaceShell({ view = "workspace" }: WorkspaceShellProps) {
   );
 
   const handleNavigateView = useCallback(
-    (nextView: "workspace" | "settings") => {
-      const nextPath = nextView === "settings" ? "/settings" : "/";
-      const nextURL = `${nextPath}${window.location.search}`;
-      if (window.location.pathname === nextPath) {
+    (nextView: "workspace" | "environments" | "connections") => {
+      const nextPath =
+        nextView === "workspace"
+          ? "/"
+          : nextView === "environments"
+            ? "/settings/environments"
+            : "/settings/connections";
+      const nextParams = new URLSearchParams();
+      const currentParams = new URLSearchParams(window.location.search);
+
+      if (nextView === "workspace") {
+        for (const key of ["pipeline", "asset"]) {
+          const value = currentParams.get(key);
+          if (value) {
+            nextParams.set(key, value);
+          }
+        }
+      }
+
+      if (nextView === "connections") {
+        const environment =
+          view === "connections"
+            ? activeConnectionsEnvironmentName
+            : selectedEnvironmentEditorName || fallbackConfigEnvironment;
+        if (environment) {
+          nextParams.set("environment", environment);
+        }
+      }
+
+      const query = nextParams.toString();
+      const nextURL = query ? `${nextPath}?${query}` : nextPath;
+      const currentURL = `${window.location.pathname}${window.location.search}`;
+      if (currentURL === nextURL) {
         return;
       }
 
       window.history.pushState(window.history.state, "", nextURL);
       window.dispatchEvent(new PopStateEvent("popstate"));
     },
-    []
-  );
-
-  const configuredConnectionCount = useMemo(
-    () =>
-      (workspaceConfig?.environments ?? []).reduce(
-        (total, environment) => total + environment.connections.length,
-        0
-      ),
-    [workspaceConfig]
+    [
+      activeConnectionsEnvironmentName,
+      fallbackConfigEnvironment,
+      selectedEnvironmentEditorName,
+      view,
+    ]
   );
 
   const onboardingContent = (
@@ -738,56 +887,72 @@ export function WorkspaceShell({ view = "workspace" }: WorkspaceShellProps) {
 
           <PanelResizeHandle className="w-px bg-border" />
 
-          {view === "settings" ? (
+          {view === "environments" || view === "connections" ? (
             <>
               <Panel defaultSize={50} minSize={30}>
-                <div className="flex h-full items-center justify-center bg-muted/10 p-8">
-                  <div className="max-w-xl rounded-lg border bg-card p-6 shadow-sm">
-                    <div className="flex items-center gap-2 text-lg font-semibold">
-                      <Settings2 className="size-5" />
-                      Workspace Settings
-                    </div>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      Edit environments and connections in the right-hand panel.
-                      Changes are saved to your workspace config file and picked up
-                      immediately by the canvas, autocomplete, and materialization flows.
-                    </p>
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-lg border bg-background/80 p-4">
-                        <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                          Environments
-                        </div>
-                        <div className="mt-1 text-2xl font-semibold">
-                          {workspaceConfig?.environments.length ?? 0}
-                        </div>
-                      </div>
-                      <div className="rounded-lg border bg-background/80 p-4">
-                        <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
-                          <Cable className="size-3.5" />
-                          Connections
-                        </div>
-                        <div className="mt-1 text-2xl font-semibold">
-                          {configuredConnectionCount}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <WorkspaceConfigContent
+                  view={view}
+                  configPath={workspaceConfig?.path ?? ".bruin.yml"}
+                  defaultEnvironment={workspaceConfig?.default_environment}
+                  selectedEnvironmentName={
+                    view === "connections"
+                      ? activeConnectionsEnvironmentName
+                      : selectedEnvironmentEditorName
+                  }
+                  environments={normalizedConfigEnvironments}
+                  selectedConnectionName={selectedConnectionName}
+                  loading={workspaceConfigLoading}
+                  onSelectEnvironment={(name) => {
+                    if (view === "connections") {
+                      onSelectedConfigEnvironmentChange?.(name);
+                      return;
+                    }
+
+                    setSelectedEnvironmentEditorName(name);
+                    setEnvironmentEditorMode("edit");
+                  }}
+                  onSelectConnection={(name) => {
+                    setSelectedConnectionName(name);
+                    setConnectionEditorMode("edit");
+                  }}
+                  onCreateEnvironment={() => setEnvironmentEditorMode("create")}
+                  onCloneEnvironment={() => setEnvironmentEditorMode("clone")}
+                  onCreateConnection={() => setConnectionEditorMode("create")}
+                />
               </Panel>
 
               <PanelResizeHandle className="w-px bg-border" />
 
               <WorkspaceConfigPane
+                view={view}
                 configPath={workspaceConfig?.path ?? ".bruin.yml"}
                 defaultEnvironment={workspaceConfig?.default_environment}
-                selectedEnvironment={workspaceConfig?.selected_environment}
-                environments={workspaceConfig?.environments ?? []}
+                selectedEnvironment={
+                  view === "connections"
+                    ? activeConnectionsEnvironmentName ?? undefined
+                    : selectedEnvironmentEditorName ?? undefined
+                }
+                selectedConnectionName={selectedConnectionName}
+                environments={normalizedConfigEnvironments}
                 connectionTypes={workspaceConfig?.connection_types ?? []}
                 loading={workspaceConfigLoading}
                 busy={workspaceConfigBusy}
                 parseError={workspaceConfig?.parse_error}
                 statusMessage={workspaceConfigStatusMessage}
                 statusTone={workspaceConfigStatusTone}
+                environmentMode={environmentEditorMode}
+                connectionMode={connectionEditorMode}
+                onEnvironmentModeChange={setEnvironmentEditorMode}
+                onConnectionModeChange={setConnectionEditorMode}
+                onSelectedEnvironmentChange={(name) => {
+                  if (view === "connections") {
+                    onSelectedConfigEnvironmentChange?.(name);
+                    return;
+                  }
+
+                  setSelectedEnvironmentEditorName(name);
+                }}
+                onSelectedConnectionChange={setSelectedConnectionName}
                 onReload={() => void loadWorkspaceConfig()}
                 onCreateEnvironment={handleCreateWorkspaceEnvironment}
                 onUpdateEnvironment={handleUpdateWorkspaceEnvironment}

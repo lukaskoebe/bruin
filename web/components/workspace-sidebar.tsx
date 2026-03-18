@@ -1,6 +1,16 @@
 "use client";
 
-import { ChevronRight, Moon, Play, Plus, Settings2, Sun, Trash2, Workflow } from "lucide-react";
+import {
+  Cable,
+  ChevronRight,
+  Moon,
+  Play,
+  Plus,
+  Settings2,
+  Sun,
+  Trash2,
+  Workflow,
+} from "lucide-react";
 import { CSSProperties, ReactNode, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -19,7 +29,7 @@ import { WorkspaceState } from "@/lib/types";
 
 type Props = {
   workspace: WorkspaceState | null;
-  currentView: "workspace" | "settings";
+  currentView: "workspace" | "environments" | "connections";
   activePipeline: string | null;
   selectedAsset: string | null;
   highlighted?: boolean;
@@ -34,7 +44,7 @@ type Props = {
   onRunPipeline: () => void;
   canRunPipeline: boolean;
   runPipelineLoading: boolean;
-  onNavigateView: (view: "workspace" | "settings") => void;
+  onNavigateView: (view: "workspace" | "environments" | "connections") => void;
   onNavigateSelection: (pipelineId: string, assetId: string | null) => void;
 };
 
@@ -158,11 +168,21 @@ export function WorkspaceSidebar({
               </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  isActive={currentView === "settings"}
-                  onClick={() => onNavigateView("settings")}
+                  isActive={currentView === "environments"}
+                  onClick={() => onNavigateView("environments")}
                   type="button"
                 >
                   <Settings2 className="size-4" />
+                  <span>Environments</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={currentView === "connections"}
+                  onClick={() => onNavigateView("connections")}
+                  type="button"
+                >
+                  <Cable className="size-4" />
                   <span>Connections</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
