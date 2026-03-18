@@ -187,7 +187,7 @@ export async function materializeAsset(assetId: string) {
   throw new Error(text || `Request failed: ${res.status}`);
 }
 
-type PipelineMaterializeStreamPayload = {
+type MaterializeStreamPayload = {
   status?: "ok" | "error";
   command?: string[];
   output?: string;
@@ -198,11 +198,76 @@ type PipelineMaterializeStreamPayload = {
   chunk?: string;
 };
 
+export async function materializeAssetStream(
+  assetId: string,
+  handlers: {
+    onChunk?: (chunk: string) => void;
+    onDone?: (payload: MaterializeStreamPayload) => void;
+  }
+) {
+  const res = await fetch(`/api/assets/${assetId}/materialize/stream`, {
+    method: "POST",
+    headers: {
+      Accept: "text/event-stream",
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Request failed: ${res.status}`);
+  }
+
+  if (!res.body) {
+    throw new Error("Streaming response body is not available.");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let donePayload: MaterializeStreamPayload | null = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+
+    let delimiterIndex = buffer.indexOf("\n\n");
+    while (delimiterIndex >= 0) {
+      const rawEvent = buffer.slice(0, delimiterIndex);
+      buffer = buffer.slice(delimiterIndex + 2);
+      delimiterIndex = buffer.indexOf("\n\n");
+
+      const parsed = parseSSEEvent(rawEvent);
+      if (!parsed) {
+        continue;
+      }
+
+      if (parsed.event === "output" && typeof parsed.data?.chunk === "string") {
+        handlers.onChunk?.(parsed.data.chunk);
+      }
+
+      if (parsed.event === "done") {
+        donePayload = parsed.data;
+        handlers.onDone?.(parsed.data);
+      }
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (!donePayload) {
+    throw new Error("Asset materialization stream ended unexpectedly.");
+  }
+
+  return donePayload;
+}
+
 export async function materializePipelineStream(
   pipelineId: string,
   handlers: {
     onChunk?: (chunk: string) => void;
-    onDone?: (payload: PipelineMaterializeStreamPayload) => void;
+    onDone?: (payload: MaterializeStreamPayload) => void;
   }
 ) {
   const res = await fetch(`/api/pipelines/${pipelineId}/materialize/stream`, {
@@ -224,7 +289,7 @@ export async function materializePipelineStream(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let donePayload: PipelineMaterializeStreamPayload | null = null;
+  let donePayload: MaterializeStreamPayload | null = null;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -341,7 +406,7 @@ export async function getSQLTableColumns(options: {
 
 function parseSSEEvent(rawEvent: string): {
   event: string;
-  data: PipelineMaterializeStreamPayload;
+  data: MaterializeStreamPayload;
 } | null {
   const lines = rawEvent.split(/\r?\n/);
   let event = "message";
@@ -364,7 +429,7 @@ function parseSSEEvent(rawEvent: string): {
 
   return {
     event,
-    data: JSON.parse(dataLines.join("\n")) as PipelineMaterializeStreamPayload,
+    data: JSON.parse(dataLines.join("\n")) as MaterializeStreamPayload,
   };
 }
 

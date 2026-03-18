@@ -12,7 +12,7 @@ import {
 } from "@/lib/atoms";
 import {
   inspectAsset,
-  materializeAsset,
+  materializeAssetStream,
   materializePipelineStream,
 } from "@/lib/api";
 import { AssetInspectResponse } from "@/lib/types";
@@ -23,6 +23,7 @@ export function useAssetResults() {
   const registerAssetColumns = useSetAtom(registerAssetColumnsAtom);
   const [pipelineMaterializeLoading, setPipelineMaterializeLoading] =
     useState(false);
+  const [assetMaterializeLoading, setAssetMaterializeLoading] = useState(false);
   const {
     inspectResult,
     materializeOutput,
@@ -38,12 +39,6 @@ export function useAssetResults() {
         inspectAsset(arg, { limit: 200 })
     );
 
-  const { trigger: triggerMaterialize, isMutating: materializeLoading } =
-    useSWRMutation(
-      "asset.materialize",
-      async (_key: string, { arg }: { arg: string }) => materializeAsset(arg)
-    );
-
   useEffect(() => {
     setResults((previous) =>
       previous.inspectLoading === inspectLoading
@@ -53,7 +48,7 @@ export function useAssetResults() {
   }, [inspectLoading, setResults]);
 
   const effectiveMaterializeLoading =
-    materializeLoading || pipelineMaterializeLoading;
+    assetMaterializeLoading || pipelineMaterializeLoading;
 
   useEffect(() => {
     setResults((previous) =>
@@ -143,12 +138,29 @@ export function useAssetResults() {
     assetId: string,
     refresh?: () => Promise<void> | void
   ) => {
+    setAssetMaterializeLoading(true);
+    setResults((previous) => ({
+      ...previous,
+      materializeOutput: "",
+      materializeStatus: null,
+      materializeError: "",
+      resultTab: "materialize",
+    }));
+
     try {
-      const result = await triggerMaterialize(assetId);
+      const result = await materializeAssetStream(assetId, {
+        onChunk: (chunk) => {
+          setResults((previous) => ({
+            ...previous,
+            materializeOutput: previous.materializeOutput + chunk,
+            resultTab: "materialize",
+          }));
+        },
+      });
       setResults((previous) => ({
         ...previous,
-        materializeOutput: result.output ?? "",
-        materializeStatus: result.status,
+        materializeOutput: result.output ?? previous.materializeOutput,
+        materializeStatus: result.status ?? "error",
         materializeError: result.error ?? "",
       }));
 
@@ -178,13 +190,17 @@ export function useAssetResults() {
     } catch (error) {
       setResults((previous) => ({
         ...previous,
-        materializeOutput: String(error),
+        materializeOutput:
+          previous.materializeOutput +
+          (previous.materializeOutput ? "\n" : "") +
+          String(error),
         materializeStatus: "error",
         materializeError: String(error),
       }));
       setResultTab("materialize");
       return null;
     } finally {
+      setAssetMaterializeLoading(false);
       if (refresh) {
         await refresh();
       }

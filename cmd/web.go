@@ -346,6 +346,7 @@ func (s *webServer) registerRoutes(router chi.Router) {
 	router.Put("/api/assets/{assetID}/columns", s.handleUpdateAssetColumns)
 	router.Delete("/api/pipelines/{pipelineID}/assets/{assetID}", s.handleDeleteAsset)
 	router.Get("/api/assets/{assetID}/inspect", s.handleInspectAsset)
+	router.Post("/api/assets/{assetID}/materialize/stream", s.handleMaterializeAssetStream)
 	router.Post("/api/assets/{assetID}/materialize", s.handleMaterializeAsset)
 	router.Get("/api/assets/freshness", s.handleGetAssetFreshness)
 	router.Post("/api/run", s.handleRun)
@@ -1623,6 +1624,91 @@ func (s *webServer) handleMaterializeAsset(w http.ResponseWriter, r *http.Reques
 		"attempts":          attempts,
 		"materialized_at":   materializedAt,
 		"changed_asset_ids": affected,
+	})
+}
+
+func (s *webServer) handleMaterializeAssetStream(w http.ResponseWriter, r *http.Request) {
+	assetID := chi.URLParam(r, "assetID")
+	relAssetPath, err := decodeID(assetID)
+	if err != nil {
+		webapi.WriteBadRequest(w, "invalid_asset_id", "invalid asset id")
+		return
+	}
+
+	duckDBInfo, infoErr := s.findDuckDBExecutionInfoByAsset(r.Context(), assetID)
+	if infoErr != nil {
+		webapi.WriteBadRequest(w, "duckdb_info_failed", infoErr.Error())
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		webapi.WriteInternalError(w, "streaming_unsupported", "streaming unsupported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	cmdArgs := []string{"run", relAssetPath}
+	_ = writeSSEJSON(w, flusher, "start", map[string]any{
+		"command": cmdArgs,
+	})
+
+	var output []byte
+	run := func() error {
+		var runErr error
+		output, runErr = s.runner.Stream(r.Context(), cmdArgs, func(chunk []byte) {
+			_ = writeSSEJSON(w, flusher, "output", map[string]any{
+				"chunk": string(chunk),
+			})
+		})
+		return runErr
+	}
+
+	var runErr error
+	if duckDBInfo != nil {
+		mu := s.getDuckDBOperationMutex(duckDBInfo.LockKey)
+		mu.Lock()
+		runErr = run()
+		mu.Unlock()
+	} else {
+		runErr = run()
+	}
+
+	changedAssetIDs := make([]string, 0)
+	var materializedAt *time.Time
+	if runErr == nil {
+		now := time.Now().UTC()
+		materializedAt = &now
+		if assetName := s.findAssetNameByID(assetID); assetName != "" {
+			s.freshness.RecordMaterialization(assetName, now, "succeeded")
+		}
+		changedAssetIDs = s.findMaterializationInspectIDs(assetID)
+	}
+
+	status := "ok"
+	errorMessage := ""
+	exitCode := 0
+	if runErr != nil {
+		status = "error"
+		exitCode = 1
+		errorMessage = runErr.Error()
+		if service.IsDuckDBLockError(runErr, output) {
+			errorMessage = "duckdb database is busy (lock held by another process), please retry"
+		}
+	}
+
+	_ = writeSSEJSON(w, flusher, "done", map[string]any{
+		"status":            status,
+		"command":           cmdArgs,
+		"output":            string(output),
+		"error":             errorMessage,
+		"exit_code":         exitCode,
+		"changed_asset_ids": changedAssetIDs,
+		"materialized_at":   materializedAt,
 	})
 }
 

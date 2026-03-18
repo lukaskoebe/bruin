@@ -98,39 +98,43 @@ export function WorkspaceResultsPanel({
         </TabsContent>
 
         <TabsContent className="min-h-0 flex-1 p-2" value="materialize">
-          {materializeLoading && !materializeOutputHtml && !materializeError ? (
-            <LoadingState
-              label={
-                pipelineMaterializeLoading
-                  ? "Running pipeline..."
-                  : "Materializing asset..."
-              }
-            />
-          ) : (
-            <div className="flex h-full min-h-0 flex-col gap-2">
-              {materializeLoading && pipelineMaterializeLoading && (
-                <div className="flex items-center gap-2 rounded border border-primary/30 bg-primary/5 px-2 py-1 text-xs text-primary">
-                  <Play className="size-3.5 animate-pulse fill-current" />
-                  Running pipeline...
-                </div>
-              )}
-              {materializeStatus === "error" && (
-                <div className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-                  Materialization failed
-                  {materializeError ? `: ${materializeError}` : ""}
-                </div>
-              )}
+          <div className="flex h-full min-h-0 flex-col gap-2">
+            {materializeLoading && pipelineMaterializeLoading && (
+              <div className="flex items-center gap-2 rounded border border-primary/30 bg-primary/5 px-2 py-1 text-xs text-primary">
+                <Play className="size-3.5 animate-pulse fill-current" />
+                Running pipeline...
+              </div>
+            )}
+            {materializeStatus === "error" && (
+              <div className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+                Materialization failed
+                {materializeError ? `: ${materializeError}` : ""}
+              </div>
+            )}
+            <div
+              className={`min-h-0 flex flex-1 flex-col overflow-hidden rounded border ${
+                materializeStatus === "error"
+                  ? "border-destructive/40 bg-destructive/5"
+                  : "bg-background"
+              }`}
+            >
               <pre
                 ref={materializeOutputRef}
-                className={`min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded border p-2 font-mono text-[11px] ${
-                  materializeStatus === "error"
-                    ? "border-destructive/40 bg-destructive/5"
-                    : "bg-background"
-                }`}
+                className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap p-2 font-mono text-[11px]"
                 dangerouslySetInnerHTML={{ __html: materializeOutputHtml }}
               />
+              {materializeLoading && (
+                <div className="flex items-center gap-2 border-t bg-muted/40 px-2 py-1 font-mono text-[11px] text-muted-foreground">
+                  <Spinner className="size-3.5" />
+                  <span>
+                    {pipelineMaterializeLoading
+                      ? "Waiting for pipeline output..."
+                      : "Waiting for asset output..."}
+                  </span>
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </TabsContent>
       </Tabs>
     </div>
