@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -148,6 +150,77 @@ type sqlPathSuggestionsResponse struct {
 	Status      string                  `json:"status"`
 	Suggestions []ingestrSuggestionItem `json:"suggestions"`
 	Error       string                  `json:"error,omitempty"`
+}
+
+type workspaceConfigFieldDef struct {
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	DefaultValue string `json:"default_value,omitempty"`
+	IsRequired   bool   `json:"is_required"`
+}
+
+type workspaceConfigConnectionType struct {
+	TypeName string                    `json:"type_name"`
+	Fields   []workspaceConfigFieldDef `json:"fields"`
+}
+
+type workspaceConfigConnection struct {
+	Name   string         `json:"name"`
+	Type   string         `json:"type"`
+	Values map[string]any `json:"values"`
+}
+
+type workspaceConfigEnvironment struct {
+	Name         string                      `json:"name"`
+	SchemaPrefix string                      `json:"schema_prefix,omitempty"`
+	Connections  []workspaceConfigConnection `json:"connections"`
+}
+
+type workspaceConfigResponse struct {
+	Status              string                          `json:"status"`
+	Path                string                          `json:"path"`
+	DefaultEnvironment  string                          `json:"default_environment,omitempty"`
+	SelectedEnvironment string                          `json:"selected_environment,omitempty"`
+	Environments        []workspaceConfigEnvironment    `json:"environments"`
+	ConnectionTypes     []workspaceConfigConnectionType `json:"connection_types"`
+	ParseError          string                          `json:"parse_error,omitempty"`
+}
+
+type createWorkspaceEnvironmentRequest struct {
+	Name         string `json:"name"`
+	SchemaPrefix string `json:"schema_prefix"`
+	SetAsDefault bool   `json:"set_as_default"`
+}
+
+type updateWorkspaceEnvironmentRequest struct {
+	Name         string `json:"name"`
+	NewName      string `json:"new_name"`
+	SchemaPrefix string `json:"schema_prefix"`
+	SetAsDefault bool   `json:"set_as_default"`
+}
+
+type cloneWorkspaceEnvironmentRequest struct {
+	SourceName   string `json:"source_name"`
+	TargetName   string `json:"target_name"`
+	SchemaPrefix string `json:"schema_prefix"`
+	SetAsDefault bool   `json:"set_as_default"`
+}
+
+type deleteWorkspaceEnvironmentRequest struct {
+	Name string `json:"name"`
+}
+
+type upsertWorkspaceConnectionRequest struct {
+	EnvironmentName string         `json:"environment_name"`
+	CurrentName     string         `json:"current_name,omitempty"`
+	Name            string         `json:"name"`
+	Type            string         `json:"type"`
+	Values          map[string]any `json:"values"`
+}
+
+type deleteWorkspaceConnectionRequest struct {
+	EnvironmentName string `json:"environment_name"`
+	Name            string `json:"name"`
 }
 
 type webPipeline struct {
@@ -336,6 +409,14 @@ func Web() *cli.Command {
 func (s *webServer) registerRoutes(router chi.Router) {
 	router.Get("/api/events", s.handleEvents)
 	router.Get("/api/workspace", s.handleGetWorkspace)
+	router.Get("/api/config", s.handleGetWorkspaceConfig)
+	router.Post("/api/config/environments", s.handleCreateWorkspaceEnvironment)
+	router.Put("/api/config/environments", s.handleUpdateWorkspaceEnvironment)
+	router.Post("/api/config/environments/clone", s.handleCloneWorkspaceEnvironment)
+	router.Delete("/api/config/environments", s.handleDeleteWorkspaceEnvironment)
+	router.Post("/api/config/connections", s.handleCreateWorkspaceConnection)
+	router.Put("/api/config/connections", s.handleUpdateWorkspaceConnection)
+	router.Delete("/api/config/connections", s.handleDeleteWorkspaceConnection)
 	router.Get("/api/ingestr/suggestions", s.handleGetIngestrSuggestions)
 	router.Get("/api/assets/{assetID}/sql-path-suggestions", s.handleGetSQLPathSuggestions)
 	router.Get("/api/sql/databases", s.handleGetSQLDatabases)
@@ -545,6 +626,224 @@ func writeSSEJSON(w http.ResponseWriter, flusher http.Flusher, event string, bod
 
 func (s *webServer) handleGetWorkspace(w http.ResponseWriter, _ *http.Request) {
 	s.writeJSON(w, http.StatusOK, s.currentState())
+}
+
+func (s *webServer) handleGetWorkspaceConfig(w http.ResponseWriter, _ *http.Request) {
+	configPath := s.resolveConfigFilePath()
+	cfg, err := loadWorkspaceConfigForEditing(configPath)
+	if err != nil {
+		response := workspaceConfigResponse{
+			Status:          "ok",
+			Path:            filepath.Base(configPath),
+			Environments:    []workspaceConfigEnvironment{},
+			ConnectionTypes: buildWorkspaceConfigConnectionTypes(),
+			ParseError:      err.Error(),
+		}
+		s.writeJSON(w, http.StatusOK, response)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
+}
+
+func (s *webServer) handleCreateWorkspaceEnvironment(w http.ResponseWriter, r *http.Request) {
+	var req createWorkspaceEnvironmentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
+		return
+	}
+
+	cfg, configPath, err := loadWorkspaceConfigFromServer()
+	if err != nil {
+		webapi.WriteInternalError(w, "config_load_failed", err.Error())
+		return
+	}
+
+	if err := cfg.AddEnvironment(strings.TrimSpace(req.Name), strings.TrimSpace(req.SchemaPrefix)); err != nil {
+		webapi.WriteBadRequest(w, "environment_create_failed", err.Error())
+		return
+	}
+
+	if req.SetAsDefault {
+		cfg.DefaultEnvironmentName = strings.TrimSpace(req.Name)
+	}
+
+	if err := persistWorkspaceConfigFromServer(r.Context(), s, cfg, configPath, "config.updated"); err != nil {
+		webapi.WriteInternalError(w, "config_persist_failed", err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
+}
+
+func (s *webServer) handleUpdateWorkspaceEnvironment(w http.ResponseWriter, r *http.Request) {
+	var req updateWorkspaceEnvironmentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
+		return
+	}
+
+	cfg, configPath, err := loadWorkspaceConfigFromServer()
+	if err != nil {
+		webapi.WriteInternalError(w, "config_load_failed", err.Error())
+		return
+	}
+
+	currentName := strings.TrimSpace(req.Name)
+	nextName := strings.TrimSpace(req.NewName)
+	if nextName == "" {
+		nextName = currentName
+	}
+
+	if err := cfg.UpdateEnvironment(currentName, nextName, strings.TrimSpace(req.SchemaPrefix)); err != nil {
+		webapi.WriteBadRequest(w, "environment_update_failed", err.Error())
+		return
+	}
+
+	if req.SetAsDefault {
+		cfg.DefaultEnvironmentName = nextName
+	}
+
+	if err := persistWorkspaceConfigFromServer(r.Context(), s, cfg, configPath, "config.updated"); err != nil {
+		webapi.WriteInternalError(w, "config_persist_failed", err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
+}
+
+func (s *webServer) handleCloneWorkspaceEnvironment(w http.ResponseWriter, r *http.Request) {
+	var req cloneWorkspaceEnvironmentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
+		return
+	}
+
+	cfg, configPath, err := loadWorkspaceConfigFromServer()
+	if err != nil {
+		webapi.WriteInternalError(w, "config_load_failed", err.Error())
+		return
+	}
+
+	if err := cfg.CloneEnvironment(strings.TrimSpace(req.SourceName), strings.TrimSpace(req.TargetName), strings.TrimSpace(req.SchemaPrefix)); err != nil {
+		webapi.WriteBadRequest(w, "environment_clone_failed", err.Error())
+		return
+	}
+
+	if req.SetAsDefault {
+		cfg.DefaultEnvironmentName = strings.TrimSpace(req.TargetName)
+	}
+
+	if err := persistWorkspaceConfigFromServer(r.Context(), s, cfg, configPath, "config.updated"); err != nil {
+		webapi.WriteInternalError(w, "config_persist_failed", err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
+}
+
+func (s *webServer) handleDeleteWorkspaceEnvironment(w http.ResponseWriter, r *http.Request) {
+	var req deleteWorkspaceEnvironmentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
+		return
+	}
+
+	cfg, configPath, err := loadWorkspaceConfigFromServer()
+	if err != nil {
+		webapi.WriteInternalError(w, "config_load_failed", err.Error())
+		return
+	}
+
+	if err := cfg.DeleteEnvironment(strings.TrimSpace(req.Name)); err != nil {
+		webapi.WriteBadRequest(w, "environment_delete_failed", err.Error())
+		return
+	}
+
+	if err := persistWorkspaceConfigFromServer(r.Context(), s, cfg, configPath, "config.updated"); err != nil {
+		webapi.WriteInternalError(w, "config_persist_failed", err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
+}
+
+func (s *webServer) handleCreateWorkspaceConnection(w http.ResponseWriter, r *http.Request) {
+	var req upsertWorkspaceConnectionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
+		return
+	}
+
+	cfg, configPath, err := loadWorkspaceConfigFromServer()
+	if err != nil {
+		webapi.WriteInternalError(w, "config_load_failed", err.Error())
+		return
+	}
+
+	if err := addWorkspaceConnection(cfg, req); err != nil {
+		webapi.WriteBadRequest(w, "connection_create_failed", err.Error())
+		return
+	}
+
+	if err := persistWorkspaceConfigFromServer(r.Context(), s, cfg, configPath, "config.updated"); err != nil {
+		webapi.WriteInternalError(w, "config_persist_failed", err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
+}
+
+func (s *webServer) handleUpdateWorkspaceConnection(w http.ResponseWriter, r *http.Request) {
+	var req upsertWorkspaceConnectionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
+		return
+	}
+
+	cfg, configPath, err := loadWorkspaceConfigFromServer()
+	if err != nil {
+		webapi.WriteInternalError(w, "config_load_failed", err.Error())
+		return
+	}
+
+	if err := updateWorkspaceConnection(cfg, req); err != nil {
+		webapi.WriteBadRequest(w, "connection_update_failed", err.Error())
+		return
+	}
+
+	if err := persistWorkspaceConfigFromServer(r.Context(), s, cfg, configPath, "config.updated"); err != nil {
+		webapi.WriteInternalError(w, "config_persist_failed", err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
+}
+
+func (s *webServer) handleDeleteWorkspaceConnection(w http.ResponseWriter, r *http.Request) {
+	var req deleteWorkspaceConnectionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
+		return
+	}
+
+	cfg, configPath, err := loadWorkspaceConfigFromServer()
+	if err != nil {
+		webapi.WriteInternalError(w, "config_load_failed", err.Error())
+		return
+	}
+
+	if err := cfg.DeleteConnection(strings.TrimSpace(req.EnvironmentName), strings.TrimSpace(req.Name)); err != nil {
+		webapi.WriteBadRequest(w, "connection_delete_failed", err.Error())
+		return
+	}
+
+	if err := persistWorkspaceConfigFromServer(r.Context(), s, cfg, configPath, "config.updated"); err != nil {
+		webapi.WriteInternalError(w, "config_persist_failed", err.Error())
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
 }
 
 func (s *webServer) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -2061,6 +2360,387 @@ func (s *webServer) newConnectionManager(ctx context.Context, environment string
 	}
 
 	return manager, nil
+}
+
+func loadWorkspaceConfigForEditing(configPath string) (*config.Config, error) {
+	return config.LoadOrCreateWithoutPathAbsolutization(afero.NewOsFs(), configPath)
+}
+
+func loadWorkspaceConfigFromServer() (*config.Config, string, error) {
+	configPath := resolveWorkspaceConfigPath()
+	cfg, err := loadWorkspaceConfigForEditing(configPath)
+	if err != nil {
+		return nil, configPath, err
+	}
+
+	return cfg, configPath, nil
+}
+
+func resolveWorkspaceConfigPath() string {
+	repoRoot, err := git.FindRepoFromPath(".")
+	if err == nil && repoRoot != nil && strings.TrimSpace(repoRoot.Path) != "" {
+		return filepath.Join(repoRoot.Path, ".bruin.yml")
+	}
+
+	workingDir, wdErr := os.Getwd()
+	if wdErr == nil {
+		return filepath.Join(workingDir, ".bruin.yml")
+	}
+
+	return ".bruin.yml"
+}
+
+func persistWorkspaceConfigFromServer(ctx context.Context, s *webServer, cfg *config.Config, configPath, eventType string) error {
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return err
+	}
+
+	if err := cfg.Persist(); err != nil {
+		return err
+	}
+
+	relPath, relErr := filepath.Rel(s.workspaceRoot, configPath)
+	if relErr != nil {
+		relPath = filepath.Base(configPath)
+	}
+	relPath = filepath.ToSlash(relPath)
+
+	s.suppressWatcherFor(relPath)
+	s.pushWorkspaceUpdateImmediate(ctx, eventType, relPath)
+	return nil
+}
+
+func buildWorkspaceConfigConnectionTypes() []workspaceConfigConnectionType {
+	connectionsType := reflect.TypeFor[config.Connections]()
+	items := make([]workspaceConfigConnectionType, 0, connectionsType.NumField())
+	for index := 0; index < connectionsType.NumField(); index++ {
+		structField := connectionsType.Field(index)
+		if !structField.IsExported() || structField.Type.Kind() != reflect.Slice {
+			continue
+		}
+
+		typeName := structField.Tag.Get("yaml")
+		if separator := strings.Index(typeName, ","); separator >= 0 {
+			typeName = typeName[:separator]
+		}
+		if typeName == "" {
+			continue
+		}
+
+		elementType := structField.Type.Elem()
+		if elementType.Kind() == reflect.Pointer {
+			elementType = elementType.Elem()
+		}
+		if elementType.Kind() != reflect.Struct {
+			continue
+		}
+
+		items = append(items, workspaceConfigConnectionType{
+			TypeName: typeName,
+			Fields:   buildWorkspaceConfigFieldDefs(elementType),
+		})
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].TypeName < items[j].TypeName
+	})
+
+	return items
+}
+
+func buildWorkspaceConfigFieldDefs(connectionType reflect.Type) []workspaceConfigFieldDef {
+	fields := make([]workspaceConfigFieldDef, 0, connectionType.NumField())
+	for index := 0; index < connectionType.NumField(); index++ {
+		structField := connectionType.Field(index)
+		if !structField.IsExported() {
+			continue
+		}
+
+		mapstructureTag := structField.Tag.Get("mapstructure")
+		if separator := strings.Index(mapstructureTag, ","); separator >= 0 {
+			mapstructureTag = mapstructureTag[:separator]
+		}
+		if mapstructureTag == "" || mapstructureTag == "name" {
+			continue
+		}
+
+		fieldType := buildWorkspaceConfigFieldType(structField.Type.Kind())
+		if fieldType == "" {
+			continue
+		}
+
+		defaultValue := ""
+		if jsonschemaTag := structField.Tag.Get("jsonschema"); jsonschemaTag != "" {
+			for part := range strings.SplitSeq(jsonschemaTag, ",") {
+				part = strings.TrimSpace(part)
+				if value, ok := strings.CutPrefix(part, "default="); ok {
+					defaultValue = value
+				}
+			}
+		}
+		if defaultValue == "" {
+			defaultValue = structField.Tag.Get("default")
+		}
+
+		yamlTag := structField.Tag.Get("yaml")
+		fields = append(fields, workspaceConfigFieldDef{
+			Name:         mapstructureTag,
+			Type:         fieldType,
+			DefaultValue: defaultValue,
+			IsRequired:   !strings.Contains(yamlTag, "omitempty"),
+		})
+	}
+
+	return fields
+}
+
+func buildWorkspaceConfigFieldType(kind reflect.Kind) string {
+	switch kind { //nolint:exhaustive
+	case reflect.String:
+		return "string"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return "int"
+	case reflect.Bool:
+		return "bool"
+	default:
+		return ""
+	}
+}
+
+func buildWorkspaceConfigResponse(configPath string, cfg *config.Config) workspaceConfigResponse {
+	response := workspaceConfigResponse{
+		Status:              "ok",
+		Path:                filepath.Base(configPath),
+		DefaultEnvironment:  cfg.DefaultEnvironmentName,
+		SelectedEnvironment: cfg.SelectedEnvironmentName,
+		Environments:        []workspaceConfigEnvironment{},
+		ConnectionTypes:     buildWorkspaceConfigConnectionTypes(),
+	}
+
+	environmentNames := cfg.GetEnvironmentNames()
+	sort.Strings(environmentNames)
+	for _, envName := range environmentNames {
+		env := cfg.Environments[envName]
+		response.Environments = append(response.Environments, workspaceConfigEnvironment{
+			Name:         envName,
+			SchemaPrefix: env.SchemaPrefix,
+			Connections:  buildWorkspaceConfigConnections(env.Connections),
+		})
+	}
+
+	return response
+}
+
+func buildWorkspaceConfigConnections(connections *config.Connections) []workspaceConfigConnection {
+	if connections == nil {
+		return []workspaceConfigConnection{}
+	}
+
+	value := reflect.ValueOf(connections)
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	if !value.IsValid() || value.Kind() != reflect.Struct {
+		return []workspaceConfigConnection{}
+	}
+
+	valueType := value.Type()
+	items := make([]workspaceConfigConnection, 0)
+	for index := 0; index < value.NumField(); index++ {
+		field := value.Field(index)
+		structField := valueType.Field(index)
+		if field.Kind() != reflect.Slice {
+			continue
+		}
+
+		typeName := structField.Tag.Get("yaml")
+		if separator := strings.Index(typeName, ","); separator >= 0 {
+			typeName = typeName[:separator]
+		}
+		if typeName == "" {
+			continue
+		}
+
+		for itemIndex := 0; itemIndex < field.Len(); itemIndex++ {
+			connectionValue := field.Index(itemIndex)
+			connectionInterface := connectionValue.Interface()
+			named, ok := connectionInterface.(interface{ GetName() string })
+			if !ok {
+				continue
+			}
+
+			items = append(items, workspaceConfigConnection{
+				Name:   named.GetName(),
+				Type:   typeName,
+				Values: buildWorkspaceConfigConnectionValues(connectionInterface, typeName),
+			})
+		}
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Type == items[j].Type {
+			return items[i].Name < items[j].Name
+		}
+		return items[i].Type < items[j].Type
+	})
+
+	return items
+}
+
+func buildWorkspaceConfigConnectionValues(connection any, typeName string) map[string]any {
+	result := make(map[string]any)
+	fieldDefs := config.GetConnectionFieldsForType(typeName)
+	if len(fieldDefs) == 0 {
+		return result
+	}
+
+	value := reflect.ValueOf(connection)
+	if value.Kind() == reflect.Pointer {
+		value = value.Elem()
+	}
+	if !value.IsValid() || value.Kind() != reflect.Struct {
+		return result
+	}
+
+	valueType := value.Type()
+	for _, fieldDef := range fieldDefs {
+		for index := 0; index < value.NumField(); index++ {
+			structField := valueType.Field(index)
+			mapstructureTag := structField.Tag.Get("mapstructure")
+			if separator := strings.Index(mapstructureTag, ","); separator >= 0 {
+				mapstructureTag = mapstructureTag[:separator]
+			}
+			if mapstructureTag != fieldDef.Name {
+				continue
+			}
+
+			fieldValue := value.Field(index)
+			switch fieldValue.Kind() { //nolint:exhaustive
+			case reflect.String:
+				result[fieldDef.Name] = fieldValue.String()
+			case reflect.Bool:
+				result[fieldDef.Name] = fieldValue.Bool()
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				result[fieldDef.Name] = fieldValue.Int()
+			}
+			break
+		}
+	}
+
+	return result
+}
+
+func addWorkspaceConnection(cfg *config.Config, req upsertWorkspaceConnectionRequest) error {
+	environmentName := strings.TrimSpace(req.EnvironmentName)
+	name := strings.TrimSpace(req.Name)
+	typeName := strings.TrimSpace(req.Type)
+	if environmentName == "" || name == "" || typeName == "" {
+		return fmt.Errorf("environment, name, and type are required")
+	}
+
+	values, err := normalizeWorkspaceConnectionValues(typeName, req.Values)
+	if err != nil {
+		return err
+	}
+
+	return cfg.AddConnection(environmentName, name, typeName, values)
+}
+
+func updateWorkspaceConnection(cfg *config.Config, req upsertWorkspaceConnectionRequest) error {
+	environmentName := strings.TrimSpace(req.EnvironmentName)
+	currentName := strings.TrimSpace(req.CurrentName)
+	if currentName == "" {
+		currentName = strings.TrimSpace(req.Name)
+	}
+
+	if err := cfg.DeleteConnection(environmentName, currentName); err != nil {
+		return err
+	}
+
+	if err := addWorkspaceConnection(cfg, req); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func normalizeWorkspaceConnectionValues(typeName string, values map[string]any) (map[string]any, error) {
+	result := make(map[string]any)
+	fieldDefs := config.GetConnectionFieldsForType(typeName)
+	for _, fieldDef := range fieldDefs {
+		rawValue, exists := values[fieldDef.Name]
+		if !exists {
+			continue
+		}
+
+		switch fieldDef.Type {
+		case "string":
+			result[fieldDef.Name] = strings.TrimSpace(fmt.Sprint(rawValue))
+		case "bool":
+			boolValue, err := normalizeWorkspaceBoolValue(rawValue)
+			if err != nil {
+				return nil, fmt.Errorf("invalid value for %s: %w", fieldDef.Name, err)
+			}
+			result[fieldDef.Name] = boolValue
+		case "int":
+			intValue, err := normalizeWorkspaceIntValue(rawValue)
+			if err != nil {
+				return nil, fmt.Errorf("invalid value for %s: %w", fieldDef.Name, err)
+			}
+			result[fieldDef.Name] = intValue
+		}
+	}
+
+	return result, nil
+}
+
+func normalizeWorkspaceBoolValue(rawValue any) (bool, error) {
+	switch value := rawValue.(type) {
+	case bool:
+		return value, nil
+	case string:
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return false, nil
+		}
+		if strings.EqualFold(trimmed, "true") {
+			return true, nil
+		}
+		if strings.EqualFold(trimmed, "false") {
+			return false, nil
+		}
+	}
+
+	return false, fmt.Errorf("expected boolean")
+}
+
+func normalizeWorkspaceIntValue(rawValue any) (int, error) {
+	switch value := rawValue.(type) {
+	case int:
+		return value, nil
+	case int8:
+		return int(value), nil
+	case int16:
+		return int(value), nil
+	case int32:
+		return int(value), nil
+	case int64:
+		return int(value), nil
+	case float64:
+		return int(value), nil
+	case string:
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return 0, nil
+		}
+		parsed, err := strconv.Atoi(trimmed)
+		if err != nil {
+			return 0, err
+		}
+		return parsed, nil
+	}
+
+	return 0, fmt.Errorf("expected integer")
 }
 
 func databaseNameForConnectionDetails(details any) string {

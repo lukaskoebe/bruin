@@ -9,6 +9,7 @@ import {
   SqlDiscoveryTablesResponse,
   WebColumn,
   PipelineMaterializationResponse,
+  WorkspaceConfigResponse,
   WorkspaceState,
 } from "@/lib/types";
 
@@ -23,6 +24,109 @@ async function readJSON<T>(res: Response): Promise<T> {
 export async function getWorkspace(): Promise<WorkspaceState> {
   const res = await fetch("/api/workspace", { cache: "no-store" });
   return readJSON<WorkspaceState>(res);
+}
+
+export async function getWorkspaceConfig(): Promise<WorkspaceConfigResponse> {
+  const res = await fetch("/api/config", { cache: "no-store" });
+  return readJSON<WorkspaceConfigResponse>(res);
+}
+
+export async function createWorkspaceEnvironment(input: {
+  name: string;
+  schema_prefix?: string;
+  set_as_default?: boolean;
+}): Promise<WorkspaceConfigResponse> {
+  const res = await fetch("/api/config/environments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return readJSON<WorkspaceConfigResponse>(res);
+}
+
+export async function updateWorkspaceEnvironment(input: {
+  name: string;
+  new_name?: string;
+  schema_prefix?: string;
+  set_as_default?: boolean;
+}): Promise<WorkspaceConfigResponse> {
+  const res = await fetch("/api/config/environments", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return readJSON<WorkspaceConfigResponse>(res);
+}
+
+export async function cloneWorkspaceEnvironment(input: {
+  source_name: string;
+  target_name: string;
+  schema_prefix?: string;
+  set_as_default?: boolean;
+}): Promise<WorkspaceConfigResponse> {
+  const res = await fetch("/api/config/environments/clone", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return readJSON<WorkspaceConfigResponse>(res);
+}
+
+export async function deleteWorkspaceEnvironment(name: string): Promise<WorkspaceConfigResponse> {
+  const res = await fetch("/api/config/environments", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+
+  return readJSON<WorkspaceConfigResponse>(res);
+}
+
+export async function createWorkspaceConnection(input: {
+  environment_name: string;
+  name: string;
+  type: string;
+  values: Record<string, unknown>;
+}): Promise<WorkspaceConfigResponse> {
+  const res = await fetch("/api/config/connections", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return readJSON<WorkspaceConfigResponse>(res);
+}
+
+export async function updateWorkspaceConnection(input: {
+  environment_name: string;
+  current_name?: string;
+  name: string;
+  type: string;
+  values: Record<string, unknown>;
+}): Promise<WorkspaceConfigResponse> {
+  const res = await fetch("/api/config/connections", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return readJSON<WorkspaceConfigResponse>(res);
+}
+
+export async function deleteWorkspaceConnection(input: {
+  environment_name: string;
+  name: string;
+}): Promise<WorkspaceConfigResponse> {
+  const res = await fetch("/api/config/connections", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return readJSON<WorkspaceConfigResponse>(res);
 }
 
 export async function createPipeline(input: {

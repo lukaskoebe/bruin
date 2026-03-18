@@ -16,12 +16,13 @@ import {
   useEdgesState,
   useNodesState,
 } from "reactflow";
-import { Plus } from "lucide-react";
+import { Cable, Plus, Settings2 } from "lucide-react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import "reactflow/dist/style.css";
 
 import { AssetNode } from "@/components/asset-node";
 import { NewAssetNode } from "@/components/new-asset-node";
+import { WorkspaceConfigPane } from "@/components/workspace-config-pane";
 import {
   AssetConfigForm,
   WorkspaceEditorPane,
@@ -40,9 +41,20 @@ import {
   pipelineAtom,
 } from "@/lib/atoms";
 import {
+  cloneWorkspaceEnvironment,
+  createWorkspaceConnection,
+  createWorkspaceEnvironment,
+  deleteWorkspaceConnection,
+  deleteWorkspaceEnvironment,
+  getWorkspaceConfig,
+  updateWorkspaceConnection,
+  updateWorkspaceEnvironment,
+} from "@/lib/api";
+import {
   buildFlowFromPipeline,
   computeGraphLayoutPositions,
 } from "@/lib/graph";
+import { WorkspaceConfigResponse } from "@/lib/types";
 import { buildCreateAssetInput } from "@/lib/workspace-shell-helpers";
 import { useAssetActions } from "@/hooks/use-asset-actions";
 import { useAssetCanvasInteractions } from "@/hooks/use-asset-canvas-interactions";
@@ -60,7 +72,11 @@ import { useWorkspaceSelection } from "@/hooks/use-workspace-selection";
 import { useWorkspaceSync } from "@/hooks/use-workspace-sync";
 import { useWorkspaceTheme } from "@/hooks/use-workspace-theme";
 
-export function WorkspaceShell() {
+type WorkspaceShellProps = {
+  view?: "workspace" | "settings";
+};
+
+export function WorkspaceShell({ view = "workspace" }: WorkspaceShellProps) {
   const workspace = useWorkspaceSync();
   const [assetEditorTab, setAssetEditorTab] = useAtom(assetEditorTabAtom);
   const editorValue = useAtomValue(editorValueAtom);
@@ -83,6 +99,15 @@ export function WorkspaceShell() {
   const [pendingPipelinePathSelection, setPendingPipelinePathSelection] =
     useState<string | null>(null);
   const [recomputeVersion, setRecomputeVersion] = useState(0);
+  const [workspaceConfig, setWorkspaceConfig] =
+    useState<WorkspaceConfigResponse | null>(null);
+  const [workspaceConfigLoading, setWorkspaceConfigLoading] = useState(false);
+  const [workspaceConfigBusy, setWorkspaceConfigBusy] = useState(false);
+  const [workspaceConfigStatusMessage, setWorkspaceConfigStatusMessage] =
+    useState<string | null>(null);
+  const [workspaceConfigStatusTone, setWorkspaceConfigStatusTone] = useState<
+    "error" | "success" | null
+  >(null);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
 
   const { scheduleSave, flushAssetSave } = useDebouncedAssetSave(500);
@@ -466,6 +491,167 @@ export function WorkspaceShell() {
     []
   );
 
+  const loadWorkspaceConfig = useCallback(async () => {
+    setWorkspaceConfigLoading(true);
+    try {
+      const response = await getWorkspaceConfig();
+      setWorkspaceConfig(response);
+      setWorkspaceConfigStatusMessage(null);
+      setWorkspaceConfigStatusTone(null);
+    } catch (error) {
+      setWorkspaceConfigStatusMessage(
+        error instanceof Error ? error.message : "Failed to load workspace config."
+      );
+      setWorkspaceConfigStatusTone("error");
+    } finally {
+      setWorkspaceConfigLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (view !== "settings") {
+      return;
+    }
+
+    void loadWorkspaceConfig();
+  }, [loadWorkspaceConfig, view]);
+
+  const runWorkspaceConfigMutation = useCallback(
+    async (operation: () => Promise<WorkspaceConfigResponse>, successMessage: string) => {
+      setWorkspaceConfigBusy(true);
+      setWorkspaceConfigStatusMessage(null);
+      setWorkspaceConfigStatusTone(null);
+
+      try {
+        const response = await operation();
+        setWorkspaceConfig(response);
+        setWorkspaceConfigStatusMessage(successMessage);
+        setWorkspaceConfigStatusTone("success");
+        return response;
+      } catch (error) {
+        setWorkspaceConfigStatusMessage(
+          error instanceof Error ? error.message : "Workspace config update failed."
+        );
+        setWorkspaceConfigStatusTone("error");
+        throw error;
+      } finally {
+        setWorkspaceConfigBusy(false);
+      }
+    },
+    []
+  );
+
+  const handleCreateWorkspaceEnvironment = useCallback(
+    (input: {
+      name: string;
+      schema_prefix?: string;
+      set_as_default?: boolean;
+    }) =>
+      runWorkspaceConfigMutation(
+        () => createWorkspaceEnvironment(input),
+        `Environment "${input.name}" created.`
+      ),
+    [runWorkspaceConfigMutation]
+  );
+
+  const handleUpdateWorkspaceEnvironment = useCallback(
+    (input: {
+      name: string;
+      new_name?: string;
+      schema_prefix?: string;
+      set_as_default?: boolean;
+    }) =>
+      runWorkspaceConfigMutation(
+        () => updateWorkspaceEnvironment(input),
+        `Environment "${input.new_name || input.name}" saved.`
+      ),
+    [runWorkspaceConfigMutation]
+  );
+
+  const handleCloneWorkspaceEnvironment = useCallback(
+    (input: {
+      source_name: string;
+      target_name: string;
+      schema_prefix?: string;
+      set_as_default?: boolean;
+    }) =>
+      runWorkspaceConfigMutation(
+        () => cloneWorkspaceEnvironment(input),
+        `Environment "${input.target_name}" cloned.`
+      ),
+    [runWorkspaceConfigMutation]
+  );
+
+  const handleDeleteWorkspaceEnvironment = useCallback(
+    (name: string) =>
+      runWorkspaceConfigMutation(
+        () => deleteWorkspaceEnvironment(name),
+        `Environment "${name}" deleted.`
+      ),
+    [runWorkspaceConfigMutation]
+  );
+
+  const handleCreateWorkspaceConnection = useCallback(
+    (input: {
+      environment_name: string;
+      name: string;
+      type: string;
+      values: Record<string, unknown>;
+    }) =>
+      runWorkspaceConfigMutation(
+        () => createWorkspaceConnection(input),
+        `Connection "${input.name}" created.`
+      ),
+    [runWorkspaceConfigMutation]
+  );
+
+  const handleUpdateWorkspaceConnection = useCallback(
+    (input: {
+      environment_name: string;
+      current_name?: string;
+      name: string;
+      type: string;
+      values: Record<string, unknown>;
+    }) =>
+      runWorkspaceConfigMutation(
+        () => updateWorkspaceConnection(input),
+        `Connection "${input.name}" saved.`
+      ),
+    [runWorkspaceConfigMutation]
+  );
+
+  const handleDeleteWorkspaceConnection = useCallback(
+    (input: { environment_name: string; name: string }) =>
+      runWorkspaceConfigMutation(
+        () => deleteWorkspaceConnection(input),
+        `Connection "${input.name}" deleted.`
+      ),
+    [runWorkspaceConfigMutation]
+  );
+
+  const handleNavigateView = useCallback(
+    (nextView: "workspace" | "settings") => {
+      const nextPath = nextView === "settings" ? "/settings" : "/";
+      const nextURL = `${nextPath}${window.location.search}`;
+      if (window.location.pathname === nextPath) {
+        return;
+      }
+
+      window.history.pushState(window.history.state, "", nextURL);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    },
+    []
+  );
+
+  const configuredConnectionCount = useMemo(
+    () =>
+      (workspaceConfig?.environments ?? []).reduce(
+        (total, environment) => total + environment.connections.length,
+        0
+      ),
+    [workspaceConfig]
+  );
+
   const onboardingContent = (
     <WorkspaceOnboardingPanel
       helpMode={helpMode}
@@ -537,6 +723,7 @@ export function WorkspaceShell() {
               onToggleTheme={() =>
                 setTheme((current) => (current === "dark" ? "light" : "dark"))
               }
+              currentView={view}
               onCreatePipeline={handleCreatePipeline}
               onRunPipeline={handleRunPipeline}
               canRunPipeline={Boolean(pipeline)}
@@ -544,13 +731,74 @@ export function WorkspaceShell() {
               onDeletePipeline={() => setDeletePipelineDialogOpen(true)}
               canDeletePipeline={Boolean(pipeline)}
               deletePipelineLoading={deletePipelineLoading}
+              onNavigateView={handleNavigateView}
               onNavigateSelection={navigateSelection}
             />
           </Panel>
 
           <PanelResizeHandle className="w-px bg-border" />
 
-          {hasPipelines ? (
+          {view === "settings" ? (
+            <>
+              <Panel defaultSize={50} minSize={30}>
+                <div className="flex h-full items-center justify-center bg-muted/10 p-8">
+                  <div className="max-w-xl rounded-lg border bg-card p-6 shadow-sm">
+                    <div className="flex items-center gap-2 text-lg font-semibold">
+                      <Settings2 className="size-5" />
+                      Workspace Settings
+                    </div>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Edit environments and connections in the right-hand panel.
+                      Changes are saved to your workspace config file and picked up
+                      immediately by the canvas, autocomplete, and materialization flows.
+                    </p>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-lg border bg-background/80 p-4">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                          Environments
+                        </div>
+                        <div className="mt-1 text-2xl font-semibold">
+                          {workspaceConfig?.environments.length ?? 0}
+                        </div>
+                      </div>
+                      <div className="rounded-lg border bg-background/80 p-4">
+                        <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
+                          <Cable className="size-3.5" />
+                          Connections
+                        </div>
+                        <div className="mt-1 text-2xl font-semibold">
+                          {configuredConnectionCount}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </Panel>
+
+              <PanelResizeHandle className="w-px bg-border" />
+
+              <WorkspaceConfigPane
+                configPath={workspaceConfig?.path ?? ".bruin.yml"}
+                defaultEnvironment={workspaceConfig?.default_environment}
+                selectedEnvironment={workspaceConfig?.selected_environment}
+                environments={workspaceConfig?.environments ?? []}
+                connectionTypes={workspaceConfig?.connection_types ?? []}
+                loading={workspaceConfigLoading}
+                busy={workspaceConfigBusy}
+                parseError={workspaceConfig?.parse_error}
+                statusMessage={workspaceConfigStatusMessage}
+                statusTone={workspaceConfigStatusTone}
+                onReload={() => void loadWorkspaceConfig()}
+                onCreateEnvironment={handleCreateWorkspaceEnvironment}
+                onUpdateEnvironment={handleUpdateWorkspaceEnvironment}
+                onCloneEnvironment={handleCloneWorkspaceEnvironment}
+                onDeleteEnvironment={handleDeleteWorkspaceEnvironment}
+                onCreateConnection={handleCreateWorkspaceConnection}
+                onUpdateConnection={handleUpdateWorkspaceConnection}
+                onDeleteConnection={handleDeleteWorkspaceConnection}
+              />
+            </>
+          ) : hasPipelines ? (
             <>
               <WorkspaceCanvasPane
                 highlighted={helpMode && onboardingHelp.target === "canvas"}
@@ -670,7 +918,7 @@ export function WorkspaceShell() {
           onConfirmCreatePipeline={handleConfirmCreatePipeline}
         />
       </SidebarProvider>
-      <style jsx global={true}>{`
+      <style>{`
         @keyframes bruin-help-scale {
           from {
             transform: scale(1);

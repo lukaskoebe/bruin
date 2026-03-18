@@ -26,12 +26,22 @@ const indexRoute = createRoute({
   path: "/",
   component: () => (
     <Suspense fallback={null}>
-      <WorkspaceShell />
+      <WorkspaceShell view="workspace" />
     </Suspense>
   ),
 });
 
-const routeTree = rootRoute.addChildren([indexRoute]);
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings",
+  component: () => (
+    <Suspense fallback={null}>
+      <WorkspaceShell view="settings" />
+    </Suspense>
+  ),
+});
+
+const routeTree = rootRoute.addChildren([indexRoute, settingsRoute]);
 
 export const router = createRouter({
   routeTree,

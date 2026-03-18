@@ -53,6 +53,40 @@ export type WorkspaceState = {
   revision?: number;
 };
 
+export type WorkspaceConfigFieldDef = {
+  name: string;
+  type: "string" | "int" | "bool";
+  default_value?: string;
+  is_required: boolean;
+};
+
+export type WorkspaceConfigConnectionType = {
+  type_name: string;
+  fields: WorkspaceConfigFieldDef[];
+};
+
+export type WorkspaceConfigConnection = {
+  name: string;
+  type: string;
+  values: Record<string, string | number | boolean | null | undefined>;
+};
+
+export type WorkspaceConfigEnvironment = {
+  name: string;
+  schema_prefix?: string;
+  connections: WorkspaceConfigConnection[];
+};
+
+export type WorkspaceConfigResponse = {
+  status: "ok" | "error";
+  path: string;
+  default_environment?: string;
+  selected_environment?: string;
+  environments: WorkspaceConfigEnvironment[];
+  connection_types: WorkspaceConfigConnectionType[];
+  parse_error?: string;
+};
+
 export type WorkspaceEvent = {
   type: string;
   path?: string;

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, Moon, Play, Plus, Sun, Trash2, Workflow } from "lucide-react";
+import { ChevronRight, Moon, Play, Plus, Settings2, Sun, Trash2, Workflow } from "lucide-react";
 import { CSSProperties, ReactNode, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import { WorkspaceState } from "@/lib/types";
 
 type Props = {
   workspace: WorkspaceState | null;
+  currentView: "workspace" | "settings";
   activePipeline: string | null;
   selectedAsset: string | null;
   highlighted?: boolean;
@@ -33,11 +34,13 @@ type Props = {
   onRunPipeline: () => void;
   canRunPipeline: boolean;
   runPipelineLoading: boolean;
+  onNavigateView: (view: "workspace" | "settings") => void;
   onNavigateSelection: (pipelineId: string, assetId: string | null) => void;
 };
 
 export function WorkspaceSidebar({
   workspace,
+  currentView,
   activePipeline,
   selectedAsset,
   highlighted = false,
@@ -52,6 +55,7 @@ export function WorkspaceSidebar({
   onRunPipeline,
   canRunPipeline,
   runPipelineLoading,
+  onNavigateView,
   onNavigateSelection,
 }: Props) {
   const [expandedPipelineIds, setExpandedPipelineIds] = useState<Set<string>>(
@@ -138,6 +142,34 @@ export function WorkspaceSidebar({
       </SidebarHeader>
 
       <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>Views</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={currentView === "workspace"}
+                  onClick={() => onNavigateView("workspace")}
+                  type="button"
+                >
+                  <Workflow className="size-4" />
+                  <span>Workspace</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  isActive={currentView === "settings"}
+                  onClick={() => onNavigateView("settings")}
+                  type="button"
+                >
+                  <Settings2 className="size-4" />
+                  <span>Connections</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
         <SidebarGroup>
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarGroupContent>
