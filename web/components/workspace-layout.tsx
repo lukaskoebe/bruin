@@ -1,0 +1,346 @@
+"use client";
+
+import {
+  Outlet,
+  useNavigate,
+  useRouterState,
+} from "@tanstack/react-router";
+import { useAtomValue } from "jotai";
+import {
+  createContext,
+  CSSProperties,
+  Dispatch,
+  SetStateAction,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+
+import { WorkspacePipelineDialogs } from "@/components/workspace-pipeline-dialogs";
+import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { Spinner } from "@/components/ui/spinner";
+import { SidebarProvider } from "@/components/ui/sidebar";
+import { pipelineAtom } from "@/lib/atoms";
+import { WebPipeline, WorkspaceState } from "@/lib/types";
+import { useAssetActions } from "@/hooks/use-asset-actions";
+import { useAssetResults } from "@/hooks/use-asset-results";
+import { usePipelineMaterializationState } from "@/hooks/use-pipeline-materialization-state";
+import { useWorkspaceSelection } from "@/hooks/use-workspace-selection";
+import { useWorkspaceSync } from "@/hooks/use-workspace-sync";
+import { useWorkspaceTheme } from "@/hooks/use-workspace-theme";
+
+type WorkspaceSidebarState = {
+  highlighted?: boolean;
+  highlightStyle?: CSSProperties;
+};
+
+type WorkspaceLayoutContextValue = {
+  activePipeline: string | null;
+  assetActions: ReturnType<typeof useAssetActions>;
+  assetResults: ReturnType<typeof useAssetResults>;
+  monacoTheme: ReturnType<typeof useWorkspaceTheme>["monacoTheme"];
+  navigateSelection: (pipelineId: string, assetId: string | null) => void;
+  pipeline: WebPipeline | null;
+  pipelineMaterialization: ReturnType<typeof usePipelineMaterializationState>;
+  sidebarOnboardingMount: HTMLDivElement | null;
+  selectedAsset: string | null;
+  setSidebarState: Dispatch<SetStateAction<WorkspaceSidebarState>>;
+  theme: ReturnType<typeof useWorkspaceTheme>["theme"];
+  workspace: WorkspaceState;
+};
+
+const WorkspaceLayoutContext =
+  createContext<WorkspaceLayoutContextValue | null>(null);
+
+export function WorkspaceLayout() {
+  const workspace = useWorkspaceSync();
+  const { activePipeline, selectedAsset, navigateSelection } =
+    useWorkspaceSelection();
+  const pipeline = useAtomValue(pipelineAtom);
+  const assetActions = useAssetActions();
+  const assetResults = useAssetResults();
+  const pipelineMaterialization = usePipelineMaterializationState();
+  const { theme, setTheme, monacoTheme } = useWorkspaceTheme();
+  const navigate = useNavigate();
+  const routeState = useRouterState({
+    select: (state) => ({
+      pathname: state.location.pathname,
+      search: state.location.search as { environment?: string },
+    }),
+  });
+  const [deletePipelineDialogOpen, setDeletePipelineDialogOpen] =
+    useState(false);
+  const [deletePipelineLoading, setDeletePipelineLoading] = useState(false);
+  const [pendingPipelinePathSelection, setPendingPipelinePathSelection] =
+    useState<string | null>(null);
+  const [sidebarState, setSidebarState] = useState<WorkspaceSidebarState>({});
+  const [sidebarOnboardingMount, setSidebarOnboardingMount] =
+    useState<HTMLDivElement | null>(null);
+
+  const currentView = useMemo<"workspace" | "environments" | "connections">(
+    () => {
+      if (routeState.pathname === "/settings/connections") {
+        return "connections";
+      }
+
+      if (
+        routeState.pathname === "/settings" ||
+        routeState.pathname === "/settings/" ||
+        routeState.pathname === "/settings/environments"
+      ) {
+        return "environments";
+      }
+
+      return "workspace";
+    },
+    [routeState.pathname]
+  );
+
+  const handleRunPipeline = useCallback(() => {
+    if (!pipeline || assetResults.materializeLoading) {
+      return;
+    }
+
+    void assetResults.runMaterializePipeline(pipeline.id, async () => {
+      await pipelineMaterialization
+        .refreshPipelineMaterialization(pipeline.id)
+        .catch(() => undefined);
+    });
+  }, [assetResults, pipeline, pipelineMaterialization]);
+
+  const handleConfirmDeletePipeline = useCallback(() => {
+    if (!pipeline || deletePipelineLoading) {
+      return;
+    }
+
+    const remainingPipelines =
+      workspace?.pipelines.filter(
+        (currentPipeline) => currentPipeline.id !== pipeline.id
+      ) ?? [];
+    const fallbackPipeline = remainingPipelines[0] ?? null;
+
+    setDeletePipelineLoading(true);
+    void assetActions
+      .runDeletePipeline(pipeline.id)
+      .then((deleted) => {
+        if (!deleted) {
+          return;
+        }
+
+        setDeletePipelineDialogOpen(false);
+        assetResults.clearResultsAfterDelete();
+
+        if (fallbackPipeline) {
+          navigateSelection(
+            fallbackPipeline.id,
+            fallbackPipeline.assets[0]?.id ?? null
+          );
+          return;
+        }
+
+        void navigate({
+          to: "/",
+          search: {},
+          replace: true,
+        });
+      })
+      .finally(() => setDeletePipelineLoading(false));
+  }, [
+    assetActions,
+    assetResults,
+    deletePipelineLoading,
+    navigate,
+    navigateSelection,
+    pipeline,
+    workspace?.pipelines,
+  ]);
+
+  const handleConfirmCreatePipeline = useCallback(async () => {
+    const createdPath = assetActions.createPipelinePath.trim();
+    const created = await assetActions.confirmCreatePipeline();
+    if (created && createdPath) {
+      setPendingPipelinePathSelection(createdPath);
+    }
+    return created;
+  }, [assetActions]);
+
+  useEffect(() => {
+    if (!pendingPipelinePathSelection || !workspace) {
+      return;
+    }
+
+    const normalizedPendingPath = pendingPipelinePathSelection
+      .replaceAll("\\", "/")
+      .trim();
+
+    const matchingPipeline = workspace.pipelines.find((currentPipeline) => {
+      const pipelinePath = currentPipeline.path.replaceAll("\\", "/").trim();
+      return (
+        pipelinePath === normalizedPendingPath ||
+        pipelinePath.endsWith(`/${normalizedPendingPath}`)
+      );
+    });
+
+    if (!matchingPipeline) {
+      return;
+    }
+
+    navigateSelection(
+      matchingPipeline.id,
+      matchingPipeline.assets[0]?.id ?? null
+    );
+    setPendingPipelinePathSelection(null);
+  }, [navigateSelection, pendingPipelinePathSelection, workspace]);
+
+  const contextValue = useMemo<WorkspaceLayoutContextValue | null>(() => {
+    if (!workspace) {
+      return null;
+    }
+
+    return {
+      activePipeline,
+      assetActions,
+      assetResults,
+      monacoTheme,
+      navigateSelection,
+      pipeline,
+      pipelineMaterialization,
+      sidebarOnboardingMount,
+      selectedAsset,
+      setSidebarState,
+      theme,
+      workspace,
+    };
+  }, [
+    activePipeline,
+    assetActions,
+    assetResults,
+    monacoTheme,
+    navigateSelection,
+    pipeline,
+    pipelineMaterialization,
+    sidebarOnboardingMount,
+    selectedAsset,
+    theme,
+    workspace,
+  ]);
+
+  if (!workspace || !contextValue) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-background text-foreground">
+        <div className="flex items-center gap-3 rounded-lg border bg-card px-4 py-3 shadow-sm">
+          <Spinner className="size-4" />
+          <span className="text-sm text-muted-foreground">
+            Loading workspace...
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <WorkspaceLayoutContext.Provider value={contextValue}>
+      <div className="h-screen w-screen overflow-hidden bg-background text-foreground">
+        {assetActions.uiMessage && (
+          <div className="pointer-events-none fixed right-4 top-4 z-50">
+            <div
+              className={`rounded-md border px-3 py-2 text-sm shadow ${
+                assetActions.uiMessage.type === "error"
+                  ? "border-destructive/50 bg-destructive/10 text-destructive"
+                  : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              }`}
+            >
+              {assetActions.uiMessage.text}
+            </div>
+          </div>
+        )}
+
+        <SidebarProvider defaultOpen className="h-full min-h-0 overflow-hidden">
+          <PanelGroup
+            direction="horizontal"
+            className="h-full min-h-0 overflow-hidden"
+          >
+            <Panel defaultSize={18} minSize={14}>
+              <WorkspaceSidebar
+                workspace={workspace}
+                activePipeline={activePipeline}
+                selectedAsset={selectedAsset}
+                highlighted={sidebarState.highlighted}
+                highlightStyle={sidebarState.highlightStyle}
+                theme={theme}
+                onToggleTheme={() =>
+                  setTheme((current) =>
+                    current === "dark" ? "light" : "dark"
+                  )
+                }
+                currentView={currentView}
+                connectionsEnvironment={routeState.search.environment ?? null}
+                onCreatePipeline={assetActions.openCreatePipelineDialog}
+                onRunPipeline={handleRunPipeline}
+                canRunPipeline={Boolean(pipeline)}
+                runPipelineLoading={assetResults.pipelineMaterializeLoading}
+                onDeletePipeline={() => setDeletePipelineDialogOpen(true)}
+                canDeletePipeline={Boolean(pipeline)}
+                deletePipelineLoading={deletePipelineLoading}
+                onOnboardingMountChange={setSidebarOnboardingMount}
+              />
+            </Panel>
+
+            <PanelResizeHandle className="w-px bg-border" />
+
+            <Panel defaultSize={82} minSize={30}>
+              <Outlet />
+            </Panel>
+          </PanelGroup>
+
+          <WorkspacePipelineDialogs
+            deletePipelineDialogOpen={deletePipelineDialogOpen}
+            deletePipelineLoading={deletePipelineLoading}
+            selectedPipelineName={pipeline?.name}
+            canDeletePipeline={Boolean(pipeline)}
+            onDeletePipelineDialogOpenChange={(open) => {
+              if (!deletePipelineLoading) {
+                setDeletePipelineDialogOpen(open);
+              }
+            }}
+            onConfirmDeletePipeline={handleConfirmDeletePipeline}
+            onCancelDeletePipeline={() => setDeletePipelineDialogOpen(false)}
+            createPipelineDialogOpen={assetActions.createPipelineDialogOpen}
+            createPipelineLoading={assetActions.createPipelineLoading}
+            createPipelinePath={assetActions.createPipelinePath}
+            onCreatePipelineDialogOpenChange={(open) => {
+              if (!assetActions.createPipelineLoading) {
+                assetActions.setCreatePipelineDialogOpen(open);
+              }
+            }}
+            onCreatePipelinePathChange={assetActions.setCreatePipelinePath}
+            onConfirmCreatePipeline={handleConfirmCreatePipeline}
+          />
+        </SidebarProvider>
+        <style>{`
+          @keyframes bruin-help-scale {
+            from {
+              transform: scale(1);
+            }
+            to {
+              transform: scale(1.05);
+            }
+          }
+        `}</style>
+      </div>
+    </WorkspaceLayoutContext.Provider>
+  );
+}
+
+export function useWorkspaceLayout() {
+  const context = useContext(WorkspaceLayoutContext);
+
+  if (!context) {
+    throw new Error("useWorkspaceLayout must be used within WorkspaceLayout");
+  }
+
+  return context;
+}

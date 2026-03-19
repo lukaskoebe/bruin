@@ -1,5 +1,6 @@
 "use client";
 
+import { Link } from "@tanstack/react-router";
 import {
   Cable,
   ChevronRight,
@@ -11,7 +12,7 @@ import {
   Trash2,
   Workflow,
 } from "lucide-react";
-import { CSSProperties, ReactNode, useEffect, useState } from "react";
+import { CSSProperties, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -30,11 +31,11 @@ import { WorkspaceState } from "@/lib/types";
 type Props = {
   workspace: WorkspaceState | null;
   currentView: "workspace" | "environments" | "connections";
+  connectionsEnvironment?: string | null;
   activePipeline: string | null;
   selectedAsset: string | null;
   highlighted?: boolean;
   highlightStyle?: CSSProperties;
-  onboardingContent?: ReactNode;
   theme: "light" | "dark";
   onToggleTheme: () => void;
   onCreatePipeline: () => void;
@@ -44,18 +45,17 @@ type Props = {
   onRunPipeline: () => void;
   canRunPipeline: boolean;
   runPipelineLoading: boolean;
-  onNavigateView: (view: "workspace" | "environments" | "connections") => void;
-  onNavigateSelection: (pipelineId: string, assetId: string | null) => void;
+  onOnboardingMountChange?: (element: HTMLDivElement | null) => void;
 };
 
 export function WorkspaceSidebar({
   workspace,
   currentView,
+  connectionsEnvironment,
   activePipeline,
   selectedAsset,
   highlighted = false,
   highlightStyle,
-  onboardingContent,
   theme,
   onToggleTheme,
   onCreatePipeline,
@@ -65,8 +65,7 @@ export function WorkspaceSidebar({
   onRunPipeline,
   canRunPipeline,
   runPipelineLoading,
-  onNavigateView,
-  onNavigateSelection,
+  onOnboardingMountChange,
 }: Props) {
   const [expandedPipelineIds, setExpandedPipelineIds] = useState<Set<string>>(
     () => new Set(activePipeline ? [activePipeline] : [])
@@ -158,32 +157,51 @@ export function WorkspaceSidebar({
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
+                  asChild
                   isActive={currentView === "workspace"}
-                  onClick={() => onNavigateView("workspace")}
-                  type="button"
                 >
-                  <Workflow className="size-4" />
-                  <span>Workspace</span>
+                  <Link
+                    to="/"
+                    search={{
+                      pipeline: activePipeline ?? undefined,
+                      asset: selectedAsset ?? undefined,
+                    }}
+                    activeOptions={{ exact: true, includeSearch: false }}
+                  >
+                    <Workflow className="size-4" />
+                    <span>Workspace</span>
+                  </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton
+                  asChild
                   isActive={currentView === "environments"}
-                  onClick={() => onNavigateView("environments")}
-                  type="button"
                 >
-                  <Settings2 className="size-4" />
-                  <span>Environments</span>
+                  <Link
+                    to="/settings/environments"
+                    activeOptions={{ exact: true, includeSearch: false }}
+                  >
+                    <Settings2 className="size-4" />
+                    <span>Environments</span>
+                  </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
                 <SidebarMenuButton
+                  asChild
                   isActive={currentView === "connections"}
-                  onClick={() => onNavigateView("connections")}
-                  type="button"
                 >
-                  <Cable className="size-4" />
-                  <span>Connections</span>
+                  <Link
+                    to="/settings/connections"
+                    search={{
+                      environment: connectionsEnvironment ?? undefined,
+                    }}
+                    activeOptions={{ exact: true, includeSearch: false }}
+                  >
+                    <Cable className="size-4" />
+                    <span>Connections</span>
+                  </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
@@ -200,10 +218,15 @@ export function WorkspaceSidebar({
 
                 return (
                   <SidebarMenuItem key={item.id}>
-                    <SidebarMenuButton
-                      isActive={isActive}
-                      onClick={() => {
-                        if (isActive) {
+                    <SidebarMenuButton asChild isActive={isActive}>
+                      <Link
+                        to="/"
+                        search={{
+                          pipeline: item.id,
+                          asset: item.assets[0]?.id ?? undefined,
+                        }}
+                        activeOptions={{ exact: true, includeSearch: false }}
+                        onClick={() => {
                           setExpandedPipelineIds((previous) => {
                             const next = new Set(previous);
                             if (next.has(item.id)) {
@@ -213,27 +236,29 @@ export function WorkspaceSidebar({
                             }
                             return next;
                           });
-                          return;
-                        }
+                        }}
+                      >
+                        <ChevronRight
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
 
-                        setExpandedPipelineIds((previous) => {
-                          const next = new Set(previous);
-                          next.add(item.id);
-                          return next;
-                        });
-                        onNavigateSelection(
-                          item.id,
-                          item.assets[0]?.id ?? null
-                        );
-                      }}
-                      type="button"
-                    >
-                      <ChevronRight
-                        className={`size-3 transition-transform ${
-                          isExpanded ? "rotate-90" : ""
-                        }`}
-                      />
-                      <span>{item.name}</span>
+                            setExpandedPipelineIds((previous) => {
+                              const next = new Set(previous);
+                              if (next.has(item.id)) {
+                                next.delete(item.id);
+                              } else {
+                                next.add(item.id);
+                              }
+                              return next;
+                            });
+                          }}
+                          className={`size-3 transition-transform ${
+                            isExpanded ? "rotate-90" : ""
+                          }`}
+                        />
+                        <span>{item.name}</span>
+                      </Link>
                     </SidebarMenuButton>
 
                     {isExpanded && (
@@ -241,14 +266,20 @@ export function WorkspaceSidebar({
                         {item.assets.map((asset) => (
                           <SidebarMenuItem key={asset.id}>
                             <SidebarMenuButton
+                              asChild
                               isActive={asset.id === selectedAsset}
-                              onClick={() =>
-                                onNavigateSelection(item.id, asset.id)
-                              }
                               size="sm"
-                              type="button"
                             >
-                              <span>{asset.name}</span>
+                              <Link
+                                to="/"
+                                search={{ pipeline: item.id, asset: asset.id }}
+                                activeOptions={{
+                                  exact: true,
+                                  includeSearch: false,
+                                }}
+                              >
+                                <span>{asset.name}</span>
+                              </Link>
                             </SidebarMenuButton>
                           </SidebarMenuItem>
                         ))}
@@ -261,10 +292,12 @@ export function WorkspaceSidebar({
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {onboardingContent && (
+        {onOnboardingMountChange && (
           <SidebarGroup>
             <SidebarGroupLabel>Onboarding</SidebarGroupLabel>
-            <SidebarGroupContent>{onboardingContent}</SidebarGroupContent>
+            <SidebarGroupContent>
+              <div ref={onOnboardingMountChange} />
+            </SidebarGroupContent>
           </SidebarGroup>
         )}
       </SidebarContent>

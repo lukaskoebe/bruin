@@ -183,6 +183,9 @@ Do not introduce frontend assumptions that require a separate server runtime.
 ### Do
 
 - Prefer updating existing hooks/components over introducing parallel state systems.
+- Prefer composition over view-switch components when distinct concerns grow apart.
+- Use TanStack Router layout routes to share settings/page structure instead of folding multiple editors into one component.
+- Move shared stateful behavior into custom hooks and keep form panes focused on a single responsibility.
 - Keep writes debounced when editing asset content.
 - Let SSE reconcile the final workspace state.
 - Preserve current React Flow interactions and selection behavior.

@@ -6,6 +6,14 @@ import { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { WorkspaceConfigEnvironment } from "@/lib/types";
 
 type WorkspaceConfigContentProps = {
@@ -115,13 +123,16 @@ export function WorkspaceConfigContent({
             emptyState="No environments are configured yet."
           >
             {environments.map((environment) => (
-              <tr
+              <TableRow
                 key={environment.name}
-                className={rowClassName(
+                data-state={
                   environment.name === selectedEnvironmentName
-                )}
+                    ? "selected"
+                    : undefined
+                }
+                className={rowClassName()}
               >
-                <td className="px-4 py-3 font-medium">
+                <TableCell className="px-4 py-3 font-medium">
                   <div className="flex items-center gap-2">
                     {environment.name}
                     {environment.name === defaultEnvironment && (
@@ -130,14 +141,14 @@ export function WorkspaceConfigContent({
                       </span>
                     )}
                   </div>
-                </td>
-                <td className="px-4 py-3 text-muted-foreground">
+                </TableCell>
+                <TableCell className="px-4 py-3 text-muted-foreground">
                   {environment.schema_prefix || "none"}
-                </td>
-                <td className="px-4 py-3 text-muted-foreground">
+                </TableCell>
+                <TableCell className="px-4 py-3 text-muted-foreground">
                   {environment.connections.length}
-                </td>
-                <td className="px-4 py-3">
+                </TableCell>
+                <TableCell className="px-4 py-3">
                   <div className="flex flex-wrap items-center gap-3">
                     <Button type="button" variant="outline" onClick={() => onSelectEnvironment(environment.name)}>
                       <PencilLine className="mr-2 size-4" />
@@ -152,8 +163,8 @@ export function WorkspaceConfigContent({
                       </Link>
                     </Button>
                   </div>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
           </DataTableCard>
         ) : activeEnvironment ? (
@@ -163,26 +174,29 @@ export function WorkspaceConfigContent({
             emptyState={`No connections are configured for ${activeEnvironment.name}.`}
           >
             {activeEnvironment.connections.map((connection) => (
-              <tr
+              <TableRow
                 key={connection.name}
-                className={rowClassName(
+                data-state={
                   connection.name === selectedConnectionName
-                )}
+                    ? "selected"
+                    : undefined
+                }
+                className={rowClassName()}
               >
-                <td className="px-4 py-3 font-medium">{connection.name}</td>
-                <td className="px-4 py-3 text-muted-foreground">
+                <TableCell className="px-4 py-3 font-medium">{connection.name}</TableCell>
+                <TableCell className="px-4 py-3 text-muted-foreground">
                   {connection.type}
-                </td>
-                <td className="px-4 py-3 text-muted-foreground">
+                </TableCell>
+                <TableCell className="px-4 py-3 text-muted-foreground">
                   {activeEnvironment.name}
-                </td>
-                <td className="px-4 py-3">
+                </TableCell>
+                <TableCell className="px-4 py-3">
                   <Button type="button" variant="outline" onClick={() => onSelectConnection(connection.name)}>
                     <PencilLine className="mr-2 size-4" />
                     Edit
                   </Button>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
           </DataTableCard>
         ) : (
@@ -218,33 +232,33 @@ function DataTableCard({
   return (
     <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border bg-card shadow-sm">
       <div className="h-full overflow-auto">
-        <table className="w-full min-w-[720px] border-collapse text-sm">
-          <thead className="sticky top-0 z-10 bg-card/95 backdrop-blur">
-            <tr className="border-b">
+        <Table className="min-w-180">
+          <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur [&_tr]:border-b">
+            <TableRow className="hover:bg-transparent">
               {columns.map((column) => (
-                <th
+                <TableHead
                   key={column}
                   className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground"
                 >
                   {column}
-                </th>
+                </TableHead>
               ))}
-            </tr>
-          </thead>
-          <tbody>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {loading ? (
               <LoadingRows columnCount={columns.length} />
             ) : rows.length > 0 ? (
               children
             ) : (
-              <tr>
-                <td className="px-4 py-8 text-muted-foreground" colSpan={columns.length}>
+              <TableRow className="hover:bg-transparent">
+                <TableCell className="px-4 py-8 text-muted-foreground" colSpan={columns.length}>
                   {emptyState}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   );
@@ -254,20 +268,20 @@ function LoadingRows({ columnCount }: { columnCount: number }) {
   return (
     <>
       {Array.from({ length: 5 }, (_, rowIndex) => (
-        <tr key={rowIndex} className="border-b last:border-b-0">
+        <TableRow key={rowIndex} className="hover:bg-transparent">
           {Array.from({ length: columnCount }, (_, columnIndex) => (
-            <td key={columnIndex} className="px-4 py-3">
-              <Skeleton className="h-5 w-full max-w-[12rem]" />
-            </td>
+            <TableCell key={columnIndex} className="px-4 py-3">
+              <Skeleton className="h-5 w-full max-w-48" />
+            </TableCell>
           ))}
-        </tr>
+        </TableRow>
       ))}
     </>
   );
 }
 
-function rowClassName(isSelected: boolean) {
-  return isSelected ? "border-b bg-primary/5 last:border-b-0" : "border-b last:border-b-0";
+function rowClassName() {
+  return "[&[data-state=selected]]:bg-primary/5";
 }
 
 function EmptyState({ text }: { text: string }) {

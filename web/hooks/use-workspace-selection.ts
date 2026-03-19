@@ -1,6 +1,7 @@
 "use client";
 
-import { useAtom, useAtomValue } from "jotai";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
+import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect } from "react";
 
 import {
@@ -8,7 +9,6 @@ import {
   resolvedActivePipelineAtom,
   resolvedSelectedAssetAtom,
   selectedAssetAtom,
-  workspaceAtom,
 } from "@/lib/atoms";
 
 export function useWorkspaceSelection(): {
@@ -16,85 +16,76 @@ export function useWorkspaceSelection(): {
   selectedAsset: string | null;
   navigateSelection: (pipelineId: string, assetId: string | null) => void;
 } {
-  const workspace = useAtomValue(workspaceAtom);
-  const [requestedPipeline, setRequestedPipeline] = useAtom(activePipelineAtom);
-  const [requestedAsset, setRequestedAsset] = useAtom(selectedAssetAtom);
+  const navigate = useNavigate();
+  const setRequestedPipeline = useSetAtom(activePipelineAtom);
+  const setRequestedAsset = useSetAtom(selectedAssetAtom);
+  const requestedPipeline = useAtomValue(activePipelineAtom);
+  const requestedAsset = useAtomValue(selectedAssetAtom);
   const activePipeline = useAtomValue(resolvedActivePipelineAtom);
   const selectedAsset = useAtomValue(resolvedSelectedAssetAtom);
+  const locationState = useRouterState({
+    select: (state) => ({
+      pathname: state.location.pathname,
+      search: state.location.search as {
+        pipeline?: string;
+        asset?: string;
+      },
+    }),
+  });
 
   useEffect(() => {
-    const readSelectionFromLocation = () => {
-      const params = new URLSearchParams(window.location.search);
-      setRequestedPipeline(params.get("pipeline"));
-      setRequestedAsset(params.get("asset"));
-    };
-
-    readSelectionFromLocation();
-    window.addEventListener("popstate", readSelectionFromLocation);
-    return () => {
-      window.removeEventListener("popstate", readSelectionFromLocation);
-    };
-  }, [setRequestedAsset, setRequestedPipeline]);
-
-  const navigateSelection = useCallback(
-    (pipelineId: string, assetId: string | null) => {
-      const params = new URLSearchParams(window.location.search);
-      params.set("pipeline", pipelineId);
-      if (assetId) {
-        params.set("asset", assetId);
-      } else {
-        params.delete("asset");
-      }
-
-      const query = params.toString();
-      const nextURL = query
-        ? `${window.location.pathname}?${query}`
-        : window.location.pathname;
-      window.history.replaceState(window.history.state, "", nextURL);
-
-      setRequestedPipeline(params.get("pipeline"));
-      setRequestedAsset(params.get("asset"));
-    },
-    [setRequestedAsset, setRequestedPipeline]
-  );
-
-  useEffect(() => {
-    if (!workspace || workspace.pipelines.length === 0) {
+    if (locationState.pathname !== "/") {
       return;
     }
 
-    if (requestedPipeline !== activePipeline || requestedAsset !== selectedAsset) {
-      const params = new URLSearchParams(window.location.search);
-      if (activePipeline) {
-        params.set("pipeline", activePipeline);
-      } else {
-        params.delete("pipeline");
-      }
+    const nextPipeline = locationState.search.pipeline ?? null;
+    const nextAsset = locationState.search.asset ?? null;
 
-      if (selectedAsset) {
-        params.set("asset", selectedAsset);
-      } else {
-        params.delete("asset");
-      }
+    if (requestedPipeline !== nextPipeline) {
+      setRequestedPipeline(nextPipeline);
+    }
 
-      const query = params.toString();
-      const nextURL = query
-        ? `${window.location.pathname}?${query}`
-        : window.location.pathname;
-      window.history.replaceState(window.history.state, "", nextURL);
-
-      setRequestedPipeline(activePipeline);
-      setRequestedAsset(selectedAsset);
+    if (requestedAsset !== nextAsset) {
+      setRequestedAsset(nextAsset);
     }
   }, [
-    activePipeline,
+    locationState.pathname,
+    locationState.search.asset,
+    locationState.search.pipeline,
     requestedAsset,
     requestedPipeline,
-    selectedAsset,
     setRequestedAsset,
     setRequestedPipeline,
-    workspace,
   ]);
+
+  const navigateSelection = useCallback(
+    (pipelineId: string, assetId: string | null) => {
+      const nextAsset = assetId ?? undefined;
+
+      if (
+        locationState.pathname === "/" &&
+        locationState.search.pipeline === pipelineId &&
+        locationState.search.asset === nextAsset
+      ) {
+        return;
+      }
+
+      void navigate({
+        to: "/",
+        search: {
+          pipeline: pipelineId,
+          asset: nextAsset,
+        },
+        replace: true,
+      });
+    },
+    [
+      locationState.pathname,
+      locationState.search.asset,
+      locationState.search.pipeline,
+      navigate,
+    ]
+  );
 
   return {
     activePipeline,
