@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { defineConfig, type Plugin } from "rolldown-vite";
+import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 
 const require = createRequire(import.meta.url);
@@ -34,7 +35,7 @@ function prepareMonacoAssetsPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), prepareMonacoAssetsPlugin()],
+  plugins: [TanStackRouterVite({ target: "react" }), react(), prepareMonacoAssetsPlugin()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname),
