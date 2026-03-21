@@ -42,6 +42,7 @@ import {
 import { buildCreateAssetInput } from "@/lib/workspace-shell-helpers";
 import { useAssetCanvasInteractions } from "@/hooks/use-asset-canvas-interactions";
 import { useAssetPreviews } from "@/hooks/use-asset-previews";
+import { getTablePreviewLimit } from "@/lib/asset-visualization";
 import { useDebouncedAssetSave } from "@/hooks/use-debounced-asset-save";
 import { useEditorActions } from "@/hooks/use-editor-actions";
 import { useGraphViewportFocus } from "@/hooks/use-graph-viewport-focus";
@@ -99,6 +100,7 @@ export function WorkspacePage() {
     canLoadMoreByAssetId,
     loadMorePreviewRows,
     clearPreviewForAsset,
+    getRowsForAsset,
   } = useAssetPreviews(visualAssets);
 
   const areVisualPreviewsReady = useMemo(() => {
@@ -116,10 +118,9 @@ export function WorkspacePage() {
       return [] as Record<string, unknown>[];
     }
 
-    return (
-      inspectByAssetId[asset.id]?.rows ?? assetResults.inspectResult?.rows ?? []
-    );
-  }, [asset, assetResults.inspectResult, inspectByAssetId]);
+    const limit = getTablePreviewLimit(asset.meta, 25);
+    return getRowsForAsset(asset.id, limit) ?? assetResults.inspectResult?.rows ?? [];
+  }, [asset, assetResults.inspectResult, getRowsForAsset]);
 
   const graph = useMemo(
     () =>

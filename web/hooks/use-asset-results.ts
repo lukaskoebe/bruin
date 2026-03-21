@@ -3,18 +3,14 @@
 import AnsiToHtml from "ansi-to-html";
 import { useAtom, useSetAtom } from "jotai";
 import { useEffect, useMemo, useState } from "react";
-import useSWRMutation from "swr/mutation";
 
 import {
   assetResultsAtom,
   changedAssetIdsAtom,
   registerAssetColumnsAtom,
 } from "@/lib/atoms";
-import {
-  inspectAsset,
-  materializeAssetStream,
-  materializePipelineStream,
-} from "@/lib/api";
+import { useAssetInspect } from "@/hooks/use-asset-inspect";
+import { materializeAssetStream, materializePipelineStream } from "@/lib/api";
 import { AssetInspectResponse } from "@/lib/types";
 
 export function useAssetResults() {
@@ -24,6 +20,8 @@ export function useAssetResults() {
   const [pipelineMaterializeLoading, setPipelineMaterializeLoading] =
     useState(false);
   const [assetMaterializeLoading, setAssetMaterializeLoading] = useState(false);
+  const [inspectLoading, setInspectLoading] = useState(false);
+  const { inspectAssetById } = useAssetInspect();
   const {
     inspectResult,
     materializeOutput,
@@ -31,13 +29,6 @@ export function useAssetResults() {
     materializeError,
     resultTab,
   } = results;
-
-  const { trigger: triggerInspect, isMutating: inspectLoading } =
-    useSWRMutation(
-      "asset.inspect",
-      async (_key: string, { arg }: { arg: string }) =>
-        inspectAsset(arg, { limit: 200 })
-    );
 
   useEffect(() => {
     setResults((previous) =>
@@ -97,8 +88,9 @@ export function useAssetResults() {
   }, [hasInspectData, hasMaterializeData, resultTab]);
 
   const runInspectForAsset = async (assetId: string) => {
+    setInspectLoading(true);
     try {
-      const result = await triggerInspect(assetId);
+      const result = await inspectAssetById(assetId, { force: true, limit: 200 });
       registerAssetColumns({
         assetId,
         method: "asset-inspect",
@@ -131,6 +123,8 @@ export function useAssetResults() {
       }));
       setResultTab("inspect");
       return failure;
+    } finally {
+      setInspectLoading(false);
     }
   };
 
@@ -164,8 +158,6 @@ export function useAssetResults() {
         materializeError: result.error ?? "",
       }));
 
-      // Mark the materialized asset (and its downstreams) as changed
-      // so preview inspections are refreshed.
       const affectedIds = result.changed_asset_ids;
       if (affectedIds && affectedIds.length > 0) {
         setChangedAssetIds((prev: Set<string>) => {
@@ -176,7 +168,6 @@ export function useAssetResults() {
           return next;
         });
       } else {
-        // Fallback: at minimum mark the materialized asset itself.
         setChangedAssetIds((prev: Set<string>) => new Set([...prev, assetId]));
       }
 
