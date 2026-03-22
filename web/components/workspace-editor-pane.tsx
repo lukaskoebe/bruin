@@ -72,6 +72,7 @@ type WorkspaceEditorPaneProps = {
     visualizationMeta: Record<string, string>
   ) => void;
   onGoToAsset?: (pipelineId: string, assetId: string) => void;
+  mobile?: boolean;
 };
 
 const MATERIALIZATION_NONE_VALUE = "__none__";
@@ -101,6 +102,7 @@ export function WorkspaceEditorPane({
   onMaterializationTypeChange,
   onSaveVisualizationSettings,
   onGoToAsset,
+  mobile = false,
 }: WorkspaceEditorPaneProps) {
   const [monacoInstance, setMonacoInstance] = useState<Monaco | null>(null);
   const [editorInstance, setEditorInstance] =
@@ -244,95 +246,92 @@ export function WorkspaceEditorPane({
     [assetColumns]
   );
 
-  return (
-    <Panel defaultSize={32} minSize={24}>
-      <div className="flex h-full min-h-0 min-w-0 flex-col">
-        <div className="border-b px-4 py-3">
-          <div className="mb-2 text-sm font-semibold">Asset Editor</div>
-          <div className="text-xs opacity-70">
-            {asset?.path ?? "No asset selected"}
-          </div>
+  const content = (
+    <div className="flex h-full min-h-0 min-w-0 flex-col">
+      <div className="border-b px-4 py-3">
+        <div className="mb-2 text-sm font-semibold">Asset Editor</div>
+        <div className="text-xs opacity-70">
+          {asset?.path ?? "No asset selected"}
+        </div>
+        <div
+          className={`mt-2 flex flex-wrap gap-2 ${
+            helpMode && actionHighlighted
+              ? "rounded-md ring-2 ring-primary/70 ring-offset-2"
+              : ""
+          }`}
+          style={helpMode && actionHighlighted ? highlightStyle : undefined}
+        >
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!asset || materializeLoading}
+            onClick={onMaterializeSelectedAsset}
+            type="button"
+          >
+            <Hammer className="mr-1 inline size-3" />
+            {materializeLoading ? "Running..." : "Materialize"}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!asset || inspectLoading}
+            onClick={onInspectSelectedAsset}
+            type="button"
+          >
+            <Eye className="mr-1 inline size-3" />
+            {inspectLoading ? "Loading..." : "Inspect Data"}
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={!asset || deleteLoading}
+            onClick={onOpenDeleteDialog}
+            type="button"
+          >
+            <Trash2 className="mr-1 inline size-3" />
+            Delete Asset
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div
-            className={`mt-2 flex gap-2 ${
-              helpMode && actionHighlighted
-                ? "rounded-md ring-2 ring-primary/70 ring-offset-2"
+            className={`${mobile ? "min-h-[240px]" : "h-[55%]"} border-b ${
+              helpMode && editorHighlighted
+                ? "ring-2 ring-primary/70 ring-inset"
                 : ""
             }`}
-            style={helpMode && actionHighlighted ? highlightStyle : undefined}
+            style={helpMode && editorHighlighted ? highlightStyle : undefined}
           >
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!asset || materializeLoading}
-              onClick={onMaterializeSelectedAsset}
-              type="button"
-            >
-              <Hammer className="mr-1 inline size-3" />
-              {materializeLoading ? "Running..." : "Materialize"}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!asset || inspectLoading}
-              onClick={onInspectSelectedAsset}
-              type="button"
-            >
-              <Eye className="mr-1 inline size-3" />
-              {inspectLoading ? "Loading..." : "Inspect Data"}
-            </Button>
-            <Button
-              size="sm"
-              variant="destructive"
-              disabled={!asset || deleteLoading}
-              onClick={onOpenDeleteDialog}
-              type="button"
-            >
-              <Trash2 className="mr-1 inline size-3" />
-              Delete Asset
-            </Button>
+            <Editor
+              language={asset ? editorLanguageForAssetPath(asset.path) : "sql"}
+              path={editorModelPath}
+              saveViewState
+              keepCurrentModel
+              value={editorValue}
+              theme={monacoTheme}
+              onChange={onEditorChange}
+              onMount={handleEditorMount}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 13,
+                quickSuggestions: true,
+                suggestOnTriggerCharacters: true,
+              }}
+            />
           </div>
-        </div>
 
-        <div className="flex min-h-0 min-w-0 flex-1">
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div
-              className={`h-[55%] border-b ${
-                helpMode && editorHighlighted
-                  ? "ring-2 ring-primary/70 ring-inset"
-                  : ""
-              }`}
-              style={helpMode && editorHighlighted ? highlightStyle : undefined}
+          <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-4">
+            <Tabs
+              className="flex min-h-0 min-w-0 flex-1 flex-col"
+              onValueChange={(value) =>
+                onEditorTabChange(
+                  value as "configuration" | "checks" | "visualization"
+                )
+              }
+              value={assetEditorTab}
             >
-              <Editor
-                language={
-                  asset ? editorLanguageForAssetPath(asset.path) : "sql"
-                }
-                path={editorModelPath}
-                saveViewState
-                keepCurrentModel
-                value={editorValue}
-                theme={monacoTheme}
-                onChange={onEditorChange}
-                onMount={handleEditorMount}
-                options={{
-                  minimap: { enabled: false },
-                  fontSize: 13,
-                  quickSuggestions: true,
-                  suggestOnTriggerCharacters: true,
-                }}
-              />
-            </div>
-
-            <div className="flex min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-4">
-              <Tabs
-                className="flex min-h-0 min-w-0 flex-1 flex-col"
-                onValueChange={(value) =>
-                  onEditorTabChange(
-                    value as "configuration" | "checks" | "visualization"
-                  )
-                }
-                value={assetEditorTab}
-              >
                 <TabsList
                   className={`grid w-full min-w-0 grid-cols-2 ${
                     helpMode && visualizationHighlighted
@@ -534,9 +533,14 @@ export function WorkspaceEditorPane({
             </div>
           </div>
         </div>
-      </div>
-    </Panel>
+    </div>
   );
+
+  if (mobile) {
+    return content;
+  }
+
+  return <Panel defaultSize={32} minSize={24}>{content}</Panel>;
 }
 
 function editorLanguageForAssetPath(path: string): "sql" | "python" | "yaml" {

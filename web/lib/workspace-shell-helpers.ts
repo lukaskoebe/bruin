@@ -21,6 +21,10 @@ export function buildSuggestedAssetName(
   return `${prefix}${index}`;
 }
 
+export function normalizeAssetName(input: string): string {
+  return input.trim().toLowerCase();
+}
+
 export function buildCreateAssetInput(
   name: string,
   kind: NewAssetKind

@@ -1,7 +1,7 @@
 "use client";
 
 import { CSSProperties, MutableRefObject } from "react";
-import { RefreshCcw } from "lucide-react";
+import { FilePenLine, RefreshCcw } from "lucide-react";
 import {
   Background,
   Controls,
@@ -44,6 +44,9 @@ type WorkspaceCanvasPaneProps = {
   onPaneContextMenu: Parameters<typeof ReactFlow>[0]["onPaneContextMenu"];
   onNodeClick: Parameters<typeof ReactFlow>[0]["onNodeClick"];
   onRecomputeGraph: () => void;
+  showEditorButton?: boolean;
+  isEditorButtonDisabled?: boolean;
+  onOpenEditor?: () => void;
 };
 
 export function WorkspaceCanvasPane({
@@ -73,6 +76,9 @@ export function WorkspaceCanvasPane({
   onPaneContextMenu,
   onNodeClick,
   onRecomputeGraph,
+  showEditorButton = false,
+  isEditorButtonDisabled = false,
+  onOpenEditor,
 }: WorkspaceCanvasPaneProps) {
   return (
     <Panel
@@ -84,7 +90,19 @@ export function WorkspaceCanvasPane({
       <PanelGroup direction="vertical">
         <Panel defaultSize={hasResultData ? 72 : 100} minSize={45}>
           <div className="relative h-full" ref={canvasContainerRef}>
-            <div className="absolute right-3 top-3 z-10">
+            <div className="absolute right-3 top-3 z-10 flex gap-2">
+              {showEditorButton ? (
+                <Button
+                  onClick={onOpenEditor}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                  disabled={isEditorButtonDisabled}
+                >
+                  <FilePenLine className="mr-2 size-3.5" />
+                  Edit asset
+                </Button>
+              ) : null}
               <Button
                 onClick={onRecomputeGraph}
                 size="sm"

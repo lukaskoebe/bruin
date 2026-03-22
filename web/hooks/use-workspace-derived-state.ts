@@ -5,7 +5,10 @@ import { useMemo, useRef } from "react";
 import { NewAssetKind } from "@/components/new-asset-node";
 import { getAssetViewMode } from "@/lib/asset-visualization";
 import { WebAsset, WebPipeline, WorkspaceState } from "@/lib/types";
-import { buildSuggestedAssetName } from "@/lib/workspace-shell-helpers";
+import {
+  buildSuggestedAssetName,
+  normalizeAssetName,
+} from "@/lib/workspace-shell-helpers";
 
 type UseWorkspaceDerivedStateInput = {
   workspace: WorkspaceState | null;
@@ -24,7 +27,7 @@ export function useWorkspaceDerivedState({
     const names = new Set<string>();
     for (const item of workspace?.pipelines ?? []) {
       for (const pipelineAsset of item.assets ?? []) {
-        names.add(pipelineAsset.name.trim().toLowerCase());
+        names.add(normalizeAssetName(pipelineAsset.name));
       }
     }
     return names;

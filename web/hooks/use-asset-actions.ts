@@ -1,5 +1,6 @@
 "use client";
 
+import { useAtomValue } from "jotai";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -9,6 +10,8 @@ import {
   deletePipeline,
   updateAsset,
 } from "@/lib/api";
+import { workspaceAtom } from "@/lib/atoms";
+import { normalizeAssetName } from "@/lib/workspace-shell-helpers";
 
 export type UIMessage = {
   type: "success" | "error";
@@ -31,6 +34,7 @@ type UpdateAssetInput = {
 };
 
 export function useAssetActions(defaultPipelinePath = "my-pipeline") {
+  const workspace = useAtomValue(workspaceAtom);
   const [createPipelineDialogOpen, setCreatePipelineDialogOpen] =
     useState(false);
   const [createPipelinePath, setCreatePipelinePath] =
@@ -58,6 +62,30 @@ export function useAssetActions(defaultPipelinePath = "my-pipeline") {
       }
     };
   }, []);
+
+  const getConflictingAssetName = useCallback(
+    (name: string, options?: { excludeAssetId?: string }) => {
+      const normalizedName = normalizeAssetName(name);
+      if (!normalizedName) {
+        return null;
+      }
+
+      for (const pipeline of workspace?.pipelines ?? []) {
+        for (const asset of pipeline.assets ?? []) {
+          if (asset.id === options?.excludeAssetId) {
+            continue;
+          }
+
+          if (normalizeAssetName(asset.name) === normalizedName) {
+            return asset.name;
+          }
+        }
+      }
+
+      return null;
+    },
+    [workspace?.pipelines]
+  );
 
   const openCreatePipelineDialog = useCallback(() => {
     if (createPipelineLoading) {
@@ -93,14 +121,29 @@ export function useAssetActions(defaultPipelinePath = "my-pipeline") {
 
   const runCreateAsset = useCallback(
     async (pipelineId: string, input: CreateAssetInput) => {
+      const trimmedName = input.name?.trim();
+      if (trimmedName) {
+        const conflictingAssetName = getConflictingAssetName(trimmedName);
+        if (conflictingAssetName) {
+          pushUIMessage(
+            "error",
+            `Asset \"${trimmedName}\" already exists. Choose a different name.`
+          );
+          return null;
+        }
+      }
+
       try {
-        return await createAsset(pipelineId, input);
+        return await createAsset(pipelineId, {
+          ...input,
+          name: trimmedName ?? input.name,
+        });
       } catch (error) {
         pushUIMessage("error", `Failed to create asset: ${String(error)}`);
         return null;
       }
     },
-    [pushUIMessage]
+    [getConflictingAssetName, pushUIMessage]
   );
 
   const runDeleteAsset = useCallback(
@@ -131,15 +174,32 @@ export function useAssetActions(defaultPipelinePath = "my-pipeline") {
 
   const runUpdateAsset = useCallback(
     async (pipelineId: string, assetId: string, input: UpdateAssetInput) => {
+      const trimmedName = input.name?.trim();
+      if (trimmedName) {
+        const conflictingAssetName = getConflictingAssetName(trimmedName, {
+          excludeAssetId: assetId,
+        });
+        if (conflictingAssetName) {
+          pushUIMessage(
+            "error",
+            `Asset \"${trimmedName}\" already exists. Choose a different name.`
+          );
+          return false;
+        }
+      }
+
       try {
-        await updateAsset(pipelineId, assetId, input);
+        await updateAsset(pipelineId, assetId, {
+          ...input,
+          name: trimmedName ?? input.name,
+        });
         return true;
       } catch (error) {
         pushUIMessage("error", `Failed to update asset: ${String(error)}`);
         return false;
       }
     },
-    [pushUIMessage]
+    [getConflictingAssetName, pushUIMessage]
   );
 
   return {

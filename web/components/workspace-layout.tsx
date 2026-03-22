@@ -17,12 +17,15 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 
 import { WorkspacePipelineDialogs } from "@/components/workspace-pipeline-dialogs";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { Spinner } from "@/components/ui/spinner";
-import { SidebarProvider } from "@/components/ui/sidebar";
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 import { pipelineAtom } from "@/lib/atoms";
 import { WebPipeline, WorkspaceState } from "@/lib/types";
 import { useAssetActions } from "@/hooks/use-asset-actions";
@@ -98,6 +101,18 @@ export function WorkspaceLayout() {
     },
     [routeState.pathname]
   );
+
+  const currentViewLabel = useMemo(() => {
+    if (currentView === "connections") {
+      return "Connections";
+    }
+
+    if (currentView === "environments") {
+      return "Environments";
+    }
+
+    return pipeline?.name ?? "Workspace";
+  }, [currentView, pipeline?.name]);
 
   const handleRunPipeline = useCallback(() => {
     if (!pipeline || assetResults.materializeLoading) {
@@ -259,42 +274,47 @@ export function WorkspaceLayout() {
         )}
 
         <SidebarProvider defaultOpen className="h-full min-h-0 overflow-hidden">
-          <PanelGroup
-            direction="horizontal"
-            className="h-full min-h-0 overflow-hidden"
-          >
-            <Panel defaultSize={18} minSize={14}>
-              <WorkspaceSidebar
-                workspace={workspace}
-                activePipeline={activePipeline}
-                selectedAsset={selectedAsset}
-                highlighted={sidebarState.highlighted}
-                highlightStyle={sidebarState.highlightStyle}
-                theme={theme}
-                onToggleTheme={() =>
-                  setTheme((current) =>
-                    current === "dark" ? "light" : "dark"
-                  )
-                }
-                currentView={currentView}
-                connectionsEnvironment={routeState.search.environment ?? null}
-                onCreatePipeline={assetActions.openCreatePipelineDialog}
-                onRunPipeline={handleRunPipeline}
-                canRunPipeline={Boolean(pipeline)}
-                runPipelineLoading={assetResults.pipelineMaterializeLoading}
-                onDeletePipeline={() => setDeletePipelineDialogOpen(true)}
-                canDeletePipeline={Boolean(pipeline)}
-                deletePipelineLoading={deletePipelineLoading}
-                onOnboardingMountChange={setSidebarOnboardingMount}
-              />
-            </Panel>
+          <WorkspaceSidebar
+            workspace={workspace}
+            activePipeline={activePipeline}
+            selectedAsset={selectedAsset}
+            highlighted={sidebarState.highlighted}
+            highlightStyle={sidebarState.highlightStyle}
+            theme={theme}
+            onToggleTheme={() =>
+              setTheme((current) => (current === "dark" ? "light" : "dark"))
+            }
+            currentView={currentView}
+            connectionsEnvironment={routeState.search.environment ?? null}
+            onCreatePipeline={assetActions.openCreatePipelineDialog}
+            onRunPipeline={handleRunPipeline}
+            canRunPipeline={Boolean(pipeline)}
+            runPipelineLoading={assetResults.pipelineMaterializeLoading}
+            onDeletePipeline={() => setDeletePipelineDialogOpen(true)}
+            canDeletePipeline={Boolean(pipeline)}
+            deletePipelineLoading={deletePipelineLoading}
+            onOnboardingMountChange={setSidebarOnboardingMount}
+          />
 
-            <PanelResizeHandle className="w-px bg-border" />
+          <SidebarInset className="min-w-0 min-h-0">
+            <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-background/95 px-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+              <SidebarTrigger className="shrink-0" />
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold">
+                  {currentViewLabel}
+                </div>
+                <div className="truncate text-xs text-muted-foreground">
+                  {currentView === "workspace"
+                    ? `${workspace.pipelines.length} pipeline${workspace.pipelines.length === 1 ? "" : "s"}`
+                    : "Project settings"}
+                </div>
+              </div>
+            </header>
 
-            <Panel defaultSize={82} minSize={30}>
+            <div className="min-h-0 flex-1 overflow-hidden">
               <Outlet />
-            </Panel>
-          </PanelGroup>
+            </div>
+          </SidebarInset>
 
           <WorkspacePipelineDialogs
             deletePipelineDialogOpen={deletePipelineDialogOpen}

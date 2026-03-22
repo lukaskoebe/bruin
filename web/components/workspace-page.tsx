@@ -29,12 +29,20 @@ import {
 } from "@/components/workspace-editor-pane";
 import { WorkspaceCanvasPane } from "@/components/workspace-canvas-pane";
 import { WorkspaceOnboardingPanel } from "@/components/workspace-onboarding-panel";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import {
   assetEditorTabAtom,
   editorValueAtom,
   enrichedSelectedAssetAtom,
 } from "@/lib/atoms";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
   buildFlowFromPipeline,
   computeGraphLayoutPositions,
@@ -79,6 +87,8 @@ export function WorkspacePage() {
   const [helpMode, setHelpMode] = useState(false);
   const [recomputeVersion, setRecomputeVersion] = useState(0);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
+  const isMobile = useIsMobile();
+  const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
 
   const { scheduleSave, flushAssetSave } = useDebouncedAssetSave(500);
   const nodeTypes = useMemo<NodeTypes>(
@@ -220,6 +230,17 @@ export function WorkspacePage() {
       columns: "",
     });
   }, [asset?.materialization_type, asset?.name, asset?.type, form]);
+
+  useEffect(() => {
+    if (!isMobile) {
+      setMobileEditorOpen(false);
+      return;
+    }
+
+    if (asset) {
+      setMobileEditorOpen(true);
+    }
+  }, [asset, isMobile]);
 
   const previousSelectedAssetRef = useRef<string | null>(null);
 
@@ -369,6 +390,35 @@ export function WorkspacePage() {
   };
 
   const hasPipelines = workspace.pipelines.length > 0;
+  const editorPane = (
+    <WorkspaceEditorPane
+      asset={asset}
+      pipelineId={pipeline?.id ?? null}
+      helpMode={helpMode}
+      actionHighlighted={onboardingHelp.target === "actions"}
+      editorHighlighted={onboardingHelp.target === "editor"}
+      visualizationHighlighted={onboardingHelp.target === "visualization"}
+      highlightStyle={helpPulseStyle}
+      materializeLoading={assetResults.materializeLoading}
+      inspectLoading={assetResults.inspectLoading}
+      deleteLoading={deleteLoading}
+      editorValue={editorValue}
+      monacoTheme={monacoTheme}
+      assetEditorTab={assetEditorTab}
+      form={form}
+      assetPreviewRows={assetPreviewRows}
+      onEditorTabChange={setAssetEditorTab}
+      onEditorChange={handleEditorChange}
+      onMaterializeSelectedAsset={handleMaterializeSelectedAsset}
+      onInspectSelectedAsset={handleInspectSelectedAsset}
+      onOpenDeleteDialog={() => setDeleteDialogOpen(true)}
+      onAssetNameChange={handleAssetNameChange}
+      onMaterializationTypeChange={handleMaterializationTypeChange}
+      onSaveVisualizationSettings={handleSaveVisualizationSettings}
+      onGoToAsset={navigateSelection}
+      mobile={isMobile}
+    />
+  );
 
   return (
     <>
@@ -377,65 +427,65 @@ export function WorkspacePage() {
         : null}
 
       {hasPipelines ? (
-        <PanelGroup direction="horizontal" className="h-full min-h-0 overflow-hidden">
-          <WorkspaceCanvasPane
-            highlighted={helpMode && onboardingHelp.target === "canvas"}
-            highlightStyle={helpPulseStyle}
-            hasResultData={assetResults.hasResultData}
-            canvasContainerRef={canvasContainerRef}
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            inspectResult={assetResults.inspectResult}
-            inspectLoading={assetResults.inspectLoading}
-            materializeLoading={assetResults.materializeLoading}
-            pipelineMaterializeLoading={assetResults.pipelineMaterializeLoading}
-            hasInspectData={assetResults.hasInspectData}
-            hasMaterializeData={assetResults.hasMaterializeData}
-            effectiveResultTab={assetResults.effectiveResultTab}
-            materializeStatus={assetResults.materializeStatus}
-            materializeError={assetResults.materializeError}
-            materializeOutputHtml={assetResults.materializeOutputHtml}
-            onResultTabChange={assetResults.setResultTab}
-            onInit={setReactFlowInstance}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onNodeDragStop={handleNodeDragStop}
-            onPaneClick={handlePaneClick}
-            onPaneContextMenu={handlePaneContextMenu}
-            onNodeClick={handleNodeClick}
-            onRecomputeGraph={handleRecomputeGraph}
-          />
+        <>
+          <PanelGroup direction="horizontal" className="h-full min-h-0 overflow-hidden">
+            <WorkspaceCanvasPane
+              highlighted={helpMode && onboardingHelp.target === "canvas"}
+              highlightStyle={helpPulseStyle}
+              hasResultData={assetResults.hasResultData}
+              canvasContainerRef={canvasContainerRef}
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              inspectResult={assetResults.inspectResult}
+              inspectLoading={assetResults.inspectLoading}
+              materializeLoading={assetResults.materializeLoading}
+              pipelineMaterializeLoading={assetResults.pipelineMaterializeLoading}
+              hasInspectData={assetResults.hasInspectData}
+              hasMaterializeData={assetResults.hasMaterializeData}
+              effectiveResultTab={assetResults.effectiveResultTab}
+              materializeStatus={assetResults.materializeStatus}
+              materializeError={assetResults.materializeError}
+              materializeOutputHtml={assetResults.materializeOutputHtml}
+              onResultTabChange={assetResults.setResultTab}
+              onInit={setReactFlowInstance}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onNodeDragStop={handleNodeDragStop}
+              onPaneClick={handlePaneClick}
+              onPaneContextMenu={handlePaneContextMenu}
+              onNodeClick={handleNodeClick}
+              onRecomputeGraph={handleRecomputeGraph}
+              showEditorButton={isMobile}
+              isEditorButtonDisabled={!asset}
+              onOpenEditor={() => setMobileEditorOpen(true)}
+            />
 
-          <PanelResizeHandle className="w-px bg-border" />
+            {!isMobile ? (
+              <>
+                <PanelResizeHandle className="w-px bg-border" />
+                {editorPane}
+              </>
+            ) : null}
+          </PanelGroup>
 
-          <WorkspaceEditorPane
-            asset={asset}
-            pipelineId={pipeline?.id ?? null}
-            helpMode={helpMode}
-            actionHighlighted={onboardingHelp.target === "actions"}
-            editorHighlighted={onboardingHelp.target === "editor"}
-            visualizationHighlighted={onboardingHelp.target === "visualization"}
-            highlightStyle={helpPulseStyle}
-            materializeLoading={assetResults.materializeLoading}
-            inspectLoading={assetResults.inspectLoading}
-            deleteLoading={deleteLoading}
-            editorValue={editorValue}
-            monacoTheme={monacoTheme}
-            assetEditorTab={assetEditorTab}
-            form={form}
-            assetPreviewRows={assetPreviewRows}
-            onEditorTabChange={setAssetEditorTab}
-            onEditorChange={handleEditorChange}
-            onMaterializeSelectedAsset={handleMaterializeSelectedAsset}
-            onInspectSelectedAsset={handleInspectSelectedAsset}
-            onOpenDeleteDialog={() => setDeleteDialogOpen(true)}
-            onAssetNameChange={handleAssetNameChange}
-            onMaterializationTypeChange={handleMaterializationTypeChange}
-            onSaveVisualizationSettings={handleSaveVisualizationSettings}
-            onGoToAsset={navigateSelection}
-          />
-        </PanelGroup>
+          {isMobile ? (
+            <Sheet open={mobileEditorOpen} onOpenChange={setMobileEditorOpen}>
+              <SheetContent
+                side="bottom"
+                className="h-[88vh] rounded-t-2xl p-0 sm:max-w-none"
+              >
+                <SheetHeader className="border-b px-4 py-3 text-left">
+                  <SheetTitle>Asset Editor</SheetTitle>
+                  <SheetDescription className="truncate">
+                    {asset?.path ?? "No asset selected"}
+                  </SheetDescription>
+                </SheetHeader>
+                <div className="min-h-0 flex-1 overflow-hidden">{editorPane}</div>
+              </SheetContent>
+            </Sheet>
+          ) : null}
+        </>
       ) : (
         <div className="flex h-full items-center justify-center bg-muted/10 p-8">
           <div className="max-w-md rounded-lg border bg-card p-6 text-center shadow-sm">
