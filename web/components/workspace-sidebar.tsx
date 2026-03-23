@@ -5,9 +5,10 @@ import {
   Cable,
   ChevronRight,
   ChevronsLeft,
+  CirclePlus,
+  FolderPlus,
   Moon,
   Play,
-  Plus,
   Settings2,
   Sun,
   Trash2,
@@ -16,6 +17,13 @@ import {
 import { CSSProperties, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   Sidebar,
   SidebarContent,
@@ -41,10 +49,10 @@ type Props = {
   theme: "light" | "dark";
   onToggleTheme: () => void;
   onCreatePipeline: () => void;
-  onDeletePipeline: () => void;
+  onDeletePipeline: (pipelineId: string) => void;
   canDeletePipeline: boolean;
   deletePipelineLoading: boolean;
-  onRunPipeline: () => void;
+  onRunPipeline: (pipelineId: string) => void;
   canRunPipeline: boolean;
   runPipelineLoading: boolean;
   onOnboardingMountChange?: (element: HTMLDivElement | null) => void;
@@ -100,7 +108,7 @@ export function WorkspaceSidebar({
 
   return (
     <Sidebar
-      className={`h-full w-full border-r transition-transform md:shadow-none ${
+      className={`h-full border-r transition-transform md:shadow-none ${
         highlighted ? "ring-2 ring-primary/70 ring-inset" : ""
       }`}
       collapsible="offcanvas"
@@ -132,35 +140,6 @@ export function WorkspaceSidebar({
             <Button
               size="icon-sm"
               type="button"
-              variant={runPipelineLoading ? "default" : "outline"}
-              disabled={!canRunPipeline || runPipelineLoading}
-              onClick={onRunPipeline}
-              className="shrink-0 sm:hidden"
-            >
-              <Play
-                className={`size-3.5 ${
-                  runPipelineLoading ? "animate-pulse fill-current" : ""
-                }`}
-              />
-            </Button>
-            <Button
-              size="sm"
-              type="button"
-              variant={runPipelineLoading ? "default" : "outline"}
-              disabled={!canRunPipeline || runPipelineLoading}
-              onClick={onRunPipeline}
-              className="hidden shrink-0 sm:inline-flex"
-            >
-              <Play
-                className={`mr-1 inline size-3.5 ${
-                  runPipelineLoading ? "animate-pulse fill-current" : ""
-                }`}
-              />
-              {runPipelineLoading ? "Running..." : "Run"}
-            </Button>
-            <Button
-              size="icon-sm"
-              type="button"
               variant="outline"
               onClick={onToggleTheme}
               className="shrink-0"
@@ -170,35 +149,6 @@ export function WorkspaceSidebar({
               ) : (
                 <Moon className="size-3.5" />
               )}
-            </Button>
-            <Button
-              size="icon-sm"
-              type="button"
-              variant="outline"
-              disabled={!canDeletePipeline || deletePipelineLoading}
-              onClick={onDeletePipeline}
-              className="shrink-0"
-            >
-              <Trash2 className="size-3.5" />
-            </Button>
-            <Button
-              size="icon-sm"
-              variant="outline"
-              onClick={onCreatePipeline}
-              type="button"
-              className="shrink-0 sm:hidden"
-            >
-              <Plus className="size-3.5" />
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onCreatePipeline}
-              type="button"
-              className="hidden shrink-0 sm:inline-flex"
-            >
-              <Plus className="mr-1 inline size-3" />
-              New
             </Button>
           </div>
         </div>
@@ -229,6 +179,12 @@ export function WorkspaceSidebar({
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
+                <SidebarMenuButton onClick={onCreatePipeline}>
+                  <FolderPlus className="size-4" />
+                  <span>New Pipeline</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
                 <SidebarMenuButton
                   asChild
                   isActive={currentView === "environments"}
@@ -252,6 +208,8 @@ export function WorkspaceSidebar({
                     to="/settings/connections"
                     search={{
                       environment: connectionsEnvironment ?? undefined,
+                      connectionType: undefined,
+                      mode: undefined,
                     }}
                     activeOptions={{ exact: true, includeSearch: false }}
                     onClick={closeSidebarAfterNavigation}
@@ -275,49 +233,79 @@ export function WorkspaceSidebar({
 
                 return (
                   <SidebarMenuItem key={item.id}>
-                    <SidebarMenuButton asChild isActive={isActive}>
-                      <Link
-                        to="/"
-                        search={{
-                          pipeline: item.id,
-                          asset: item.assets[0]?.id ?? undefined,
-                        }}
-                        activeOptions={{ exact: true, includeSearch: false }}
-                        onClick={() => {
-                          closeSidebarAfterNavigation();
-                          setExpandedPipelineIds((previous) => {
-                            const next = new Set(previous);
-                            if (next.has(item.id)) {
-                              next.delete(item.id);
-                            } else {
-                              next.add(item.id);
-                            }
-                            return next;
-                          });
-                        }}
-                      >
-                        <ChevronRight
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
+                    <ContextMenu>
+                      <ContextMenuTrigger asChild>
+                        <div>
+                          <SidebarMenuButton asChild isActive={isActive}>
+                            <Link
+                              to="/"
+                              search={{
+                                pipeline: item.id,
+                                asset: item.assets[0]?.id ?? undefined,
+                              }}
+                              activeOptions={{ exact: true, includeSearch: false }}
+                              onClick={() => {
+                                closeSidebarAfterNavigation();
+                                setExpandedPipelineIds((previous) => {
+                                  const next = new Set(previous);
+                                  if (next.has(item.id)) {
+                                    next.delete(item.id);
+                                  } else {
+                                    next.add(item.id);
+                                  }
+                                  return next;
+                                });
+                              }}
+                            >
+                              <ChevronRight
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
 
-                            setExpandedPipelineIds((previous) => {
-                              const next = new Set(previous);
-                              if (next.has(item.id)) {
-                                next.delete(item.id);
-                              } else {
-                                next.add(item.id);
-                              }
-                              return next;
-                            });
-                          }}
-                          className={`size-3 transition-transform ${
-                            isExpanded ? "rotate-90" : ""
-                          }`}
-                        />
-                        <span>{item.name}</span>
-                      </Link>
-                    </SidebarMenuButton>
+                                  setExpandedPipelineIds((previous) => {
+                                    const next = new Set(previous);
+                                    if (next.has(item.id)) {
+                                      next.delete(item.id);
+                                    } else {
+                                      next.add(item.id);
+                                    }
+                                    return next;
+                                  });
+                                }}
+                                className={`size-3 transition-transform ${
+                                  isExpanded ? "rotate-90" : ""
+                                }`}
+                              />
+                              <span>{item.name}</span>
+                            </Link>
+                          </SidebarMenuButton>
+                        </div>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent>
+                        <ContextMenuItem
+                          disabled={!canRunPipeline || runPipelineLoading}
+                          onClick={() => onRunPipeline(item.id)}
+                        >
+                          <Play
+                            className={
+                              runPipelineLoading && activePipeline === item.id
+                                ? "animate-pulse"
+                                : ""
+                            }
+                          />
+                          Run Pipeline
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          variant="destructive"
+                          disabled={!canDeletePipeline || deletePipelineLoading}
+                          onClick={() => onDeletePipeline(item.id)}
+                        >
+                          <Trash2 />
+                          Delete Pipeline
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
 
                     {isExpanded && (
                       <SidebarMenu className="pl-3">

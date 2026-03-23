@@ -57,7 +57,9 @@ import { useGraphViewportFocus } from "@/hooks/use-graph-viewport-focus";
 import { useOnboardingActions } from "@/hooks/use-onboarding-actions";
 import { useOnboardingState } from "@/hooks/use-onboarding-state";
 import { usePersistedNodePositions } from "@/hooks/use-persisted-node-positions";
+import { useWorkspaceSettingsData } from "@/hooks/use-workspace-settings-data";
 import { useWorkspaceDerivedState } from "@/hooks/use-workspace-derived-state";
+import { getAvailableAssetTypes } from "@/lib/asset-types";
 
 import { useWorkspaceLayout } from "./workspace-layout";
 
@@ -91,6 +93,7 @@ export function WorkspacePage() {
   const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
 
   const { scheduleSave, flushAssetSave } = useDebouncedAssetSave(500);
+  const { workspaceConfig } = useWorkspaceSettingsData();
   const nodeTypes = useMemo<NodeTypes>(
     () => ({ assetNode: AssetNode, newAssetNode: NewAssetNode }),
     []
@@ -357,6 +360,7 @@ export function WorkspacePage() {
     handleMaterializeSelectedAsset,
     handleInspectSelectedAsset,
     handleAssetNameChange,
+    handleAssetTypeChange,
     handleMaterializationTypeChange,
   } = useEditorActions({
     editorValue,
@@ -389,7 +393,21 @@ export function WorkspacePage() {
     setRecomputeVersion((previous) => previous + 1);
   };
 
+  const handleRunPipeline = () => {
+    if (!pipeline || assetResults.materializeLoading) {
+      return;
+    }
+
+    void assetResults.runMaterializePipeline(pipeline.id, async () => {
+      await refreshPipelineMaterialization(pipeline.id).catch(() => undefined);
+    });
+  };
+
   const hasPipelines = workspace.pipelines.length > 0;
+  const availableAssetTypes = useMemo(
+    () => getAvailableAssetTypes(workspaceConfig?.connection_types ?? []),
+    [workspaceConfig?.connection_types]
+  );
   const editorPane = (
     <WorkspaceEditorPane
       asset={asset}
@@ -413,10 +431,12 @@ export function WorkspacePage() {
       onInspectSelectedAsset={handleInspectSelectedAsset}
       onOpenDeleteDialog={() => setDeleteDialogOpen(true)}
       onAssetNameChange={handleAssetNameChange}
+      onAssetTypeChange={handleAssetTypeChange}
       onMaterializationTypeChange={handleMaterializationTypeChange}
       onSaveVisualizationSettings={handleSaveVisualizationSettings}
       onGoToAsset={navigateSelection}
       mobile={isMobile}
+      availableAssetTypes={availableAssetTypes}
     />
   );
 
@@ -456,6 +476,8 @@ export function WorkspacePage() {
               onPaneContextMenu={handlePaneContextMenu}
               onNodeClick={handleNodeClick}
               onRecomputeGraph={handleRecomputeGraph}
+              onRunPipeline={handleRunPipeline}
+              canRunPipeline={Boolean(pipeline)}
               showEditorButton={isMobile}
               isEditorButtonDisabled={!asset}
               onOpenEditor={() => setMobileEditorOpen(true)}

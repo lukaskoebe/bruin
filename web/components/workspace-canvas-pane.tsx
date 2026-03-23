@@ -1,7 +1,7 @@
 "use client";
 
 import { CSSProperties, MutableRefObject } from "react";
-import { FilePenLine, RefreshCcw } from "lucide-react";
+import { FilePenLine, LoaderCircle, Rows3 } from "lucide-react";
 import {
   Background,
   Controls,
@@ -44,6 +44,8 @@ type WorkspaceCanvasPaneProps = {
   onPaneContextMenu: Parameters<typeof ReactFlow>[0]["onPaneContextMenu"];
   onNodeClick: Parameters<typeof ReactFlow>[0]["onNodeClick"];
   onRecomputeGraph: () => void;
+  onRunPipeline?: () => void;
+  canRunPipeline?: boolean;
   showEditorButton?: boolean;
   isEditorButtonDisabled?: boolean;
   onOpenEditor?: () => void;
@@ -76,6 +78,8 @@ export function WorkspaceCanvasPane({
   onPaneContextMenu,
   onNodeClick,
   onRecomputeGraph,
+  onRunPipeline,
+  canRunPipeline = false,
   showEditorButton = false,
   isEditorButtonDisabled = false,
   onOpenEditor,
@@ -91,6 +95,21 @@ export function WorkspaceCanvasPane({
         <Panel defaultSize={hasResultData ? 72 : 100} minSize={45}>
           <div className="relative h-full" ref={canvasContainerRef}>
             <div className="absolute right-3 top-3 z-10 flex gap-2">
+              {onRunPipeline ? (
+                <Button
+                  onClick={onRunPipeline}
+                  size="sm"
+                  type="button"
+                  disabled={!canRunPipeline || pipelineMaterializeLoading}
+                >
+                  {pipelineMaterializeLoading ? (
+                    <LoaderCircle className="mr-2 size-3.5 animate-spin" />
+                  ) : (
+                    <PlayIcon className="mr-2 size-3.5" />
+                  )}
+                  {pipelineMaterializeLoading ? "Running pipeline..." : "Run pipeline"}
+                </Button>
+              ) : null}
               {showEditorButton ? (
                 <Button
                   onClick={onOpenEditor}
@@ -109,8 +128,8 @@ export function WorkspaceCanvasPane({
                 type="button"
                 variant="outline"
               >
-                <RefreshCcw className="mr-2 size-3.5" />
-                Recompute graph
+                <Rows3 className="mr-2 size-3.5" />
+                Reload layout
               </Button>
             </div>
             <ReactFlow
@@ -155,5 +174,18 @@ export function WorkspaceCanvasPane({
         )}
       </PanelGroup>
     </Panel>
+  );
+}
+
+function PlayIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l10-6.86a1 1 0 0 0 0-1.72l-10-6.86A1 1 0 0 0 8 5.14Z" />
+    </svg>
   );
 }

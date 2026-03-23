@@ -69,23 +69,6 @@ export function WorkspaceConfigContent({
             <div className="text-right text-xs text-muted-foreground">{configPath}</div>
           </div>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <SummaryCard label="Configured environments" value={String(environments.length)} />
-            <SummaryCard
-              label="Default environment"
-              value={defaultEnvironment || "default"}
-            />
-            <SummaryCard
-              label="Configured connections"
-              value={String(
-                environments.reduce(
-                  (total, environment) => total + environment.connections.length,
-                  0
-                )
-              )}
-            />
-          </div>
-
           <div className="mt-4 flex flex-wrap gap-2">
             {view === "environments" ? (
               <>
@@ -157,7 +140,11 @@ export function WorkspaceConfigContent({
                     <Button asChild type="button" variant="link">
                       <Link
                         to="/settings/connections"
-                        search={{ environment: environment.name }}
+                        search={{
+                          environment: environment.name,
+                          connectionType: undefined,
+                          mode: undefined,
+                        }}
                       >
                         Open Connections
                       </Link>
@@ -203,15 +190,6 @@ export function WorkspaceConfigContent({
           <EmptyState text="Create an environment first before configuring connections." />
         )}
       </div>
-    </div>
-  );
-}
-
-function SummaryCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border bg-background/80 p-4">
-      <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="mt-1 text-2xl font-semibold">{value}</div>
     </div>
   );
 }

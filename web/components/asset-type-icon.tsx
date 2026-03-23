@@ -1,3 +1,5 @@
+import { cloneElement, isValidElement, ReactElement, ReactNode } from "react";
+
 import {
   SiClickhouse,
   SiDatabricks,
@@ -18,6 +20,8 @@ import {
 } from "react-icons/si";
 import { GiBearFace } from "react-icons/gi";
 
+import { cn } from "@/lib/utils";
+
 type AssetTypeIconProps = {
   assetType?: string;
   connection?: string;
@@ -31,20 +35,20 @@ export function AssetTypeIcon({
   meta,
   className,
 }: AssetTypeIconProps) {
-  const icon = resolveAssetIcon(assetType, connection, meta);
+  const resolved = resolveAssetIcon(assetType, connection, meta);
 
-  if (!icon) {
+  if (!resolved) {
     return null;
   }
 
-  return <span className={className}>{icon}</span>;
+  return <span className={cn(className)}>{resolved.icon}</span>;
 }
 
 function resolveAssetIcon(
   assetType?: string,
   connection?: string,
   meta?: Record<string, string>
-): React.ReactNode | null {
+): { icon: ReactNode } | null {
   const type = normalize(assetType);
   const provider = providerFromAssetType(type);
   const fallback = normalize(
@@ -61,44 +65,44 @@ function resolveAssetIcon(
   const value = provider || fallback;
 
   if (isPythonType(type)) {
-    return SiPython({ size: 16 });
+    return iconWithColor(SiPython({ size: 16 }), "#3b82f6");
   }
   if (isRType(type)) {
-    return SiR({ size: 16 });
+    return iconWithColor(SiR({ size: 16 }), "#0284c7");
   }
   if (isIngestrType(type)) {
-    return GiBearFace({ size: 16 });
+    return iconWithColor(GiBearFace({ size: 16 }), "#d97706");
   }
   if (isSensorType(type)) {
-    return SiPrometheus({ size: 16 });
+    return iconWithColor(SiPrometheus({ size: 16 }), "#f97316");
   }
   if (isSeedType(type)) {
-    return SiDbt({ size: 16 });
+    return iconWithColor(SiDbt({ size: 16 }), "#ea580c");
   }
   if (isDashboardType(type)) {
-    return SiGrafana({ size: 16 });
+    return iconWithColor(SiGrafana({ size: 16 }), "#f97316");
   }
 
   if (has(value, "athena")) {
     return null;
   }
   if (has(value, "clickhouse")) {
-    return SiClickhouse({ size: 16 });
+    return iconWithColor(SiClickhouse({ size: 16 }), "#eab308");
   }
   if (has(value, "databricks")) {
-    return SiDatabricks({ size: 16 });
+    return iconWithColor(SiDatabricks({ size: 16 }), "#ef4444");
   }
   if (has(value, "motherduck")) {
-    return SiDuckdb({ size: 16 });
+    return iconWithColor(SiDuckdb({ size: 16 }), "#10b981");
   }
   if (has(value, "duckdb")) {
-    return SiDuckdb({ size: 16 });
+    return iconWithColor(SiDuckdb({ size: 16 }), "#059669");
   }
   if (has(value, "oracle")) {
     return null;
   }
   if (has(value, "bigquery")) {
-    return SiGooglebigquery({ size: 16 });
+    return iconWithColor(SiGooglebigquery({ size: 16 }), "#3b82f6");
   }
   if (has(value, "microsoft sql server", "sqlserver", "mssql")) {
     return null;
@@ -107,16 +111,16 @@ function resolveAssetIcon(
     return null;
   }
   if (has(value, "mysql")) {
-    return SiMysql({ size: 16 });
+    return iconWithColor(SiMysql({ size: 16 }), "#0369a1");
   }
   if (has(value, "postgres", "postgresql")) {
-    return SiPostgresql({ size: 16 });
+    return iconWithColor(SiPostgresql({ size: 16 }), "#2563eb");
   }
   if (has(value, "redshift")) {
     return null;
   }
   if (has(value, "snowflake")) {
-    return SiSnowflake({ size: 16 });
+    return iconWithColor(SiSnowflake({ size: 16 }), "#06b6d4");
   }
   if (has(value, "synapse")) {
     return null;
@@ -125,7 +129,7 @@ function resolveAssetIcon(
     return null;
   }
   if (has(value, "trino")) {
-    return SiTrino({ size: 16 });
+    return iconWithColor(SiTrino({ size: 16 }), "#6366f1");
   }
   if (has(value, "emr")) {
     return null;
@@ -135,10 +139,22 @@ function resolveAssetIcon(
   }
 
   if (has(type, ".sql") || has(value, "sql")) {
-    return SiSqlite({ size: 16 });
+    return iconWithColor(SiSqlite({ size: 16 }), "#8b5cf6");
   }
 
   return null;
+}
+
+function iconWithColor(icon: ReactNode, color: string) {
+  if (!isValidElement(icon)) {
+    return { icon };
+  }
+
+  return {
+    icon: cloneElement(icon as ReactElement<{ color?: string }>, {
+      color,
+    }),
+  };
 }
 
 function providerFromAssetType(assetType: string): string {

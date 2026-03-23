@@ -1,15 +1,17 @@
 "use client";
 
+import { Link } from "@tanstack/react-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import Editor from "@monaco-editor/react";
 import type { Monaco } from "@monaco-editor/react";
 import type * as MonacoNS from "monaco-editor";
-import { Bug, ChevronDown, Database, Eye, Hammer, Trash2 } from "lucide-react";
+import { AlertTriangle, Bug, ChevronDown, Database, Eye, Hammer, Trash2 } from "lucide-react";
 import { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Controller, UseFormReturn } from "react-hook-form";
 import { Panel } from "react-resizable-panels";
 
 import { VisualizationSettingsEditor } from "@/components/visualization-settings-editor";
+import { AssetTypeIcon } from "@/components/asset-type-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +28,10 @@ import { useSQLIntellisense } from "@/hooks/use-sql-intellisense";
 import { useYAMLIntellisense } from "@/hooks/use-yaml-intellisense";
 import { inferAssetColumns } from "@/lib/api";
 import {
+  getConnectionTypeForAssetType,
+  isSqlAssetType,
+} from "@/lib/asset-types";
+import {
   registerAssetColumnsAtom,
   selectedAssetColumnEntriesAtom,
   selectedAssetInspectColumnsAtom,
@@ -34,6 +40,7 @@ import {
   selectedAssetSchemaTablesAtom,
 } from "@/lib/atoms";
 import { WebAsset } from "@/lib/types";
+import { useWorkspaceSettingsData } from "@/hooks/use-workspace-settings-data";
 
 export type AssetConfigForm = {
   name: string;
@@ -67,12 +74,14 @@ type WorkspaceEditorPaneProps = {
   onInspectSelectedAsset: () => void;
   onOpenDeleteDialog: () => void;
   onAssetNameChange: (assetName: string) => void;
+  onAssetTypeChange: (assetType: string) => void;
   onMaterializationTypeChange: (materializationType: string) => void;
   onSaveVisualizationSettings: (
     visualizationMeta: Record<string, string>
   ) => void;
   onGoToAsset?: (pipelineId: string, assetId: string) => void;
   mobile?: boolean;
+  availableAssetTypes: string[];
 };
 
 const MATERIALIZATION_NONE_VALUE = "__none__";
@@ -99,14 +108,17 @@ export function WorkspaceEditorPane({
   onInspectSelectedAsset,
   onOpenDeleteDialog,
   onAssetNameChange,
+  onAssetTypeChange,
   onMaterializationTypeChange,
   onSaveVisualizationSettings,
   onGoToAsset,
   mobile = false,
+  availableAssetTypes,
 }: WorkspaceEditorPaneProps) {
   const [monacoInstance, setMonacoInstance] = useState<Monaco | null>(null);
   const [editorInstance, setEditorInstance] =
     useState<MonacoNS.editor.IStandaloneCodeEditor | null>(null);
+  const { workspaceConfig } = useWorkspaceSettingsData();
   const selectedEnvironment = useAtomValue(selectedEnvironmentAtom);
   const assetColumns = useAtomValue(selectedAssetColumnEntriesAtom);
   const assetInspectColumns = useAtomValue(selectedAssetInspectColumnsAtom);
@@ -181,6 +193,39 @@ export function WorkspaceEditorPane({
     const extension = asset.path.split(".").pop()?.toLowerCase() ?? "sql";
     return `inmemory://bruin/assets/${asset.id}.${extension}`;
   }, [asset]);
+
+  const selectedAssetType = form.watch("type");
+  const requiredConnectionType = useMemo(
+    () => getConnectionTypeForAssetType(selectedAssetType),
+    [selectedAssetType]
+  );
+  const activeConfigEnvironment = useMemo(() => {
+    const environmentName =
+      selectedEnvironment ||
+      workspaceConfig?.selected_environment ||
+      workspaceConfig?.default_environment ||
+      workspaceConfig?.environments[0]?.name ||
+      null;
+
+    return (
+      workspaceConfig?.environments.find(
+        (environment) => environment.name === environmentName
+      ) ?? null
+    );
+  }, [selectedEnvironment, workspaceConfig]);
+  const hasDefaultConnectionForSelectedType = useMemo(() => {
+    if (!requiredConnectionType || !activeConfigEnvironment) {
+      return true;
+    }
+
+    return activeConfigEnvironment.connections.some(
+      (connection) => connection.type === requiredConnectionType
+    );
+  }, [activeConfigEnvironment, requiredConnectionType]);
+  const showMissingConnectionWarning =
+    isSqlAssetType(selectedAssetType) &&
+    Boolean(requiredConnectionType) &&
+    !hasDefaultConnectionForSelectedType;
 
   const debugResolvedUpstreamTables = useMemo(() => {
     if (!asset) {
@@ -368,7 +413,46 @@ export function WorkspaceEditorPane({
                   </div>
                   <div className="grid gap-1">
                     <Label>Type</Label>
-                    <Input {...form.register("type")} />
+                    <Controller
+                      control={form.control}
+                      name="type"
+                      render={({ field }) => (
+                        <AssetTypeSelect
+                          availableAssetTypes={availableAssetTypes}
+                          onChange={(nextValue) => {
+                            field.onChange(nextValue);
+                            onAssetTypeChange(nextValue);
+                          }}
+                          value={field.value}
+                        />
+                      )}
+                    />
+                    {showMissingConnectionWarning ? (
+                      <div className="mt-1 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+                        <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                        <div className="min-w-0">
+                          <div>
+                            No connection of type <span className="font-medium">{requiredConnectionType}</span>{" "}
+                            is configured for environment{" "}
+                            <span className="font-medium">
+                              {activeConfigEnvironment?.name ?? "default"}
+                            </span>
+                            .
+                          </div>
+                          <Link
+                            to="/settings/connections"
+                            search={{
+                              environment: activeConfigEnvironment?.name,
+                              connectionType: requiredConnectionType ?? undefined,
+                              mode: "create",
+                            }}
+                            className="mt-1 inline-flex text-amber-700 underline decoration-amber-400 underline-offset-2 hover:text-amber-800 dark:text-amber-200 dark:hover:text-amber-100"
+                          >
+                            Create a new {requiredConnectionType} connection
+                          </Link>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                   <div className="grid gap-1">
                     <Label>Materialization</Label>
@@ -541,6 +625,44 @@ export function WorkspaceEditorPane({
   }
 
   return <Panel defaultSize={32} minSize={24}>{content}</Panel>;
+}
+
+function AssetTypeSelect({
+  value,
+  onChange,
+  availableAssetTypes,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  availableAssetTypes: string[];
+}) {
+  return (
+    <Select value={value || undefined} onValueChange={onChange}>
+      <SelectTrigger className="w-full">
+        <SelectValue placeholder="Select asset type">
+          {value ? (
+            <span className="flex items-center gap-2">
+              <AssetTypeIcon assetType={value} className="text-muted-foreground" />
+              <span>{value}</span>
+            </span>
+          ) : null}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {availableAssetTypes.map((assetType) => (
+          <SelectItem key={assetType} value={assetType}>
+            <span className="flex items-center gap-2">
+              <AssetTypeIcon
+                assetType={assetType}
+                className="text-muted-foreground"
+              />
+              <span>{assetType}</span>
+            </span>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
 }
 
 function editorLanguageForAssetPath(path: string): "sql" | "python" | "yaml" {

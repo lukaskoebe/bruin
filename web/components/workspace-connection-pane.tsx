@@ -41,6 +41,7 @@ type WorkspaceConnectionPaneProps = {
   statusMessage?: string | null;
   statusTone?: "error" | "success" | null;
   mode: ConnectionMode;
+  requestedConnectionType?: string;
   onModeChange: (mode: ConnectionMode) => void;
   onSelectedEnvironmentChange: (name: string | null) => void;
   onSelectedConnectionChange: (name: string | null) => void;
@@ -80,6 +81,7 @@ export function WorkspaceConnectionPane({
   statusMessage,
   statusTone,
   mode,
+  requestedConnectionType,
   onModeChange,
   onSelectedEnvironmentChange,
   onSelectedConnectionChange,
@@ -108,6 +110,7 @@ export function WorkspaceConnectionPane({
     onUpdateConnection,
     selectedConnectionName,
     selectedEnvironmentName: selectedEnvironment,
+    requestedConnectionType,
   });
 
   return (

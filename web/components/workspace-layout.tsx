@@ -77,6 +77,8 @@ export function WorkspaceLayout() {
   const [deletePipelineDialogOpen, setDeletePipelineDialogOpen] =
     useState(false);
   const [deletePipelineLoading, setDeletePipelineLoading] = useState(false);
+  const [deletePipelineTargetId, setDeletePipelineTargetId] =
+    useState<string | null>(null);
   const [pendingPipelinePathSelection, setPendingPipelinePathSelection] =
     useState<string | null>(null);
   const [sidebarState, setSidebarState] = useState<WorkspaceSidebarState>({});
@@ -126,26 +128,51 @@ export function WorkspaceLayout() {
     });
   }, [assetResults, pipeline, pipelineMaterialization]);
 
+  const handleRunPipelineById = useCallback(
+    (pipelineId: string) => {
+      if (assetResults.materializeLoading) {
+        return;
+      }
+
+      void assetResults.runMaterializePipeline(pipelineId, async () => {
+        await pipelineMaterialization
+          .refreshPipelineMaterialization(pipelineId)
+          .catch(() => undefined);
+      });
+    },
+    [assetResults, pipelineMaterialization]
+  );
+
   const handleConfirmDeletePipeline = useCallback(() => {
-    if (!pipeline || deletePipelineLoading) {
+    const targetPipelineId = deletePipelineTargetId ?? pipeline?.id ?? null;
+    if (!targetPipelineId || deletePipelineLoading) {
+      return;
+    }
+
+    const targetPipeline =
+      workspace?.pipelines.find(
+        (currentPipeline) => currentPipeline.id === targetPipelineId
+      ) ?? null;
+    if (!targetPipeline) {
       return;
     }
 
     const remainingPipelines =
       workspace?.pipelines.filter(
-        (currentPipeline) => currentPipeline.id !== pipeline.id
+        (currentPipeline) => currentPipeline.id !== targetPipeline.id
       ) ?? [];
     const fallbackPipeline = remainingPipelines[0] ?? null;
 
     setDeletePipelineLoading(true);
     void assetActions
-      .runDeletePipeline(pipeline.id)
+      .runDeletePipeline(targetPipeline.id)
       .then((deleted) => {
         if (!deleted) {
           return;
         }
 
         setDeletePipelineDialogOpen(false);
+        setDeletePipelineTargetId(null);
         assetResults.clearResultsAfterDelete();
 
         if (fallbackPipeline) {
@@ -158,7 +185,10 @@ export function WorkspaceLayout() {
 
         void navigate({
           to: "/",
-          search: {},
+          search: {
+            pipeline: undefined,
+            asset: undefined,
+          },
           replace: true,
         });
       })
@@ -167,6 +197,7 @@ export function WorkspaceLayout() {
     assetActions,
     assetResults,
     deletePipelineLoading,
+    deletePipelineTargetId,
     navigate,
     navigateSelection,
     pipeline,
@@ -287,10 +318,13 @@ export function WorkspaceLayout() {
             currentView={currentView}
             connectionsEnvironment={routeState.search.environment ?? null}
             onCreatePipeline={assetActions.openCreatePipelineDialog}
-            onRunPipeline={handleRunPipeline}
+            onRunPipeline={handleRunPipelineById}
             canRunPipeline={Boolean(pipeline)}
             runPipelineLoading={assetResults.pipelineMaterializeLoading}
-            onDeletePipeline={() => setDeletePipelineDialogOpen(true)}
+            onDeletePipeline={(pipelineId) => {
+              setDeletePipelineTargetId(pipelineId);
+              setDeletePipelineDialogOpen(true);
+            }}
             canDeletePipeline={Boolean(pipeline)}
             deletePipelineLoading={deletePipelineLoading}
             onOnboardingMountChange={setSidebarOnboardingMount}
@@ -319,15 +353,26 @@ export function WorkspaceLayout() {
           <WorkspacePipelineDialogs
             deletePipelineDialogOpen={deletePipelineDialogOpen}
             deletePipelineLoading={deletePipelineLoading}
-            selectedPipelineName={pipeline?.name}
-            canDeletePipeline={Boolean(pipeline)}
+            selectedPipelineName={
+              workspace.pipelines.find(
+                (currentPipeline) =>
+                  currentPipeline.id === (deletePipelineTargetId ?? pipeline?.id)
+              )?.name
+            }
+            canDeletePipeline={Boolean(deletePipelineTargetId ?? pipeline)}
             onDeletePipelineDialogOpenChange={(open) => {
               if (!deletePipelineLoading) {
                 setDeletePipelineDialogOpen(open);
+                if (!open) {
+                  setDeletePipelineTargetId(null);
+                }
               }
             }}
             onConfirmDeletePipeline={handleConfirmDeletePipeline}
-            onCancelDeletePipeline={() => setDeletePipelineDialogOpen(false)}
+            onCancelDeletePipeline={() => {
+              setDeletePipelineDialogOpen(false);
+              setDeletePipelineTargetId(null);
+            }}
             createPipelineDialogOpen={assetActions.createPipelineDialogOpen}
             createPipelineLoading={assetActions.createPipelineLoading}
             createPipelinePath={assetActions.createPipelinePath}

@@ -174,6 +174,7 @@ export async function updateAsset(
   assetId: string,
   input: {
     name?: string;
+    type?: string;
     content?: string;
     materialization_type?: string;
     meta?: Record<string, string>;
