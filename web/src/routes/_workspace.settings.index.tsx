@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
 import { WorkspaceEnvironmentsRoutePage } from "./_workspace.settings.environments";
 
@@ -7,5 +7,20 @@ export const Route = createFileRoute("/_workspace/settings/")({
 });
 
 function WorkspaceSettingsIndexRouteComponent() {
-  return <WorkspaceEnvironmentsRoutePage />;
+  const navigate = useNavigate();
+
+  return (
+    <WorkspaceEnvironmentsRoutePage
+      onSearchChange={(next) =>
+        navigate({
+          to: "/settings/environments",
+          search: {
+            environment: next.environment,
+            mode: next.mode,
+          },
+          replace: true,
+        })
+      }
+    />
+  );
 }

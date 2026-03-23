@@ -142,6 +142,7 @@ export function WorkspaceConfigContent({
                         to="/settings/connections"
                         search={{
                           environment: environment.name,
+                          connection: undefined,
                           connectionType: undefined,
                           mode: undefined,
                         }}

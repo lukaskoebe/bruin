@@ -443,6 +443,7 @@ export function WorkspaceEditorPane({
                             to="/settings/connections"
                             search={{
                               environment: activeConfigEnvironment?.name,
+                              connection: undefined,
                               connectionType: requiredConnectionType ?? undefined,
                               mode: "create",
                             }}

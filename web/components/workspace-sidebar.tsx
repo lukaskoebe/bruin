@@ -191,6 +191,7 @@ export function WorkspaceSidebar({
                 >
                   <Link
                     to="/settings/environments"
+                    search={{ environment: undefined, mode: undefined }}
                     activeOptions={{ exact: true, includeSearch: false }}
                     onClick={closeSidebarAfterNavigation}
                   >
@@ -208,6 +209,7 @@ export function WorkspaceSidebar({
                     to="/settings/connections"
                     search={{
                       environment: connectionsEnvironment ?? undefined,
+                      connection: undefined,
                       connectionType: undefined,
                       mode: undefined,
                     }}

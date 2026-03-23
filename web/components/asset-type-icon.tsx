@@ -96,7 +96,7 @@ function resolveAssetIcon(
     return iconWithColor(SiDuckdb({ size: 16 }), "#10b981");
   }
   if (has(value, "duckdb")) {
-    return iconWithColor(SiDuckdb({ size: 16 }), "#059669");
+    return iconWithColor(SiDuckdb({ size: 16 }), "#ffff00");
   }
   if (has(value, "oracle")) {
     return null;

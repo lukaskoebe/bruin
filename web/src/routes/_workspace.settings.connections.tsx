@@ -1,5 +1,4 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
 
 import { WorkspaceConfigContent } from "@/components/workspace-config-content";
 import { WorkspaceConnectionPane } from "@/components/workspace-connection-pane";
@@ -14,6 +13,8 @@ export const Route = createFileRoute("/_workspace/settings/connections")({
   validateSearch: (search: Record<string, unknown>) => ({
     environment:
       typeof search.environment === "string" ? search.environment : undefined,
+    connection:
+      typeof search.connection === "string" ? search.connection : undefined,
     connectionType:
       typeof search.connectionType === "string"
         ? search.connectionType
@@ -29,16 +30,18 @@ function WorkspaceSettingsConnectionsRouteComponent() {
 
   return (
     <WorkspaceConnectionsRoutePage
+      selectedConnectionName={search.connection}
       requestedConnectionType={search.connectionType}
       requestedMode={search.mode}
       selectedConfigEnvironment={search.environment}
-      onSelectedConfigEnvironmentChange={(environment) =>
+      onSearchChange={(next) =>
         navigate({
           to: "/settings/connections",
           search: {
-            environment: environment ?? undefined,
-            connectionType: search.connectionType,
-            mode: search.mode,
+            environment: next.environment,
+            connection: next.connection,
+            connectionType: next.connectionType,
+            mode: next.mode,
           },
           replace: true,
         })
@@ -48,15 +51,22 @@ function WorkspaceSettingsConnectionsRouteComponent() {
 }
 
 function WorkspaceConnectionsRoutePage({
+  selectedConnectionName,
   requestedConnectionType,
   requestedMode,
   selectedConfigEnvironment,
-  onSelectedConfigEnvironmentChange,
+  onSearchChange,
 }: {
+  selectedConnectionName?: string;
   requestedConnectionType?: string;
   requestedMode?: string;
   selectedConfigEnvironment?: string;
-  onSelectedConfigEnvironmentChange?: (environment: string | null) => void;
+  onSearchChange: (next: {
+    environment?: string;
+    connection?: string;
+    connectionType?: string;
+    mode?: "edit" | "create";
+  }) => void;
 }) {
   const {
     fallbackConfigEnvironment,
@@ -71,26 +81,34 @@ function WorkspaceConnectionsRoutePage({
     workspaceConfigStatusMessage,
     workspaceConfigStatusTone,
   } = useWorkspaceSettingsLayout();
-  const navigate = useNavigate();
-  const [selectedConnectionName, setSelectedConnectionName] = useState<
-    string | null
-  >(null);
-  const [connectionEditorMode, setConnectionEditorMode] = useState<
-    "edit" | "create"
-  >("edit");
+
   const { activeEnvironment, resolvedEnvironmentName } =
     useResolvedWorkspaceEnvironment({
       defaultEnvironment: fallbackConfigEnvironment ?? undefined,
       environments: normalizedConfigEnvironments,
       selectedEnvironmentName: selectedConfigEnvironment,
       onSelectedEnvironmentChange: (name) =>
-        onSelectedConfigEnvironmentChange?.(name),
+        onSearchChange({
+          environment: name ?? undefined,
+          connection: selectedConnectionName,
+          connectionType: requestedConnectionType,
+          mode: requestedMode === "create" ? "create" : "edit",
+        }),
     });
+
   const { resolvedConnectionName } = useResolvedWorkspaceConnection({
     activeEnvironment,
     selectedConnectionName,
-    onSelectedConnectionChange: setSelectedConnectionName,
+    onSelectedConnectionChange: (name) =>
+      onSearchChange({
+        environment: resolvedEnvironmentName ?? undefined,
+        connection: name ?? undefined,
+        connectionType: requestedConnectionType,
+        mode: requestedMode === "create" ? "create" : "edit",
+      }),
   });
+
+  const effectiveMode = requestedMode === "create" ? "create" : "edit";
 
   return (
     <WorkspaceSettingsSplitView
@@ -103,28 +121,32 @@ function WorkspaceConnectionsRoutePage({
           environments={normalizedConfigEnvironments}
           selectedConnectionName={resolvedConnectionName}
           loading={workspaceConfigLoading}
-          onSelectEnvironment={(name) => {
-            onSelectedConfigEnvironmentChange?.(name);
-            setConnectionEditorMode("edit");
-          }}
-          onSelectConnection={(name) => {
-            setSelectedConnectionName(name);
-            setConnectionEditorMode("edit");
-          }}
+          onSelectEnvironment={(name) =>
+            onSearchChange({
+              environment: name,
+              connection: undefined,
+              connectionType: requestedConnectionType,
+              mode: "edit",
+            })
+          }
+          onSelectConnection={(name) =>
+            onSearchChange({
+              environment: resolvedEnvironmentName ?? selectedConfigEnvironment,
+              connection: name,
+              connectionType: requestedConnectionType,
+              mode: "edit",
+            })
+          }
           onCreateEnvironment={() => undefined}
           onCloneEnvironment={() => undefined}
-          onCreateConnection={() => {
-            setConnectionEditorMode("create");
-            void navigate({
-              to: "/settings/connections",
-              search: {
-                environment: resolvedEnvironmentName ?? selectedConfigEnvironment,
-                connectionType: requestedConnectionType,
-                mode: "create",
-              },
-              replace: true,
-            });
-          }}
+          onCreateConnection={() =>
+            onSearchChange({
+              environment: resolvedEnvironmentName ?? selectedConfigEnvironment,
+              connection: undefined,
+              connectionType: requestedConnectionType,
+              mode: "create",
+            })
+          }
         />
       }
       pane={
@@ -140,13 +162,33 @@ function WorkspaceConnectionsRoutePage({
           parseError={workspaceConfig?.parse_error}
           statusMessage={workspaceConfigStatusMessage}
           statusTone={workspaceConfigStatusTone}
-          mode={requestedMode === "create" ? "create" : connectionEditorMode}
+          mode={effectiveMode}
           requestedConnectionType={requestedConnectionType}
-          onModeChange={setConnectionEditorMode}
-          onSelectedEnvironmentChange={(name) =>
-            onSelectedConfigEnvironmentChange?.(name)
+          onModeChange={(mode) =>
+            onSearchChange({
+              environment: resolvedEnvironmentName ?? selectedConfigEnvironment,
+              connection:
+                mode === "create" ? undefined : resolvedConnectionName ?? undefined,
+              connectionType: requestedConnectionType,
+              mode,
+            })
           }
-          onSelectedConnectionChange={setSelectedConnectionName}
+          onSelectedEnvironmentChange={(name) =>
+            onSearchChange({
+              environment: name ?? undefined,
+              connection: resolvedConnectionName ?? undefined,
+              connectionType: requestedConnectionType,
+              mode: effectiveMode,
+            })
+          }
+          onSelectedConnectionChange={(name) =>
+            onSearchChange({
+              environment: resolvedEnvironmentName ?? selectedConfigEnvironment,
+              connection: name ?? undefined,
+              connectionType: requestedConnectionType,
+              mode: effectiveMode,
+            })
+          }
           onReload={() => void loadWorkspaceConfig()}
           onCreateConnection={handleCreateWorkspaceConnection}
           onUpdateConnection={handleUpdateWorkspaceConnection}

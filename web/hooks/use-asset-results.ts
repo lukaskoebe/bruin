@@ -1,13 +1,13 @@
 "use client";
 
 import AnsiToHtml from "ansi-to-html";
-import { useAtom, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useEffect, useMemo, useState } from "react";
 
 import {
   assetResultsAtom,
   changedAssetIdsAtom,
-  registerAssetColumnsAtom,
+  resolvedSelectedAssetAtom,
 } from "@/lib/atoms";
 import { useAssetInspect } from "@/hooks/use-asset-inspect";
 import { materializeAssetStream, materializePipelineStream } from "@/lib/api";
@@ -16,27 +16,25 @@ import { AssetInspectResponse } from "@/lib/types";
 export function useAssetResults() {
   const [results, setResults] = useAtom(assetResultsAtom);
   const setChangedAssetIds = useSetAtom(changedAssetIdsAtom);
-  const registerAssetColumns = useSetAtom(registerAssetColumnsAtom);
   const [pipelineMaterializeLoading, setPipelineMaterializeLoading] =
     useState(false);
   const [assetMaterializeLoading, setAssetMaterializeLoading] = useState(false);
-  const [inspectLoading, setInspectLoading] = useState(false);
-  const { inspectAssetById } = useAssetInspect();
+  const selectedAssetId = useAtomValue(resolvedSelectedAssetAtom);
+  const { inspectAssetById, inspectByAssetId, inspectLoadingByAssetId } =
+    useAssetInspect();
   const {
-    inspectResult,
     materializeOutput,
     materializeStatus,
     materializeError,
     resultTab,
   } = results;
 
-  useEffect(() => {
-    setResults((previous) =>
-      previous.inspectLoading === inspectLoading
-        ? previous
-        : { ...previous, inspectLoading }
-    );
-  }, [inspectLoading, setResults]);
+  const inspectResult = selectedAssetId
+    ? inspectByAssetId[selectedAssetId] ?? null
+    : null;
+  const inspectLoading = selectedAssetId
+    ? inspectLoadingByAssetId[selectedAssetId] ?? false
+    : false;
 
   const effectiveMaterializeLoading =
     assetMaterializeLoading || pipelineMaterializeLoading;
@@ -88,18 +86,8 @@ export function useAssetResults() {
   }, [hasInspectData, hasMaterializeData, resultTab]);
 
   const runInspectForAsset = async (assetId: string) => {
-    setInspectLoading(true);
     try {
       const result = await inspectAssetById(assetId, { force: true, limit: 200 });
-      registerAssetColumns({
-        assetId,
-        method: "asset-inspect",
-        columns: (result.columns ?? []).map((name) => ({ name })),
-      });
-      setResults((previous) => ({
-        ...previous,
-        inspectResult: result,
-      }));
       if (result.rows.length > 0 || result.error) {
         setResultTab("inspect");
       }
@@ -112,19 +100,8 @@ export function useAssetResults() {
         raw_output: "",
         error: String(error),
       };
-      registerAssetColumns({
-        assetId,
-        method: "asset-inspect",
-        columns: [],
-      });
-      setResults((previous) => ({
-        ...previous,
-        inspectResult: failure,
-      }));
       setResultTab("inspect");
       return failure;
-    } finally {
-      setInspectLoading(false);
     }
   };
 
@@ -279,7 +256,6 @@ export function useAssetResults() {
   const clearResultsAfterDelete = () => {
     setResults((previous) => ({
       ...previous,
-      inspectResult: null,
       materializeOutput: "",
       materializeError: "",
     }));

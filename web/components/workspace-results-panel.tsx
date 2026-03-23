@@ -5,6 +5,7 @@ import { Play } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Spinner } from "@/components/ui/spinner";
 import { VirtualDataTable } from "@/components/virtual-data-table";
+import { extractInspectErrorText } from "@/lib/inspect-errors";
 import { AssetInspectResponse } from "@/lib/types";
 
 type Props = {
@@ -35,9 +36,7 @@ export function WorkspaceResultsPanel({
   onResultTabChange,
 }: Props) {
   const materializeOutputRef = useRef<HTMLPreElement | null>(null);
-  const inspectErrorDetails = extractInspectErrorDetails(
-    inspectResult?.raw_output
-  );
+  const inspectErrorDetails = extractInspectErrorText(inspectResult?.raw_output);
 
   useEffect(() => {
     const element = materializeOutputRef.current;
@@ -150,28 +149,4 @@ function LoadingState({ label }: { label: string }) {
       </div>
     </div>
   );
-}
-
-function extractInspectErrorDetails(rawOutput: string | undefined): string {
-  const trimmed = (rawOutput ?? "").trim();
-  if (!trimmed) {
-    return "";
-  }
-
-  try {
-    const parsed = JSON.parse(trimmed) as {
-      error?: unknown;
-      message?: unknown;
-    };
-    if (typeof parsed.error === "string" && parsed.error.trim()) {
-      return parsed.error.trim();
-    }
-    if (typeof parsed.message === "string" && parsed.message.trim()) {
-      return parsed.message.trim();
-    }
-  } catch {
-    return trimmed;
-  }
-
-  return trimmed;
 }

@@ -1,5 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
 import { WorkspaceConfigContent } from "@/components/workspace-config-content";
 import { WorkspaceEnvironmentPane } from "@/components/workspace-environment-pane";
@@ -8,14 +7,48 @@ import { WorkspaceSettingsSplitView } from "@/components/workspace-settings-spli
 import { useResolvedWorkspaceEnvironment } from "@/hooks/use-workspace-config-selection";
 
 export const Route = createFileRoute("/_workspace/settings/environments")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    environment:
+      typeof search.environment === "string" ? search.environment : undefined,
+    mode: typeof search.mode === "string" ? search.mode : undefined,
+  }),
   component: WorkspaceSettingsEnvironmentsRouteComponent,
 });
 
 function WorkspaceSettingsEnvironmentsRouteComponent() {
-  return <WorkspaceEnvironmentsRoutePage />;
+  const search = Route.useSearch();
+  const navigate = useNavigate();
+
+  return (
+    <WorkspaceEnvironmentsRoutePage
+      mode={search.mode}
+      selectedEnvironmentName={search.environment}
+      onSearchChange={(next) =>
+        navigate({
+          to: "/settings/environments",
+          search: {
+            environment: next.environment,
+            mode: next.mode,
+          },
+          replace: true,
+        })
+      }
+    />
+  );
 }
 
-export function WorkspaceEnvironmentsRoutePage() {
+export function WorkspaceEnvironmentsRoutePage({
+  mode,
+  selectedEnvironmentName,
+  onSearchChange,
+}: {
+  mode?: string;
+  selectedEnvironmentName?: string;
+  onSearchChange: (next: {
+    environment?: string;
+    mode?: "edit" | "create" | "clone";
+  }) => void;
+}) {
   const {
     fallbackConfigEnvironment,
     handleCloneWorkspaceEnvironment,
@@ -30,16 +63,19 @@ export function WorkspaceEnvironmentsRoutePage() {
     workspaceConfigStatusMessage,
     workspaceConfigStatusTone,
   } = useWorkspaceSettingsLayout();
-  const [selectedEnvironmentEditorName, setSelectedEnvironmentEditorName] =
-    useState<string | null>(null);
-  const [environmentEditorMode, setEnvironmentEditorMode] = useState<
-    "edit" | "create" | "clone"
-  >("edit");
+
+  const effectiveMode =
+    mode === "create" || mode === "clone" ? mode : "edit";
+
   const { resolvedEnvironmentName } = useResolvedWorkspaceEnvironment({
     defaultEnvironment: fallbackConfigEnvironment ?? undefined,
     environments: normalizedConfigEnvironments,
-    selectedEnvironmentName: selectedEnvironmentEditorName,
-    onSelectedEnvironmentChange: setSelectedEnvironmentEditorName,
+    selectedEnvironmentName,
+    onSelectedEnvironmentChange: (name) =>
+      onSearchChange({
+        environment: name ?? undefined,
+        mode: effectiveMode,
+      }),
   });
 
   return (
@@ -53,13 +89,22 @@ export function WorkspaceEnvironmentsRoutePage() {
           environments={normalizedConfigEnvironments}
           selectedConnectionName={null}
           loading={workspaceConfigLoading}
-          onSelectEnvironment={(name) => {
-            setSelectedEnvironmentEditorName(name);
-            setEnvironmentEditorMode("edit");
-          }}
+          onSelectEnvironment={(name) =>
+            onSearchChange({ environment: name, mode: "edit" })
+          }
           onSelectConnection={() => undefined}
-          onCreateEnvironment={() => setEnvironmentEditorMode("create")}
-          onCloneEnvironment={() => setEnvironmentEditorMode("clone")}
+          onCreateEnvironment={() =>
+            onSearchChange({
+              environment: resolvedEnvironmentName ?? undefined,
+              mode: "create",
+            })
+          }
+          onCloneEnvironment={() =>
+            onSearchChange({
+              environment: resolvedEnvironmentName ?? undefined,
+              mode: "clone",
+            })
+          }
           onCreateConnection={() => undefined}
         />
       }
@@ -74,9 +119,19 @@ export function WorkspaceEnvironmentsRoutePage() {
           parseError={workspaceConfig?.parse_error}
           statusMessage={workspaceConfigStatusMessage}
           statusTone={workspaceConfigStatusTone}
-          mode={environmentEditorMode}
-          onModeChange={setEnvironmentEditorMode}
-          onSelectedEnvironmentChange={setSelectedEnvironmentEditorName}
+          mode={effectiveMode}
+          onModeChange={(nextMode) =>
+            onSearchChange({
+              environment: resolvedEnvironmentName ?? undefined,
+              mode: nextMode,
+            })
+          }
+          onSelectedEnvironmentChange={(name) =>
+            onSearchChange({
+              environment: name ?? undefined,
+              mode: effectiveMode,
+            })
+          }
           onReload={() => void loadWorkspaceConfig()}
           onCreateEnvironment={handleCreateWorkspaceEnvironment}
           onUpdateEnvironment={handleUpdateWorkspaceEnvironment}

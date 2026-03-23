@@ -3,298 +3,21 @@ import {
   AssetInspectResponse,
   InferColumnsResponse,
   IngestrSuggestionsResponse,
-  SqlPathSuggestionsResponse,
+  PipelineMaterializationResponse,
   SqlDiscoveryDatabasesResponse,
   SqlDiscoveryTableColumnsResponse,
   SqlDiscoveryTablesResponse,
+  SqlPathSuggestionsResponse,
   WebColumn,
-  PipelineMaterializationResponse,
   WorkspaceConfigResponse,
   WorkspaceState,
 } from "@/lib/types";
+import { extractInspectErrorText } from "@/lib/inspect-errors";
 
-async function readJSON<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const text = await res.text();
-    let message = "";
-
-    try {
-      const parsed = JSON.parse(text) as {
-        error?: { message?: string };
-        message?: string;
-      };
-      message = parsed.error?.message || parsed.message || "";
-    } catch {
-      message = "";
-    }
-
-    throw new Error(message || text || `Request failed: ${res.status}`);
-  }
-  return (await res.json()) as T;
-}
-
-export async function getWorkspace(): Promise<WorkspaceState> {
-  const res = await fetch("/api/workspace", { cache: "no-store" });
-  return readJSON<WorkspaceState>(res);
-}
-
-export async function getWorkspaceConfig(): Promise<WorkspaceConfigResponse> {
-  const res = await fetch("/api/config", { cache: "no-store" });
-  return readJSON<WorkspaceConfigResponse>(res);
-}
-
-export async function createWorkspaceEnvironment(input: {
-  name: string;
-  schema_prefix?: string;
-  set_as_default?: boolean;
-}): Promise<WorkspaceConfigResponse> {
-  const res = await fetch("/api/config/environments", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-
-  return readJSON<WorkspaceConfigResponse>(res);
-}
-
-export async function updateWorkspaceEnvironment(input: {
-  name: string;
-  new_name?: string;
-  schema_prefix?: string;
-  set_as_default?: boolean;
-}): Promise<WorkspaceConfigResponse> {
-  const res = await fetch("/api/config/environments", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-
-  return readJSON<WorkspaceConfigResponse>(res);
-}
-
-export async function cloneWorkspaceEnvironment(input: {
-  source_name: string;
-  target_name: string;
-  schema_prefix?: string;
-  set_as_default?: boolean;
-}): Promise<WorkspaceConfigResponse> {
-  const res = await fetch("/api/config/environments/clone", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-
-  return readJSON<WorkspaceConfigResponse>(res);
-}
-
-export async function deleteWorkspaceEnvironment(name: string): Promise<WorkspaceConfigResponse> {
-  const res = await fetch("/api/config/environments", {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-
-  return readJSON<WorkspaceConfigResponse>(res);
-}
-
-export async function createWorkspaceConnection(input: {
-  environment_name: string;
-  name: string;
-  type: string;
-  values: Record<string, unknown>;
-}): Promise<WorkspaceConfigResponse> {
-  const res = await fetch("/api/config/connections", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-
-  return readJSON<WorkspaceConfigResponse>(res);
-}
-
-export async function updateWorkspaceConnection(input: {
-  environment_name: string;
-  current_name?: string;
-  name: string;
-  type: string;
-  values: Record<string, unknown>;
-}): Promise<WorkspaceConfigResponse> {
-  const res = await fetch("/api/config/connections", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-
-  return readJSON<WorkspaceConfigResponse>(res);
-}
-
-export async function deleteWorkspaceConnection(input: {
-  environment_name: string;
-  name: string;
-}): Promise<WorkspaceConfigResponse> {
-  const res = await fetch("/api/config/connections", {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-
-  return readJSON<WorkspaceConfigResponse>(res);
-}
-
-export async function testWorkspaceConnection(input: {
-  environment_name: string;
-  name: string;
-}): Promise<{ status: string; message?: string }> {
-  const res = await fetch("/api/config/connections/test", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-
-  return readJSON<{ status: string; message?: string }>(res);
-}
-
-export async function createPipeline(input: {
-  path: string;
-  name?: string;
-  content?: string;
-}) {
-  const res = await fetch("/api/pipelines", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  return readJSON<Record<string, string>>(res);
-}
-
-export async function deletePipeline(pipelineId: string) {
-  const res = await fetch(`/api/pipelines/${pipelineId}`, {
-    method: "DELETE",
-  });
-  return readJSON<Record<string, string>>(res);
-}
-
-export async function createAsset(
-  pipelineId: string,
-  input: {
-    name?: string;
-    type?: string;
-    path?: string;
-    content?: string;
-    source_asset_id?: string;
-  }
-) {
-  const res = await fetch(`/api/pipelines/${pipelineId}/assets`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  return readJSON<{ status: string; asset_id?: string; asset_path?: string }>(
-    res
-  );
-}
-
-export async function updateAsset(
-  pipelineId: string,
-  assetId: string,
-  input: {
-    name?: string;
-    type?: string;
-    content?: string;
-    materialization_type?: string;
-    meta?: Record<string, string>;
-  }
-) {
-  const res = await fetch(`/api/pipelines/${pipelineId}/assets/${assetId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  return readJSON<Record<string, string>>(res);
-}
-
-export async function deleteAsset(pipelineId: string, assetId: string) {
-  const res = await fetch(`/api/pipelines/${pipelineId}/assets/${assetId}`, {
-    method: "DELETE",
-  });
-  return readJSON<Record<string, string>>(res);
-}
-
-export async function inspectAsset(
-  assetId: string,
-  options?: { limit?: number; environment?: string }
-) {
-  const params = new URLSearchParams();
-  if (options?.limit) {
-    params.set("limit", String(options.limit));
-  }
-  if (options?.environment) {
-    params.set("environment", options.environment);
-  }
-
-  const query = params.toString();
-  const url = `/api/assets/${assetId}/inspect${query ? `?${query}` : ""}`;
-  const res = await fetch(url, { method: "GET" });
-
-  const text = await res.text();
-  let parsed: AssetInspectResponse | null = null;
-
-  try {
-    parsed = JSON.parse(text) as AssetInspectResponse;
-  } catch {
-    parsed = null;
-  }
-
-  if (parsed) {
-    return normalizeInspectResponse(parsed);
-  }
-
-  throw new Error(text || `Request failed: ${res.status}`);
-}
-
-function normalizeInspectResponse(
-  response: AssetInspectResponse
-): AssetInspectResponse {
-  if (response.status !== "error") {
-    return response;
-  }
-
-  const output = response.raw_output ?? "";
-  const extracted = extractErrorFromRawInspectOutput(output);
-
-  if (!extracted) {
-    return response;
-  }
-
-  return {
-    ...response,
-    error: extracted,
-  };
-}
-
-function extractErrorFromRawInspectOutput(rawOutput: string): string | null {
-  const trimmed = rawOutput.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(trimmed) as {
-      error?: unknown;
-      message?: unknown;
-    };
-    if (typeof parsed.error === "string" && parsed.error.trim()) {
-      return parsed.error.trim();
-    }
-    if (typeof parsed.message === "string" && parsed.message.trim()) {
-      return parsed.message.trim();
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
+type JSONErrorPayload = {
+  error?: { message?: string };
+  message?: string;
+};
 
 type MaterializeStreamPayload = {
   status?: "ok" | "error";
@@ -307,231 +30,145 @@ type MaterializeStreamPayload = {
   chunk?: string;
 };
 
-export async function materializeAssetStream(
-  assetId: string,
-  handlers: {
-    onChunk?: (chunk: string) => void;
-    onDone?: (payload: MaterializeStreamPayload) => void;
-  }
-) {
-  const res = await fetch(`/api/assets/${assetId}/materialize/stream`, {
-    method: "POST",
-    headers: {
-      Accept: "text/event-stream",
-    },
-  });
+type FillColumnsFromDBResponse = {
+  status: "ok" | "error";
+  results?: Array<{
+    command: string[];
+    output: string;
+    exit_code: number;
+    error?: string;
+  }>;
+};
 
+async function readJSON<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Request failed: ${res.status}`);
+    throw new Error(await getResponseErrorMessage(res));
   }
 
-  if (!res.body) {
-    throw new Error("Streaming response body is not available.");
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let donePayload: MaterializeStreamPayload | null = null;
-
-  while (true) {
-    const { value, done } = await reader.read();
-    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-
-    let delimiterIndex = buffer.indexOf("\n\n");
-    while (delimiterIndex >= 0) {
-      const rawEvent = buffer.slice(0, delimiterIndex);
-      buffer = buffer.slice(delimiterIndex + 2);
-      delimiterIndex = buffer.indexOf("\n\n");
-
-      const parsed = parseSSEEvent(rawEvent);
-      if (!parsed) {
-        continue;
-      }
-
-      if (parsed.event === "output" && typeof parsed.data?.chunk === "string") {
-        handlers.onChunk?.(parsed.data.chunk);
-      }
-
-      if (parsed.event === "done") {
-        donePayload = parsed.data;
-        handlers.onDone?.(parsed.data);
-      }
-    }
-
-    if (done) {
-      break;
-    }
-  }
-
-  if (!donePayload) {
-    throw new Error("Asset materialization stream ended unexpectedly.");
-  }
-
-  return donePayload;
+  return (await res.json()) as T;
 }
 
-export async function materializePipelineStream(
-  pipelineId: string,
-  handlers: {
-    onChunk?: (chunk: string) => void;
-    onDone?: (payload: MaterializeStreamPayload) => void;
-  }
-) {
-  const res = await fetch(`/api/pipelines/${pipelineId}/materialize/stream`, {
-    method: "POST",
-    headers: {
-      Accept: "text/event-stream",
-    },
-  });
+async function getResponseErrorMessage(res: Response): Promise<string> {
+  const text = await res.text();
+  const parsed = parseJSONSafely<JSONErrorPayload>(text);
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Request failed: ${res.status}`);
-  }
-
-  if (!res.body) {
-    throw new Error("Streaming response body is not available.");
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let donePayload: MaterializeStreamPayload | null = null;
-
-  while (true) {
-    const { value, done } = await reader.read();
-    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-
-    let delimiterIndex = buffer.indexOf("\n\n");
-    while (delimiterIndex >= 0) {
-      const rawEvent = buffer.slice(0, delimiterIndex);
-      buffer = buffer.slice(delimiterIndex + 2);
-      delimiterIndex = buffer.indexOf("\n\n");
-
-      const parsed = parseSSEEvent(rawEvent);
-      if (!parsed) {
-        continue;
-      }
-
-      if (parsed.event === "output" && typeof parsed.data?.chunk === "string") {
-        handlers.onChunk?.(parsed.data.chunk);
-      }
-
-      if (parsed.event === "done") {
-        donePayload = parsed.data;
-        handlers.onDone?.(parsed.data);
-      }
-    }
-
-    if (done) {
-      break;
-    }
-  }
-
-  if (!donePayload) {
-    throw new Error("Pipeline materialization stream ended unexpectedly.");
-  }
-
-  return donePayload;
-}
-
-export async function getIngestrSuggestions(options: {
-  connection: string;
-  prefix?: string;
-  environment?: string;
-}) {
-  const params = new URLSearchParams();
-  params.set("connection", options.connection);
-  if (options.prefix) {
-    params.set("prefix", options.prefix);
-  }
-  if (options.environment) {
-    params.set("environment", options.environment);
-  }
-
-  const res = await fetch(`/api/ingestr/suggestions?${params.toString()}`, {
-    cache: "no-store",
-  });
-
-  return readJSON<IngestrSuggestionsResponse>(res);
-}
-
-export async function getSQLDatabases(options: {
-  connection: string;
-  environment?: string;
-}) {
-  const params = new URLSearchParams();
-  params.set("connection", options.connection);
-  if (options.environment) {
-    params.set("environment", options.environment);
-  }
-
-  const res = await fetch(`/api/sql/databases?${params.toString()}`, {
-    cache: "no-store",
-  });
-
-  return readJSON<SqlDiscoveryDatabasesResponse>(res);
-}
-
-export async function getSQLPathSuggestions(options: {
-  assetId: string;
-  prefix: string;
-  environment?: string;
-}) {
-  const params = new URLSearchParams();
-  params.set("prefix", options.prefix);
-  if (options.environment) {
-    params.set("environment", options.environment);
-  }
-
-  const res = await fetch(
-    `/api/assets/${options.assetId}/sql-path-suggestions?${params.toString()}`,
-    {
-      cache: "no-store",
-    }
+  return (
+    parsed?.error?.message ||
+    parsed?.message ||
+    text ||
+    `Request failed: ${res.status}`
   );
-
-  return readJSON<SqlPathSuggestionsResponse>(res);
 }
 
-export async function getSQLTables(options: {
-  connection: string;
-  database: string;
-  environment?: string;
-}) {
-  const params = new URLSearchParams();
-  params.set("connection", options.connection);
-  params.set("database", options.database);
-  if (options.environment) {
-    params.set("environment", options.environment);
+function parseJSONSafely<T>(text: string): T | null {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
   }
-
-  const res = await fetch(`/api/sql/tables?${params.toString()}`, {
-    cache: "no-store",
-  });
-
-  return readJSON<SqlDiscoveryTablesResponse>(res);
 }
 
-export async function getSQLTableColumns(options: {
-  connection: string;
-  table: string;
-  environment?: string;
-}) {
-  const params = new URLSearchParams();
-  params.set("connection", options.connection);
-  params.set("table", options.table);
-  if (options.environment) {
-    params.set("environment", options.environment);
+function buildQueryString(params: Record<string, string | number | undefined>) {
+  const searchParams = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === "") {
+      continue;
+    }
+
+    searchParams.set(key, String(value));
   }
 
-  const res = await fetch(`/api/sql/table-columns?${params.toString()}`, {
-    cache: "no-store",
-  });
+  const query = searchParams.toString();
+  return query ? `?${query}` : "";
+}
 
-  return readJSON<SqlDiscoveryTableColumnsResponse>(res);
+async function fetchJSON<T>(input: RequestInfo | URL, init?: RequestInit) {
+  const res = await fetch(input, init);
+  return readJSON<T>(res);
+}
+
+async function fetchJSONWithBody<T>(
+  input: RequestInfo | URL,
+  method: "POST" | "PUT" | "DELETE",
+  body?: unknown,
+  init?: RequestInit
+) {
+  return fetchJSON<T>(input, {
+    ...init,
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+async function readTextOrThrow(res: Response) {
+  if (!res.ok) {
+    throw new Error(await getResponseErrorMessage(res));
+  }
+
+  return res.text();
+}
+
+async function readSSEStream(
+  res: Response,
+  handlers: {
+    onChunk?: (chunk: string) => void;
+    onDone?: (payload: MaterializeStreamPayload) => void;
+  },
+  endedMessage: string
+) {
+  if (!res.ok) {
+    throw new Error(await getResponseErrorMessage(res));
+  }
+
+  if (!res.body) {
+    throw new Error("Streaming response body is not available.");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let donePayload: MaterializeStreamPayload | null = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+
+    let delimiterIndex = buffer.indexOf("\n\n");
+    while (delimiterIndex >= 0) {
+      const rawEvent = buffer.slice(0, delimiterIndex);
+      buffer = buffer.slice(delimiterIndex + 2);
+      delimiterIndex = buffer.indexOf("\n\n");
+
+      const parsed = parseSSEEvent(rawEvent);
+      if (!parsed) {
+        continue;
+      }
+
+      if (parsed.event === "output" && typeof parsed.data?.chunk === "string") {
+        handlers.onChunk?.(parsed.data.chunk);
+      }
+
+      if (parsed.event === "done") {
+        donePayload = parsed.data;
+        handlers.onDone?.(parsed.data);
+      }
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (!donePayload) {
+    throw new Error(endedMessage);
+  }
+
+  return donePayload;
 }
 
 function parseSSEEvent(rawEvent: string): {
@@ -563,31 +200,355 @@ function parseSSEEvent(rawEvent: string): {
   };
 }
 
-export async function getPipelineMaterialization(pipelineId: string) {
-  const res = await fetch(`/api/pipelines/${pipelineId}/materialization`, {
-    method: "GET",
+function normalizeInspectResponse(
+  response: AssetInspectResponse
+): AssetInspectResponse {
+  if (response.status !== "error") {
+    return response;
+  }
+
+  const extracted = extractInspectErrorText(response.raw_output);
+
+  if (!extracted) {
+    return response;
+  }
+
+  return {
+    ...response,
+    error: extracted,
+  };
+}
+
+export async function getWorkspace(): Promise<WorkspaceState> {
+  return fetchJSON<WorkspaceState>("/api/workspace", { cache: "no-store" });
+}
+
+export async function getWorkspaceConfig(): Promise<WorkspaceConfigResponse> {
+  return fetchJSON<WorkspaceConfigResponse>("/api/config", {
     cache: "no-store",
   });
-  return readJSON<PipelineMaterializationResponse>(res);
+}
+
+export async function createWorkspaceEnvironment(input: {
+  name: string;
+  schema_prefix?: string;
+  set_as_default?: boolean;
+}): Promise<WorkspaceConfigResponse> {
+  return fetchJSONWithBody<WorkspaceConfigResponse>(
+    "/api/config/environments",
+    "POST",
+    input
+  );
+}
+
+export async function updateWorkspaceEnvironment(input: {
+  name: string;
+  new_name?: string;
+  schema_prefix?: string;
+  set_as_default?: boolean;
+}): Promise<WorkspaceConfigResponse> {
+  return fetchJSONWithBody<WorkspaceConfigResponse>(
+    "/api/config/environments",
+    "PUT",
+    input
+  );
+}
+
+export async function cloneWorkspaceEnvironment(input: {
+  source_name: string;
+  target_name: string;
+  schema_prefix?: string;
+  set_as_default?: boolean;
+}): Promise<WorkspaceConfigResponse> {
+  return fetchJSONWithBody<WorkspaceConfigResponse>(
+    "/api/config/environments/clone",
+    "POST",
+    input
+  );
+}
+
+export async function deleteWorkspaceEnvironment(
+  name: string
+): Promise<WorkspaceConfigResponse> {
+  return fetchJSONWithBody<WorkspaceConfigResponse>(
+    "/api/config/environments",
+    "DELETE",
+    { name }
+  );
+}
+
+export async function createWorkspaceConnection(input: {
+  environment_name: string;
+  name: string;
+  type: string;
+  values: Record<string, unknown>;
+}): Promise<WorkspaceConfigResponse> {
+  return fetchJSONWithBody<WorkspaceConfigResponse>(
+    "/api/config/connections",
+    "POST",
+    input
+  );
+}
+
+export async function updateWorkspaceConnection(input: {
+  environment_name: string;
+  current_name?: string;
+  name: string;
+  type: string;
+  values: Record<string, unknown>;
+}): Promise<WorkspaceConfigResponse> {
+  return fetchJSONWithBody<WorkspaceConfigResponse>(
+    "/api/config/connections",
+    "PUT",
+    input
+  );
+}
+
+export async function deleteWorkspaceConnection(input: {
+  environment_name: string;
+  name: string;
+}): Promise<WorkspaceConfigResponse> {
+  return fetchJSONWithBody<WorkspaceConfigResponse>(
+    "/api/config/connections",
+    "DELETE",
+    input
+  );
+}
+
+export async function testWorkspaceConnection(input: {
+  environment_name: string;
+  name: string;
+}): Promise<{ status: string; message?: string }> {
+  return fetchJSONWithBody<{ status: string; message?: string }>(
+    "/api/config/connections/test",
+    "POST",
+    input
+  );
+}
+
+export async function createPipeline(input: {
+  path: string;
+  name?: string;
+  content?: string;
+}) {
+  return fetchJSONWithBody<Record<string, string>>(
+    "/api/pipelines",
+    "POST",
+    input
+  );
+}
+
+export async function deletePipeline(pipelineId: string) {
+  return fetchJSON<Record<string, string>>(`/api/pipelines/${pipelineId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function createAsset(
+  pipelineId: string,
+  input: {
+    name?: string;
+    type?: string;
+    path?: string;
+    content?: string;
+    source_asset_id?: string;
+  }
+) {
+  return fetchJSONWithBody<{ status: string; asset_id?: string; asset_path?: string }>(
+    `/api/pipelines/${pipelineId}/assets`,
+    "POST",
+    input
+  );
+}
+
+export async function updateAsset(
+  pipelineId: string,
+  assetId: string,
+  input: {
+    name?: string;
+    type?: string;
+    content?: string;
+    materialization_type?: string;
+    meta?: Record<string, string>;
+  }
+) {
+  return fetchJSONWithBody<Record<string, string>>(
+    `/api/pipelines/${pipelineId}/assets/${assetId}`,
+    "PUT",
+    input
+  );
+}
+
+export async function deleteAsset(pipelineId: string, assetId: string) {
+  return fetchJSON<Record<string, string>>(
+    `/api/pipelines/${pipelineId}/assets/${assetId}`,
+    {
+      method: "DELETE",
+    }
+  );
+}
+
+export async function inspectAsset(
+  assetId: string,
+  options?: { limit?: number; environment?: string }
+) {
+  const res = await fetch(
+    `/api/assets/${assetId}/inspect${buildQueryString({
+      limit: options?.limit,
+      environment: options?.environment,
+    })}`,
+    { method: "GET" }
+  );
+
+  const text = await readTextOrThrow(res);
+  const parsed = parseJSONSafely<AssetInspectResponse>(text);
+
+  if (parsed) {
+    return normalizeInspectResponse(parsed);
+  }
+
+  throw new Error(text || `Request failed: ${res.status}`);
+}
+
+export async function materializeAssetStream(
+  assetId: string,
+  handlers: {
+    onChunk?: (chunk: string) => void;
+    onDone?: (payload: MaterializeStreamPayload) => void;
+  }
+) {
+  const res = await fetch(`/api/assets/${assetId}/materialize/stream`, {
+    method: "POST",
+    headers: {
+      Accept: "text/event-stream",
+    },
+  });
+
+  return readSSEStream(
+    res,
+    handlers,
+    "Asset materialization stream ended unexpectedly."
+  );
+}
+
+export async function materializePipelineStream(
+  pipelineId: string,
+  handlers: {
+    onChunk?: (chunk: string) => void;
+    onDone?: (payload: MaterializeStreamPayload) => void;
+  }
+) {
+  const res = await fetch(`/api/pipelines/${pipelineId}/materialize/stream`, {
+    method: "POST",
+    headers: {
+      Accept: "text/event-stream",
+    },
+  });
+
+  return readSSEStream(
+    res,
+    handlers,
+    "Pipeline materialization stream ended unexpectedly."
+  );
+}
+
+export async function getIngestrSuggestions(options: {
+  connection: string;
+  prefix?: string;
+  environment?: string;
+}) {
+  return fetchJSON<IngestrSuggestionsResponse>(
+    `/api/ingestr/suggestions${buildQueryString({
+      connection: options.connection,
+      prefix: options.prefix,
+      environment: options.environment,
+    })}`,
+    { cache: "no-store" }
+  );
+}
+
+export async function getSQLDatabases(options: {
+  connection: string;
+  environment?: string;
+}) {
+  return fetchJSON<SqlDiscoveryDatabasesResponse>(
+    `/api/sql/databases${buildQueryString({
+      connection: options.connection,
+      environment: options.environment,
+    })}`,
+    { cache: "no-store" }
+  );
+}
+
+export async function getSQLPathSuggestions(options: {
+  assetId: string;
+  prefix: string;
+  environment?: string;
+}) {
+  return fetchJSON<SqlPathSuggestionsResponse>(
+    `/api/assets/${options.assetId}/sql-path-suggestions${buildQueryString({
+      prefix: options.prefix,
+      environment: options.environment,
+    })}`,
+    { cache: "no-store" }
+  );
+}
+
+export async function getSQLTables(options: {
+  connection: string;
+  database: string;
+  environment?: string;
+}) {
+  return fetchJSON<SqlDiscoveryTablesResponse>(
+    `/api/sql/tables${buildQueryString({
+      connection: options.connection,
+      database: options.database,
+      environment: options.environment,
+    })}`,
+    { cache: "no-store" }
+  );
+}
+
+export async function getSQLTableColumns(options: {
+  connection: string;
+  table: string;
+  environment?: string;
+}) {
+  return fetchJSON<SqlDiscoveryTableColumnsResponse>(
+    `/api/sql/table-columns${buildQueryString({
+      connection: options.connection,
+      table: options.table,
+      environment: options.environment,
+    })}`,
+    { cache: "no-store" }
+  );
+}
+
+export async function getPipelineMaterialization(pipelineId: string) {
+  return fetchJSON<PipelineMaterializationResponse>(
+    `/api/pipelines/${pipelineId}/materialization`,
+    {
+      method: "GET",
+      cache: "no-store",
+    }
+  );
 }
 
 export async function inferAssetColumns(assetId: string) {
-  const res = await fetch(`/api/assets/${assetId}/columns/infer`, {
+  return fetchJSON<InferColumnsResponse>(`/api/assets/${assetId}/columns/infer`, {
     method: "GET",
   });
-  return readJSON<InferColumnsResponse>(res);
 }
 
 export async function updateAssetColumns(
   assetId: string,
   columns: WebColumn[]
 ) {
-  const res = await fetch(`/api/assets/${assetId}/columns`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ columns }),
-  });
-  return readJSON<Record<string, string>>(res);
+  return fetchJSONWithBody<Record<string, string>>(
+    `/api/assets/${assetId}/columns`,
+    "PUT",
+    { columns }
+  );
 }
 
 export async function fillAssetColumnsFromDB(assetId: string) {
@@ -595,27 +556,21 @@ export async function fillAssetColumnsFromDB(assetId: string) {
     method: "POST",
   });
 
-  const text = await res.text();
+  const text = await readTextOrThrow(res);
   if (!text) {
     return { status: res.ok ? "ok" : "error" };
   }
 
-  try {
-    return JSON.parse(text) as {
-      status: "ok" | "error";
-      results?: Array<{
-        command: string[];
-        output: string;
-        exit_code: number;
-        error?: string;
-      }>;
-    };
-  } catch {
+  const parsed = parseJSONSafely<FillColumnsFromDBResponse>(text);
+  if (!parsed) {
     throw new Error(text || `Request failed: ${res.status}`);
   }
+
+  return parsed;
 }
 
 export async function getAssetFreshness(): Promise<AssetFreshnessResponse> {
-  const res = await fetch("/api/assets/freshness", { cache: "no-store" });
-  return readJSON<AssetFreshnessResponse>(res);
+  return fetchJSON<AssetFreshnessResponse>("/api/assets/freshness", {
+    cache: "no-store",
+  });
 }
