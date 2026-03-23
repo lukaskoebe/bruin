@@ -16,7 +16,19 @@ import {
 async function readJSON<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `Request failed: ${res.status}`);
+    let message = "";
+
+    try {
+      const parsed = JSON.parse(text) as {
+        error?: { message?: string };
+        message?: string;
+      };
+      message = parsed.error?.message || parsed.message || "";
+    } catch {
+      message = "";
+    }
+
+    throw new Error(message || text || `Request failed: ${res.status}`);
   }
   return (await res.json()) as T;
 }
@@ -127,6 +139,19 @@ export async function deleteWorkspaceConnection(input: {
   });
 
   return readJSON<WorkspaceConfigResponse>(res);
+}
+
+export async function testWorkspaceConnection(input: {
+  environment_name: string;
+  name: string;
+}): Promise<{ status: string; message?: string }> {
+  const res = await fetch("/api/config/connections/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return readJSON<{ status: string; message?: string }>(res);
 }
 
 export async function createPipeline(input: {

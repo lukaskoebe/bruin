@@ -29,6 +29,7 @@ export function useWorkspaceConnectionForm({
   onSelectedConnectionChange,
   onSelectedEnvironmentChange,
   onUpdateConnection,
+  requestedConnectionType,
   selectedConnectionName,
   selectedEnvironmentName,
 }: {
@@ -56,6 +57,7 @@ export function useWorkspaceConnectionForm({
     type: string;
     values: Record<string, unknown>;
   }) => Promise<WorkspaceConfigResponse>;
+  requestedConnectionType?: string;
   selectedConnectionName?: string | null;
   selectedEnvironmentName?: string | null;
 }) {
@@ -92,7 +94,13 @@ export function useWorkspaceConnectionForm({
 
   useEffect(() => {
     if (mode === "create") {
-      const fallbackType = connectionTypes[0]?.type_name ?? "";
+      const requestedType = requestedConnectionType?.trim() ?? "";
+      const fallbackType =
+        connectionTypes.find(
+          (connectionType) => connectionType.type_name === requestedType
+        )?.type_name ??
+        connectionTypes[0]?.type_name ??
+        "";
       setConnectionForm({
         environmentName:
           selectedEnvironmentName || defaultEnvironment || environments[0]?.name || "",
@@ -134,6 +142,7 @@ export function useWorkspaceConnectionForm({
     defaultEnvironment,
     environments,
     mode,
+    requestedConnectionType,
     selectedEnvironmentName,
   ]);
 

@@ -111,8 +111,8 @@ export function WorkspaceEnvironmentPane({
       statusTone={statusTone}
       onReload={onReload}
     >
-      <div className="rounded-lg border bg-card/60 p-3">
-        <div className="mb-3 flex items-center justify-between gap-2">
+      <div className="rounded-lg border bg-card/60 p-3 sm:p-4">
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="font-medium">
             {mode === "create"
               ? "Create Environment"
@@ -127,6 +127,7 @@ export function WorkspaceEnvironmentPane({
               variant="destructive"
               onClick={() => void handleDelete()}
               disabled={busy}
+              className="w-full sm:w-auto"
             >
               <Trash2 className="mr-1 inline size-3" />
               Delete
@@ -194,7 +195,7 @@ export function WorkspaceEnvironmentPane({
               placeholder="staging_"
             />
           </div>
-          <div className="flex items-center justify-between rounded-md border bg-background/70 px-3 py-2 text-sm">
+          <div className="flex flex-col gap-3 rounded-md border bg-background/70 px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="font-medium">Use as default environment</div>
               <div className="text-xs text-muted-foreground">
@@ -211,7 +212,7 @@ export function WorkspaceEnvironmentPane({
               }
             />
           </div>
-          <Button type="button" onClick={() => void handleSave()} disabled={busy || !environmentForm.name.trim()}>
+          <Button className="w-full sm:w-auto" type="button" onClick={() => void handleSave()} disabled={busy || !environmentForm.name.trim()}>
             <Save className="mr-1 inline size-3" />
             {mode === "create"
               ? "Create Environment"

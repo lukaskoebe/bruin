@@ -9,6 +9,7 @@ import {
   editorDraftAtom,
   enrichedSelectedAssetAtom,
   pipelineAtom,
+  workspaceAtom,
 } from "@/lib/atoms";
 
 type UseEditorActionsInput = {
@@ -19,6 +20,7 @@ type UseEditorActionsInput = {
     assetId: string,
     input: {
       name?: string;
+      type?: string;
       content?: string;
       materialization_type?: string;
       meta?: Record<string, string>;
@@ -57,6 +59,7 @@ export function useEditorActions({
     null
   );
   const setEditorDraft = useSetAtom(editorDraftAtom);
+  const setWorkspace = useSetAtom(workspaceAtom);
 
   const handleEditorChange = useCallback(
     (value?: string) => {
@@ -193,6 +196,53 @@ export function useEditorActions({
     [asset, editorValue, pipelineId, runUpdateAsset]
   );
 
+  const handleAssetTypeChange = useCallback(
+    (assetType: string) => {
+      if (!asset || !pipelineId) {
+        return;
+      }
+
+      const trimmedType = assetType.trim();
+      if (!trimmedType || trimmedType === asset.type) {
+        return;
+      }
+
+      void runUpdateAsset(pipelineId, asset.id, {
+        type: trimmedType,
+        content: editorValue,
+      }).then((updated) => {
+        if (!updated) {
+          return;
+        }
+
+        setWorkspace((current) => {
+          if (!current) {
+            return current;
+          }
+
+          return {
+            ...current,
+            pipelines: current.pipelines.map((currentPipeline) => {
+              if (currentPipeline.id !== pipelineId) {
+                return currentPipeline;
+              }
+
+              return {
+                ...currentPipeline,
+                assets: currentPipeline.assets.map((currentAsset) =>
+                  currentAsset.id === asset.id
+                    ? { ...currentAsset, type: trimmedType }
+                    : currentAsset
+                ),
+              };
+            }),
+          };
+        });
+      });
+    },
+    [asset, editorValue, pipelineId, runUpdateAsset, setWorkspace]
+  );
+
   const handleAssetNameChange = useCallback(
     (assetName: string) => {
       if (!asset || !pipelineId) {
@@ -222,6 +272,7 @@ export function useEditorActions({
     handleMaterializeSelectedAsset,
     handleInspectSelectedAsset,
     handleAssetNameChange,
+    handleAssetTypeChange,
     handleMaterializationTypeChange,
   };
 }

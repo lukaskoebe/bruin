@@ -223,6 +223,11 @@ type deleteWorkspaceConnectionRequest struct {
 	Name            string `json:"name"`
 }
 
+type testWorkspaceConnectionRequest struct {
+	EnvironmentName string `json:"environment_name"`
+	Name            string `json:"name"`
+}
+
 type webPipeline struct {
 	ID     string     `json:"id"`
 	Name   string     `json:"name"`
@@ -417,6 +422,7 @@ func (s *webServer) registerRoutes(router chi.Router) {
 	router.Post("/api/config/connections", s.handleCreateWorkspaceConnection)
 	router.Put("/api/config/connections", s.handleUpdateWorkspaceConnection)
 	router.Delete("/api/config/connections", s.handleDeleteWorkspaceConnection)
+	router.Post("/api/config/connections/test", s.handleTestWorkspaceConnection)
 	router.Get("/api/ingestr/suggestions", s.handleGetIngestrSuggestions)
 	router.Get("/api/assets/{assetID}/sql-path-suggestions", s.handleGetSQLPathSuggestions)
 	router.Get("/api/sql/databases", s.handleGetSQLDatabases)
@@ -846,6 +852,75 @@ func (s *webServer) handleDeleteWorkspaceConnection(w http.ResponseWriter, r *ht
 	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
 }
 
+func (s *webServer) handleTestWorkspaceConnection(w http.ResponseWriter, r *http.Request) {
+	var req testWorkspaceConnectionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
+		return
+	}
+
+	configPath := s.resolveConfigFilePath()
+	cfg, err := config.LoadOrCreate(afero.NewOsFs(), configPath)
+	if err != nil {
+		webapi.WriteInternalError(w, "config_load_failed", err.Error())
+		return
+	}
+
+	environmentName := strings.TrimSpace(req.EnvironmentName)
+	if environmentName == "" {
+		environmentName = cfg.SelectedEnvironmentName
+	}
+	if environmentName == "" {
+		environmentName = cfg.DefaultEnvironmentName
+	}
+	if environmentName == "" {
+		webapi.WriteBadRequest(w, "missing_environment", "no environment selected")
+		return
+	}
+
+	if err := cfg.SelectEnvironment(environmentName); err != nil {
+		webapi.WriteBadRequest(w, "environment_select_failed", err.Error())
+		return
+	}
+
+	manager, errs := connection.NewManagerFromConfigWithContext(r.Context(), cfg)
+	if len(errs) > 0 {
+		webapi.WriteInternalError(w, "connection_manager_failed", errs[0].Error())
+		return
+	}
+
+	connectionName := strings.TrimSpace(req.Name)
+	if connectionName == "" {
+		webapi.WriteBadRequest(w, "missing_connection_name", "connection name is required")
+		return
+	}
+
+	conn := manager.GetConnection(connectionName)
+	if conn == nil {
+		webapi.WriteBadRequest(w, "missing_connection", fmt.Sprintf("connection %q not found", connectionName))
+		return
+	}
+
+	tester, ok := conn.(interface{ Ping(ctx context.Context) error })
+	if !ok {
+		s.writeJSON(w, http.StatusOK, map[string]any{
+			"status":  "ok",
+			"message": fmt.Sprintf("Connection '%s' does not support validation yet.", connectionName),
+		})
+		return
+	}
+
+	if err := tester.Ping(r.Context()); err != nil {
+		webapi.WriteBadRequest(w, "connection_test_failed", fmt.Sprintf("failed to test connection '%s': %s", connectionName, err.Error()))
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "ok",
+		"message": fmt.Sprintf("Successfully validated connection '%s' in environment %s.", connectionName, environmentName),
+	})
+}
+
 func (s *webServer) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -1203,6 +1278,7 @@ func (s *webServer) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
 
 type updateAssetRequest struct {
 	Name                *string           `json:"name,omitempty"`
+	Type                *string           `json:"type,omitempty"`
 	Content             *string           `json:"content,omitempty"`
 	MaterializationType *string           `json:"materialization_type,omitempty"`
 	Meta                map[string]string `json:"meta,omitempty"`
@@ -1246,7 +1322,7 @@ func (s *webServer) handleUpdateAsset(w http.ResponseWriter, r *http.Request) {
 	changedAssetIDs := []string{assetID}
 	changedAssetPaths := []string{filepath.ToSlash(relAssetPath)}
 
-	if req.Name != nil || req.MaterializationType != nil || req.Meta != nil {
+	if req.Name != nil || req.Type != nil || req.MaterializationType != nil || req.Meta != nil {
 		_, parsedPipeline, asset, resolveErr := s.resolveAssetByID(r.Context(), assetID)
 		if resolveErr != nil {
 			webapi.WriteBadRequest(w, "asset_resolve_failed", resolveErr.Error())
@@ -1272,6 +1348,16 @@ func (s *webServer) handleUpdateAsset(w http.ResponseWriter, r *http.Request) {
 				asset.Name = nextName
 				renamedAsset = true
 			}
+		}
+
+		if req.Type != nil {
+			nextType := strings.TrimSpace(*req.Type)
+			if nextType == "" {
+				webapi.WriteBadRequest(w, "invalid_asset_type", "asset type cannot be empty")
+				return
+			}
+
+			asset.Type = pipeline.AssetType(nextType)
 		}
 
 		if req.MaterializationType != nil {

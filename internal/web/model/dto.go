@@ -133,6 +133,7 @@ type CreateAssetRequest struct {
 
 // UpdateAssetRequest is the request body for updating an asset.
 type UpdateAssetRequest struct {
+	Type                *string           `json:"type,omitempty"`
 	Content             *string           `json:"content,omitempty"`
 	MaterializationType *string           `json:"materialization_type,omitempty"`
 	Meta                map[string]string `json:"meta,omitempty"`
