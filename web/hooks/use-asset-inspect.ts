@@ -261,7 +261,7 @@ export function useAssetInspect(visualAssets: WebAsset[] = []) {
 
   const requestLimits = useMemo(() => {
     const limits: Record<string, number> = {};
-    for (const assetId of assetIds) {
+    for (const assetId of new Set([...assetIds, ...Object.keys(requestedLimitsByAssetId)])) {
       limits[assetId] =
         requestedLimitsByAssetId[assetId] ?? baseLimitByAssetId[assetId] ?? 200;
     }
@@ -371,10 +371,14 @@ export function useAssetInspect(visualAssets: WebAsset[] = []) {
 
   const canLoadMoreByAssetId = useMemo<Record<string, boolean>>(() => {
     const next: Record<string, boolean> = {};
-    for (const assetId of assetIds) {
+    for (const assetId of Object.keys(byAssetId)) {
       const asset = assetById[assetId];
       const entry = byAssetId[assetId];
-      if (!asset || !entry || getAssetViewMode(asset.meta) !== "table") {
+      if (!entry) {
+        continue;
+      }
+
+      if (asset && getAssetViewMode(asset.meta) !== "table") {
         continue;
       }
 
@@ -385,7 +389,7 @@ export function useAssetInspect(visualAssets: WebAsset[] = []) {
       }
     }
     return next;
-  }, [assetById, assetIds, baseLimitByAssetId, byAssetId, requestedLimitsByAssetId]);
+  }, [assetById, baseLimitByAssetId, byAssetId, requestedLimitsByAssetId]);
 
   const loadMorePreviewRows = useCallback(
     (assetId: string) => {

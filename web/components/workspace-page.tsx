@@ -278,6 +278,8 @@ export function WorkspacePage() {
           selectedMaterializeEntry: assetResults.selectedMaterializeEntry,
           materializeHistory: assetResults.materializeHistory,
           materializeOutputHtml: assetResults.materializeOutputHtml,
+          canLoadMoreInspectRows: assetResults.canLoadMoreInspectRows,
+          onLoadMoreInspectRows: assetResults.loadMoreInspectRows,
           onResultTabChange: assetResults.setResultTab,
           onSelectMaterializeEntry: handleSelectMaterializeEntry,
           onInit: setReactFlowInstance,

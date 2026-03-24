@@ -66,8 +66,14 @@ export function useAssetResults() {
   const pipeline = useAtomValue(pipelineAtom);
   const pipelineId = pipeline?.id ?? null;
   const selectedAssetId = useAtomValue(resolvedSelectedAssetAtom);
-  const { inspectAssetById, inspectByAssetId, inspectLoadingByAssetId } =
-    useAssetInspect();
+  const inspectAssets = useMemo(() => (asset ? [asset] : []), [asset]);
+  const {
+    inspectAssetById,
+    inspectByAssetId,
+    inspectLoadingByAssetId,
+    canLoadMoreByAssetId,
+    loadMorePreviewRows,
+  } = useAssetInspect(inspectAssets);
   const {
     resultTab,
     selectedMaterializeEntryId,
@@ -79,6 +85,9 @@ export function useAssetResults() {
     : null;
   const inspectLoading = selectedAssetId
     ? inspectLoadingByAssetId[selectedAssetId] ?? false
+    : false;
+  const canLoadMoreInspectRows = selectedAssetId
+    ? Boolean(canLoadMoreByAssetId[selectedAssetId])
     : false;
 
   const effectiveMaterializeLoading =
@@ -125,12 +134,14 @@ export function useAssetResults() {
       return "materialize" as const;
     }
 
-    if (resultTab === "materialize" && materializeHistory.length === 0 && hasInspectData) {
-      return "inspect" as const;
-    }
-
     return resultTab;
   }, [hasInspectData, materializeHistory.length, resultTab]);
+
+  const loadMoreInspectRows = () => {
+    if (selectedAssetId) {
+      loadMorePreviewRows(selectedAssetId);
+    }
+  };
 
   const upsertMaterializeEntry = (
     entryId: string,
@@ -450,6 +461,8 @@ export function useAssetResults() {
     materializeOutputHtml,
     selectedMaterializeEntry,
     materializeHistory,
+    canLoadMoreInspectRows,
+    loadMoreInspectRows,
     setResultTab,
     selectMaterializeEntry,
     runInspectForAsset,

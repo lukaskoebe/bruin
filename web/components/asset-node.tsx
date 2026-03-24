@@ -2,12 +2,9 @@
 
 import { Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Handle, NodeProps, Position } from "reactflow";
+import { Handle, NodeProps, Position, useUpdateNodeInternals } from "reactflow";
 
-import {
-  AssetNodeMeasurement,
-  AssetNodePreview,
-} from "@/components/asset-node-preview";
+import { AssetNodePreview } from "@/components/asset-node-preview";
 import { AssetTypeIcon } from "@/components/asset-type-icon";
 import { Button } from "@/components/ui/button";
 import { AssetNodeData } from "@/lib/graph";
@@ -18,7 +15,8 @@ import {
   getTableDenseMode,
 } from "@/lib/asset-visualization";
 
-export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
+export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
+  const updateNodeInternals = useUpdateNodeInternals();
   const materializationType = normalizeMaterialization(data.materializedAs);
 
   const previewMode = getAssetViewMode(data.meta);
@@ -42,12 +40,7 @@ export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
     () => buildMarkdown(data.meta, previewRows),
     [data.meta, previewRows]
   );
-  const measurementRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [measuredSize, setMeasuredSize] = useState<{
-    width: number;
-    height: number;
-  } | null>(null);
   const [showAddButton, setShowAddButton] = useState(false);
   const { prefix, leaf } = useMemo(
     () => splitAssetName(data.name),
@@ -55,26 +48,19 @@ export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
   );
 
   useEffect(() => {
-    if (previewMode !== "table" && previewMode !== "markdown") {
-      return;
-    }
-
-    const element = measurementRef.current;
+    const element = containerRef.current;
     if (!element) {
       return;
     }
 
-    const nextWidth = Math.ceil(element.scrollWidth);
-    const nextHeight = Math.ceil(element.scrollHeight);
-    if (nextWidth === 0 || nextHeight === 0) {
-      return;
-    }
-
-    setMeasuredSize({
-      width: Math.min(760, Math.max(260, nextWidth + 24)),
-      height: Math.min(500, Math.max(126, nextHeight + 24)),
+    const observer = new ResizeObserver(() => {
+      updateNodeInternals(id);
     });
-  }, [chart, markdown, previewColumns, previewMode, previewRows]);
+
+    observer.observe(element);
+
+    return () => observer.disconnect();
+  }, [id, updateNodeInternals]);
 
   const rowCountClass =
     data.rowCount === undefined || data.rowCount === null
@@ -110,13 +96,7 @@ export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
                 width: 380,
                 minHeight: 280,
               }
-            : (previewMode === "table" || previewMode === "markdown") &&
-                measuredSize
-              ? {
-                  width: measuredSize.width,
-                  minHeight: measuredSize.height,
-                }
-              : undefined
+            : undefined
         }
       >
         {data.isMaterialized && (
@@ -173,15 +153,6 @@ export function AssetNode({ data, selected }: NodeProps<AssetNodeData>) {
           previewColumns={previewColumns}
           dense={tableDense}
           previewError={previewError}
-          previewMode={previewMode}
-          previewRows={previewRows}
-        />
-
-        <AssetNodeMeasurement
-          dense={tableDense}
-          markdown={markdown || ""}
-          measurementRef={measurementRef}
-          previewColumns={previewColumns}
           previewMode={previewMode}
           previewRows={previewRows}
         />

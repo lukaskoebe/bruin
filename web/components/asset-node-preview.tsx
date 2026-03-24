@@ -1,5 +1,6 @@
-import { lazy, Suspense } from "react";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { lazy, Suspense, type WheelEvent } from "react";
+import { createPortal } from "react-dom";
+import { Loader2 } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -17,6 +18,7 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
+import { VirtualDataTable } from "@/components/virtual-data-table";
 import { AssetViewMode, LineChartSpec } from "@/lib/asset-visualization";
 
 const ReactMarkdown = lazy(() => import("react-markdown"));
@@ -57,6 +59,21 @@ export function AssetNodePreview({
   }
 
   if (isPreviewLoading) {
+    if (previewMode === "table" && previewColumns.length > 0) {
+      return (
+        <div className="mt-2">
+          <TablePreview
+            canLoadMore={canLoadMorePreviewRows}
+            columns={previewColumns}
+            dense={dense}
+            loading={isPreviewLoading}
+            onLoadMore={onLoadMorePreviewRows}
+            rows={previewRows}
+          />
+        </div>
+      );
+    }
+
     return <PreviewLoading />;
   }
 
@@ -70,11 +87,12 @@ export function AssetNodePreview({
           Select chart columns to preview this visualization.
         </div>
       )}
-      {previewMode === "table" && previewRows.length > 0 && (
+      {previewMode === "table" && (
         <TablePreview
           canLoadMore={canLoadMorePreviewRows}
           columns={previewColumns}
           dense={dense}
+          loading={isPreviewLoading}
           onLoadMore={onLoadMorePreviewRows}
           rows={previewRows}
         />
@@ -92,6 +110,8 @@ interface AssetNodeMeasurementProps {
   previewRows: Record<string, unknown>[];
   markdown: string;
   dense?: boolean;
+  isPreviewLoading?: boolean;
+  canLoadMorePreviewRows?: boolean;
   measurementRef: React.RefObject<HTMLDivElement | null>;
 }
 
@@ -101,27 +121,36 @@ export function AssetNodeMeasurement({
   previewRows,
   markdown,
   dense = false,
+  isPreviewLoading = false,
+  canLoadMorePreviewRows = false,
   measurementRef,
 }: AssetNodeMeasurementProps) {
   if (previewMode !== "table" && previewMode !== "markdown") {
     return null;
   }
 
-  return (
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
     <div
       className="pointer-events-none fixed left-0 top-0 -z-10 opacity-0"
       ref={measurementRef}
     >
       {previewMode === "table" ? (
         <TablePreview
+          canLoadMore={canLoadMorePreviewRows}
           columns={previewColumns}
           dense={dense}
+          loading={isPreviewLoading}
           rows={previewRows}
         />
       ) : (
         <MarkdownPreview markdown={markdown} />
       )}
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -209,84 +238,29 @@ function TablePreview({
   canLoadMore,
   columns,
   dense = false,
+  loading = false,
   onLoadMore,
   rows,
 }: {
   canLoadMore?: boolean;
   columns: string[];
   dense?: boolean;
+  loading?: boolean;
   onLoadMore?: () => void;
   rows: Record<string, unknown>[];
 }) {
   return (
-    <div
-      className="max-h-56 overflow-auto rounded border bg-background"
-      onWheelCapture={(event) => {
-        const element = event.currentTarget;
-        const canScrollVertically =
-          element.scrollHeight > element.clientHeight + 1;
-        const canScrollHorizontally =
-          element.scrollWidth > element.clientWidth + 1;
-
-        const wantsVerticalScroll =
-          Math.abs(event.deltaY) >= Math.abs(event.deltaX);
-        const wantsHorizontalScroll =
-          !wantsVerticalScroll && event.deltaX !== 0;
-
-        if (
-          (wantsVerticalScroll && canScrollVertically) ||
-          (wantsHorizontalScroll && canScrollHorizontally)
-        ) {
-          event.stopPropagation();
-        }
-      }}
-    >
-      <table className="w-full border-collapse text-[11px]">
-        <thead className="sticky top-0 bg-muted/70">
-          <tr>
-            {columns.map((column, columnIndex) => (
-              <th
-                className={`border-b text-left font-medium whitespace-nowrap ${
-                  dense ? "px-2 py-1" : "px-2 py-1.5"
-                }`}
-                key={`${column}-${columnIndex}`}
-              >
-                {column}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, rowIndex) => (
-            <tr className="odd:bg-muted/20" key={rowIndex}>
-              {columns.map((column, columnIndex) => (
-                <td
-                  className={`border-b align-top whitespace-nowrap ${
-                    dense ? "px-2 py-0.5" : "px-2 py-1"
-                  }`}
-                  key={`${rowIndex}-${column}-${columnIndex}`}
-                >
-                  {stringifyCellValue(row[column])}
-                </td>
-              ))}
-            </tr>
-          ))}
-          {canLoadMore && onLoadMore && (
-            <tr>
-              <td className="p-2" colSpan={Math.max(1, columns.length)}>
-                <button
-                  className="flex w-full items-center justify-center gap-1 rounded border border-dashed px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-                  onClick={onLoadMore}
-                  type="button"
-                >
-                  <ChevronDown className="size-3" />
-                  Load more rows
-                </button>
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+    <div className="max-h-56" onWheelCapture={stopPreviewScrollPropagation}>
+      <VirtualDataTable
+        columns={columns}
+        rows={rows}
+        height={224}
+        dense={dense}
+        loading={loading}
+        canLoadMore={canLoadMore}
+        onLoadMore={onLoadMore}
+        autoLoadMore
+      />
     </div>
   );
 }
@@ -319,22 +293,18 @@ function MarkdownPreview({ markdown }: { markdown: string }) {
   );
 }
 
-function stringifyCellValue(value: unknown): string {
-  if (value === null || value === undefined) {
-    return "";
-  }
+function stopPreviewScrollPropagation(event: WheelEvent<HTMLDivElement>) {
+  const element = event.currentTarget;
+  const canScrollVertically = element.scrollHeight > element.clientHeight + 1;
+  const canScrollHorizontally = element.scrollWidth > element.clientWidth + 1;
+
+  const wantsVerticalScroll = Math.abs(event.deltaY) >= Math.abs(event.deltaX);
+  const wantsHorizontalScroll = !wantsVerticalScroll && event.deltaX !== 0;
 
   if (
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
+    (wantsVerticalScroll && canScrollVertically) ||
+    (wantsHorizontalScroll && canScrollHorizontally)
   ) {
-    return String(value);
-  }
-
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
+    event.stopPropagation();
   }
 }

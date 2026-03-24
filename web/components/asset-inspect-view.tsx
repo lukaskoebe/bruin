@@ -32,9 +32,19 @@ type Props = {
   columns: string[];
   rows: Record<string, unknown>[];
   meta?: Record<string, string>;
+  loading?: boolean;
+  canLoadMore?: boolean;
+  onLoadMore?: () => void;
 };
 
-export function AssetInspectView({ columns, rows, meta }: Props) {
+export function AssetInspectView({
+  columns,
+  rows,
+  meta,
+  loading = false,
+  canLoadMore = false,
+  onLoadMore,
+}: Props) {
   const view = getAssetViewMode(meta);
   const chartType = (meta?.web_chart_type ?? "line").trim().toLowerCase();
   const tableDense = getTableDenseMode(meta);
@@ -163,6 +173,10 @@ export function AssetInspectView({ columns, rows, meta }: Props) {
       rows={rows}
       height={200}
       dense={tableDense}
+      loading={loading}
+      canLoadMore={canLoadMore}
+      onLoadMore={onLoadMore}
+      autoLoadMore
     />
   );
 }

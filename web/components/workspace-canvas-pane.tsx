@@ -36,6 +36,8 @@ export type WorkspaceCanvasPaneProps = {
   selectedMaterializeEntry: MaterializeHistoryEntry | null;
   materializeHistory: MaterializeHistoryEntry[];
   materializeOutputHtml: string | null;
+  canLoadMoreInspectRows?: boolean;
+  onLoadMoreInspectRows?: () => void;
   onResultTabChange: (tab: "inspect" | "materialize") => void;
   onSelectMaterializeEntry: (entryId: string) => void;
   onInit: (instance: ReactFlowInstance) => void;
@@ -71,6 +73,8 @@ export function WorkspaceCanvasPane({
   selectedMaterializeEntry,
   materializeHistory,
   materializeOutputHtml,
+  canLoadMoreInspectRows,
+  onLoadMoreInspectRows,
   onResultTabChange,
   onSelectMaterializeEntry,
   onInit,
@@ -170,6 +174,8 @@ export function WorkspaceCanvasPane({
                 selectedMaterializeEntry={selectedMaterializeEntry}
                 materializeHistory={materializeHistory}
                 materializeOutputHtml={materializeOutputHtml}
+                canLoadMoreInspectRows={canLoadMoreInspectRows}
+                onLoadMoreInspectRows={onLoadMoreInspectRows}
                 onResultTabChange={onResultTabChange}
                 onSelectMaterializeEntry={onSelectMaterializeEntry}
               />

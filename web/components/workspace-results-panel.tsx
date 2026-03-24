@@ -20,6 +20,8 @@ type Props = {
   selectedMaterializeEntry: MaterializeHistoryEntry | null;
   materializeHistory: MaterializeHistoryEntry[];
   materializeOutputHtml: string | null;
+  canLoadMoreInspectRows?: boolean;
+  onLoadMoreInspectRows?: () => void;
   onResultTabChange: (value: "inspect" | "materialize") => void;
   onSelectMaterializeEntry: (entryId: string) => void;
 };
@@ -35,6 +37,8 @@ export function WorkspaceResultsPanel({
   selectedMaterializeEntry,
   materializeHistory,
   materializeOutputHtml,
+  canLoadMoreInspectRows,
+  onLoadMoreInspectRows,
   onResultTabChange,
   onSelectMaterializeEntry,
 }: Props) {
@@ -67,7 +71,7 @@ export function WorkspaceResultsPanel({
         </div>
 
         <TabsContent className="min-h-0 flex-1 p-2" value="inspect">
-          {inspectLoading ? (
+          {inspectLoading && !inspectResult ? (
             <LoadingState label="Inspecting asset..." />
           ) : inspectResult?.error ? (
             <div className="flex h-full min-h-0 flex-col gap-2">
@@ -85,6 +89,9 @@ export function WorkspaceResultsPanel({
               columns={inspectResult?.columns ?? []}
               rows={inspectResult?.rows ?? []}
               meta={inspectMeta}
+              loading={inspectLoading}
+              canLoadMore={canLoadMoreInspectRows}
+              onLoadMore={onLoadMoreInspectRows}
             />
           )}
         </TabsContent>

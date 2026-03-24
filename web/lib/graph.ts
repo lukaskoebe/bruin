@@ -164,7 +164,7 @@ export function buildFlowFromPipeline(
           ? () => onLoadMorePreviewRows(asset.id)
           : undefined,
         preview:
-          previewMode && inspect && (inspect.rows.length > 0 || inspect.error)
+          previewMode && inspect
             ? {
                 mode: previewMode,
                 columns: inspect.columns,
