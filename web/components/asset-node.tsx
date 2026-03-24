@@ -46,10 +46,6 @@ export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
   );
   const measurementRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [measuredSize, setMeasuredSize] = useState<{
-    width: number;
-    height: number;
-  } | null>(null);
   const [showAddButton, setShowAddButton] = useState(false);
   const { prefix, leaf } = useMemo(
     () => splitAssetName(data.name),
@@ -67,8 +63,6 @@ export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
     () => buildIngestrEndpoint(data.parameters?.destination, data.connection),
     [data.connection, data.parameters?.destination]
   );
-  const chartWidth = isIngestrAsset ? 400 : 380;
-  const chartMinHeight = isIngestrAsset ? 304 : 280;
 
   useEffect(() => {
     const element = containerRef.current;
@@ -84,41 +78,6 @@ export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
 
     return () => observer.disconnect();
   }, [id, updateNodeInternals]);
-
-  useEffect(() => {
-    if (previewMode !== "table" && previewMode !== "markdown") {
-      return;
-    }
-
-    const element = measurementRef.current;
-    if (!element) {
-      return;
-    }
-
-    const nextWidth = Math.ceil(element.scrollWidth);
-    const nextHeight = Math.ceil(element.scrollHeight);
-    if (nextWidth === 0 || nextHeight === 0) {
-      return;
-    }
-
-    setMeasuredSize({
-      width: Math.min(
-        760,
-        Math.max(isIngestrAsset ? 340 : 260, nextWidth + 24)
-      ),
-      height: Math.min(
-        500,
-        Math.max(isIngestrAsset ? 150 : 126, nextHeight + 24)
-      ),
-    });
-  }, [
-    chart,
-    isIngestrAsset,
-    markdown,
-    previewColumns,
-    previewMode,
-    previewRows,
-  ]);
 
   const rowCountClass =
     data.rowCount === undefined || data.rowCount === null
@@ -148,20 +107,6 @@ export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
           const rect = element.getBoundingClientRect();
           setShowAddButton(event.clientY >= rect.bottom - 36);
         }}
-        style={
-          previewMode === "chart"
-            ? {
-                width: chartWidth,
-                minHeight: chartMinHeight,
-              }
-            : (previewMode === "table" || previewMode === "markdown") &&
-                measuredSize
-              ? {
-                  width: measuredSize.width,
-                  minHeight: measuredSize.height,
-                }
-            : undefined
-        }
       >
         {data.isMaterialized && (
           <span
