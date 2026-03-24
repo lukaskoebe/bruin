@@ -13,6 +13,7 @@ import {
   registerSQLProviders,
   resolveTableAtPosition,
 } from "@/lib/monaco-sql-providers";
+import { formatAssetSQL } from "@/lib/sql-formatting";
 import { resolveConnection, SchemaTable } from "@/lib/sql-schema";
 import { WebAsset } from "@/lib/types";
 import { useAtomValue } from "jotai";
@@ -50,6 +51,9 @@ export function useSQLIntellisense(
       asset && workspace ? resolveConnection(asset, workspace.connections ?? {}) : null;
 
     const disposable = registerSQLProviders(monaco, tables, upstreamNames, {
+      formatter: asset
+        ? (sql) => formatAssetSQL(sql, asset.type)
+        : undefined,
       async provideTableContextSuggestions({ monaco: monacoInstance, prefix, range }) {
         if (!connectionName) {
           return [];

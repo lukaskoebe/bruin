@@ -31,6 +31,7 @@ Completed or substantially completed:
 - sidebar expansion is decoupled from navigation
 - settings route files have been migrated to directory-style organization under `web/src/routes/_workspace/settings/`
 - `web/lib/api.ts` now has clearer internal helpers for text parsing, parsed text responses, and materialize stream handling
+- Package G groundwork now includes SQL document formatting and semantic schema/table/column highlighting in Monaco
 
 Still active / remaining:
 

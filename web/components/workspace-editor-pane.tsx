@@ -15,8 +15,10 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useSQLIntellisense } from "@/hooks/use-sql-intellisense";
+import { useSQLFormatting } from "@/hooks/use-sql-formatting";
 import { useWorkspaceEditorDerivedState } from "@/hooks/use-workspace-editor-derived-state";
 import { useYAMLIntellisense } from "@/hooks/use-yaml-intellisense";
+import { defineBruinMonacoThemes } from "@/lib/monaco-theme";
 import { WebAsset } from "@/lib/types";
 
 export type AssetConfigForm = {
@@ -124,8 +126,19 @@ export function WorkspaceEditorPane({
   );
   useYAMLIntellisense(monacoInstance, editorInstance, asset);
 
+  const { formatSQL, isSqlAsset, shortcutLabel } = useSQLFormatting(
+    asset,
+    editorInstance,
+    monacoInstance
+  );
+
+  const handleEditorBeforeMount = useCallback((monaco: Monaco) => {
+    defineBruinMonacoThemes(monaco);
+  }, []);
+
   const handleEditorMount = useCallback(
     (editor: MonacoNS.editor.IStandaloneCodeEditor, monaco: Monaco) => {
+      defineBruinMonacoThemes(monaco);
       setEditorInstance(editor);
       setMonacoInstance(monaco);
     },
@@ -199,9 +212,13 @@ export function WorkspaceEditorPane({
             editorHighlighted={editorHighlighted}
             helpMode={helpMode}
             highlightStyle={highlightStyle}
+            formatShortcutLabel={shortcutLabel}
+            isSqlAsset={isSqlAsset}
             mobile={mobile}
             monacoTheme={monacoTheme}
             onChange={onEditorChange}
+            onBeforeMount={handleEditorBeforeMount}
+            onFormat={formatSQL}
             onMount={handleEditorMount}
           />
 

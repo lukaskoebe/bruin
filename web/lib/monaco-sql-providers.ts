@@ -21,7 +21,25 @@ type RemoteSQLResolver = {
     prefix: string;
     range: MonacoNS.IRange;
   }): Promise<MonacoNS.languages.CompletionItem[]>;
+  formatter?: (sql: string) => string | null;
 };
+
+type SemanticTokenType = "schema" | "table" | "column";
+
+type RawSemanticToken = {
+  lineNumber: number;
+  startColumn: number;
+  length: number;
+  tokenType: SemanticTokenType;
+};
+
+const SEMANTIC_TOKEN_TYPES: SemanticTokenType[] = ["schema", "table", "column"];
+
+const QUALIFIED_IDENTIFIER_PATTERN =
+  /(?:(?:"[^"]+"|`[^`]+`|[a-zA-Z_][\w$]*)\.)+(?:"[^"]+"|`[^`]+`|[a-zA-Z_][\w$]*)/g;
+
+const TABLE_CLAUSE_PATTERN =
+  /\b(?:from|join|into|update)\s+((?:(?:"[^"]+"|`[^`]+`|[a-zA-Z_][\w$]*)\.)*(?:"[^"]+"|`[^`]+`|[a-zA-Z_][\w$]*))/gi;
 
 const SQL_KEYWORDS = [
   "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "IS", "NULL",
@@ -84,6 +102,67 @@ function buildAliasMap(
   }
 
   return aliasMap;
+}
+
+function stripSQLTriviaPreservingIdentifiers(sqlText: string): string {
+  let result = "";
+  let index = 0;
+
+  while (index < sqlText.length) {
+    const current = sqlText[index];
+    const next = sqlText[index + 1];
+
+    if (current === "-" && next === "-") {
+      while (index < sqlText.length && sqlText[index] !== "\n") {
+        result += " ";
+        index++;
+      }
+      continue;
+    }
+
+    if (current === "/" && next === "*") {
+      result += "  ";
+      index += 2;
+      while (index < sqlText.length) {
+        const blockCurrent = sqlText[index];
+        const blockNext = sqlText[index + 1];
+        if (blockCurrent === "*" && blockNext === "/") {
+          result += "  ";
+          index += 2;
+          break;
+        }
+        result += blockCurrent === "\n" ? "\n" : " ";
+        index++;
+      }
+      continue;
+    }
+
+    if (current === "'") {
+      result += " ";
+      index++;
+      while (index < sqlText.length) {
+        const char = sqlText[index];
+        if (char === "'") {
+          if (sqlText[index + 1] === "'") {
+            result += "  ";
+            index += 2;
+            continue;
+          }
+          result += " ";
+          index++;
+          break;
+        }
+        result += char === "\n" ? "\n" : " ";
+        index++;
+      }
+      continue;
+    }
+
+    result += current;
+    index++;
+  }
+
+  return result;
 }
 
 function resolveTableReference(
@@ -429,6 +508,185 @@ function identifierInfoAtPosition(
   };
 }
 
+function parseIdentifierSegments(identifier: string) {
+  const segments: Array<{
+    normalized: string;
+    start: number;
+    end: number;
+  }> = [];
+
+  const segmentPattern = /"([^"]+)"|`([^`]+)`|([a-zA-Z_][\w$]*)/g;
+
+  for (const match of identifier.matchAll(segmentPattern)) {
+    const matchedText = match[0];
+    const start = match.index ?? 0;
+    segments.push({
+      normalized: (match[1] ?? match[2] ?? match[3] ?? matchedText).toLowerCase(),
+      start,
+      end: start + matchedText.length,
+    });
+  }
+
+  return segments;
+}
+
+function pushSemanticToken(
+  tokens: RawSemanticToken[],
+  seen: Set<string>,
+  model: MonacoNS.editor.ITextModel,
+  startOffset: number,
+  length: number,
+  tokenType: SemanticTokenType,
+) {
+  if (length <= 0) {
+    return;
+  }
+
+  const position = model.getPositionAt(startOffset);
+  const key = `${position.lineNumber}:${position.column}:${length}:${tokenType}`;
+  if (seen.has(key)) {
+    return;
+  }
+
+  seen.add(key);
+  tokens.push({
+    lineNumber: position.lineNumber,
+    startColumn: position.column,
+    length,
+    tokenType,
+  });
+}
+
+function pushQualifiedTableTokens(
+  tokens: RawSemanticToken[],
+  seen: Set<string>,
+  model: MonacoNS.editor.ITextModel,
+  identifier: string,
+  baseOffset: number,
+  tables: SchemaTable[],
+) {
+  const segments = parseIdentifierSegments(identifier);
+  if (segments.length === 0) {
+    return;
+  }
+
+  const normalizedIdentifier = segments.map((segment) => segment.normalized).join(".");
+  const table = findTableByIdentifier(tables, normalizedIdentifier);
+  if (!table) {
+    return;
+  }
+
+  for (const segment of segments.slice(0, -1)) {
+    pushSemanticToken(
+      tokens,
+      seen,
+      model,
+      baseOffset + segment.start,
+      segment.end - segment.start,
+      "schema",
+    );
+  }
+
+  const tableSegment = segments[segments.length - 1];
+  pushSemanticToken(
+    tokens,
+    seen,
+    model,
+    baseOffset + tableSegment.start,
+    tableSegment.end - tableSegment.start,
+    "table",
+  );
+}
+
+function buildSemanticTokens(
+  model: MonacoNS.editor.ITextModel,
+  tables: SchemaTable[],
+): Uint32Array {
+  const sqlText = model.getValue();
+  const sanitized = stripSQLTriviaPreservingIdentifiers(sqlText);
+  const aliasMap = buildAliasMap(sqlText, tables);
+  const tokens: RawSemanticToken[] = [];
+  const seen = new Set<string>();
+
+  for (const match of sanitized.matchAll(TABLE_CLAUSE_PATTERN)) {
+    const identifier = match[1];
+    if (!identifier) {
+      continue;
+    }
+
+    const matchStart = match.index ?? 0;
+    const identifierOffset = matchStart + match[0].lastIndexOf(identifier);
+    pushQualifiedTableTokens(tokens, seen, model, identifier, identifierOffset, tables);
+  }
+
+  for (const match of sanitized.matchAll(QUALIFIED_IDENTIFIER_PATTERN)) {
+    const identifier = match[0];
+    const segments = parseIdentifierSegments(identifier);
+    if (segments.length < 2) {
+      continue;
+    }
+
+    const columnSegment = segments[segments.length - 1];
+    const relationIdentifier = segments
+      .slice(0, -1)
+      .map((segment) => segment.normalized)
+      .join(".");
+    const table = resolveTableReference(tables, aliasMap, relationIdentifier);
+    if (!table) {
+      continue;
+    }
+
+    const hasColumn = table.columns.some(
+      (column) => column.name.toLowerCase() === columnSegment.normalized,
+    );
+    if (!hasColumn) {
+      continue;
+    }
+
+    if (!aliasMap.has(relationIdentifier)) {
+      const relationText = identifier.slice(0, columnSegment.start - 1);
+      pushQualifiedTableTokens(tokens, seen, model, relationText, match.index ?? 0, tables);
+    }
+
+    pushSemanticToken(
+      tokens,
+      seen,
+      model,
+      (match.index ?? 0) + columnSegment.start,
+      columnSegment.end - columnSegment.start,
+      "column",
+    );
+  }
+
+  tokens.sort((left, right) => {
+    if (left.lineNumber !== right.lineNumber) {
+      return left.lineNumber - right.lineNumber;
+    }
+
+    return left.startColumn - right.startColumn;
+  });
+
+  const encoded: number[] = [];
+  let previousLine = 1;
+  let previousColumn = 1;
+
+  for (const token of tokens) {
+    const deltaLine = token.lineNumber - previousLine;
+    const deltaStart = deltaLine === 0 ? token.startColumn - previousColumn : token.startColumn - 1;
+    encoded.push(
+      deltaLine,
+      deltaStart,
+      token.length,
+      SEMANTIC_TOKEN_TYPES.indexOf(token.tokenType),
+      0,
+    );
+    previousLine = token.lineNumber;
+    previousColumn = token.startColumn;
+  }
+
+  return new Uint32Array(encoded);
+}
+
 export function resolveTableAtPosition(
   model: MonacoNS.editor.ITextModel,
   position: MonacoNS.Position,
@@ -449,6 +707,43 @@ export function registerSQLProviders(
   remoteResolver?: RemoteSQLResolver,
 ): MonacoNS.IDisposable {
   const disposables: MonacoNS.IDisposable[] = [];
+
+  if (remoteResolver?.formatter) {
+    disposables.push(
+      monaco.languages.registerDocumentFormattingEditProvider("sql", {
+        provideDocumentFormattingEdits(model) {
+          const formatted = remoteResolver.formatter?.(model.getValue());
+          if (!formatted || formatted === model.getValue()) {
+            return [];
+          }
+
+          return [
+            {
+              range: model.getFullModelRange(),
+              text: formatted,
+            },
+          ];
+        },
+      }),
+    );
+  }
+
+  disposables.push(
+    monaco.languages.registerDocumentSemanticTokensProvider("sql", {
+      getLegend() {
+        return {
+          tokenTypes: SEMANTIC_TOKEN_TYPES,
+          tokenModifiers: [],
+        };
+      },
+      provideDocumentSemanticTokens(model) {
+        return {
+          data: buildSemanticTokens(model, tables),
+        };
+      },
+      releaseDocumentSemanticTokens() {},
+    }),
+  );
 
   disposables.push(
     monaco.languages.registerCompletionItemProvider("sql", {

@@ -22,7 +22,10 @@ export function useWorkspaceTheme() {
     window.localStorage.setItem("bruin-web-theme", theme);
   }, [theme]);
 
-  const monacoTheme = useMemo(() => (theme === "dark" ? "vs-dark" : "vs"), [theme]);
+  const monacoTheme = useMemo(
+    () => (theme === "dark" ? "bruin-vs-dark" : "bruin-vs"),
+    [theme]
+  );
 
   return { theme, setTheme, monacoTheme };
 }

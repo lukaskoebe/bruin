@@ -2,8 +2,9 @@
 
 import type { Monaco } from "@monaco-editor/react";
 import type * as MonacoNS from "monaco-editor";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState } from "react";
 
+import { SqlFormatOverlayButton } from "@/components/sql-format-overlay-button";
 import { loadMonacoEditorModule } from "@/lib/load-monaco-editor";
 import { WebAsset } from "@/lib/types";
 
@@ -19,9 +20,13 @@ export function AssetCodeEditor({
   editorHighlighted,
   helpMode,
   highlightStyle,
+  isSqlAsset,
+  formatShortcutLabel,
   mobile,
   monacoTheme,
   onChange,
+  onBeforeMount,
+  onFormat,
   onMount,
 }: {
   asset: WebAsset | null;
@@ -30,18 +35,41 @@ export function AssetCodeEditor({
   editorHighlighted: boolean;
   helpMode: boolean;
   highlightStyle?: React.CSSProperties;
+  isSqlAsset: boolean;
+  formatShortcutLabel: string;
   mobile: boolean;
   monacoTheme: string;
   onChange: (value?: string) => void;
+  onBeforeMount: (monaco: Monaco) => void;
+  onFormat: () => void;
   onMount: (editor: MonacoNS.editor.IStandaloneCodeEditor, monaco: Monaco) => void;
 }) {
+  const [showFormatButton, setShowFormatButton] = useState(false);
+
+  const handlePointerActivity = () => {
+    if (!isSqlAsset) {
+      return;
+    }
+
+    setShowFormatButton(true);
+  };
+
   return (
     <div
-      className={`${mobile ? "min-h-[240px]" : "h-[55%]"} border-b ${
+      className={`relative ${mobile ? "min-h-[240px]" : "h-[55%]"} border-b ${
         helpMode && editorHighlighted ? "ring-2 ring-primary/70 ring-inset" : ""
       }`}
       style={helpMode && editorHighlighted ? highlightStyle : undefined}
+      onMouseMove={handlePointerActivity}
+      onMouseLeave={() => setShowFormatButton(false)}
     >
+      {isSqlAsset ? (
+        <SqlFormatOverlayButton
+          visible={showFormatButton}
+          shortcutLabel={formatShortcutLabel}
+          onFormat={onFormat}
+        />
+      ) : null}
       <Suspense
         fallback={<div className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading editor...</div>}
       >
@@ -52,6 +80,7 @@ export function AssetCodeEditor({
           keepCurrentModel
           value={editorValue}
           theme={monacoTheme}
+          beforeMount={onBeforeMount}
           onChange={onChange}
           onMount={onMount}
           options={{

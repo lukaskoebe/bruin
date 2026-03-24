@@ -63,7 +63,7 @@ This document tracks feature work that is still needed, items that need confirma
 
 ## SQL, Paths, And Query Intelligence
 
-- Autocomplete S3 paths and local paths inside DuckDB queries.
+- Autocomplete S3 paths and local paths inside DuckDB queries is already working and should not be reimplemented.
 - Add SQL autocomplete for column values, at least for DuckDB, via distinct-value queries.
 - Add a proper SQL language server or deeper SQL parsing to improve intellisense.
 
@@ -274,11 +274,26 @@ Avoids direct collision with:
 
 Scope:
 
-- S3/local path autocomplete in DuckDB
+- preserve the existing S3/local path autocomplete in DuckDB without redoing it
 - column-value autocomplete
 - deeper SQL parsing / language-server work
 - schema/table/column highlighting
 - SQL formatting
+
+Draft for deeper parser-backed SQL intelligence:
+
+- Bruin already ships an embedded SQL parser service backed by Python `sqlglot`, wrapped by `pkg/sqlparser/parser.go`
+- the web materialize handler in `cmd/web.go` does not parse SQL directly; it shells out to `bruin run <asset>` and the actual materialization SQL is produced by warehouse-specific materializers such as `pkg/duckdb/materialization.go`
+- the existing parser is currently used for lineage, used-table extraction, table renames, limit insertion, single-select detection, dependency checks, and dev-environment schema-prefix rewrites
+- proposed first parser-backed web draft:
+  - add a backend parse endpoint that returns parser-derived context for the current asset query and dialect
+  - return at least: referenced tables, aliases, query kind, single-select status, parser errors, and resolved column lineage where cheap enough
+  - use that result to improve Monaco intelligence incrementally instead of trying to wire a full language server immediately
+- likely implementation phases:
+  - phase 1: expose parser-backed table/alias/query-shape metadata for the open asset
+  - phase 2: use parser-backed alias and qualified-column ranges for more accurate highlighting and completion scope
+  - phase 3: add parser-backed diagnostics/refactors such as unresolved references, rename assistance, and safer inspect-limit handling
+  - phase 4: evaluate whether a long-lived language-server-style adapter is still needed after the above
 
 Touches mostly:
 

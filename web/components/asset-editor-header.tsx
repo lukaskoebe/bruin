@@ -5,6 +5,7 @@ import { Check, Eye, Hammer, Pencil, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 type AssetEditorHeaderProps = {
   assetName?: string | null;
@@ -136,16 +137,23 @@ export function AssetEditorHeader({
           <Hammer className="mr-1 inline size-3" />
           {materializeLoading ? "Running..." : "Materialize"}
         </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={!hasAsset || inspectLoading}
-          onClick={onInspect}
-          type="button"
-        >
-          <Eye className="mr-1 inline size-3" />
-          {inspectLoading ? "Loading..." : "Inspect Data"}
-        </Button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!hasAsset || inspectLoading}
+                onClick={onInspect}
+                type="button"
+              >
+                <Eye className="mr-1 inline size-3" />
+                {inspectLoading ? "Loading..." : "Inspect Data"}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Shortcut: ⌘ + ↵</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         <Button
           size="sm"
           variant="destructive"
