@@ -5,6 +5,7 @@ export type WebAsset = {
   path: string;
   content: string;
   upstreams: string[];
+  parameters?: Record<string, string>;
   meta?: Record<string, string>;
   columns?: WebColumn[];
   connection?: string;

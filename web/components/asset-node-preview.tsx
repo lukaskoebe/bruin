@@ -60,6 +60,10 @@ export function AssetNodePreview({
     );
   }
 
+  if (!previewMode) {
+    return null;
+  }
+
   if (isPreviewLoading) {
     if (previewMode === "table" && previewColumns.length > 0) {
       return (

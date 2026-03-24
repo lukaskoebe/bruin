@@ -43,6 +43,7 @@ type webAsset struct {
 	Path                string            `json:"path"`
 	Content             string            `json:"content"`
 	Upstreams           []string          `json:"upstreams"`
+	Parameters          map[string]string `json:"parameters,omitempty"`
 	Meta                map[string]string `json:"meta,omitempty"`
 	Columns             []webColumn       `json:"columns,omitempty"`
 	Connection          string            `json:"connection,omitempty"`
@@ -564,6 +565,7 @@ func (s *webServer) computeWorkspaceState(ctx context.Context) (workspaceState, 
 				Path:                filepath.ToSlash(relAssetPath),
 				Content:             asset.ExecutableFile.Content,
 				Upstreams:           upstreams,
+				Parameters:          asset.Parameters,
 				Meta:                asset.Meta,
 				Columns:             pipelineColumnsToWebColumns(asset.Columns),
 				Connection:          connectionName,

@@ -27,6 +27,7 @@ type AssetTypeIconProps = {
   connection?: string;
   meta?: Record<string, string>;
   className?: string;
+  size?: number;
 };
 
 export function AssetTypeIcon({
@@ -34,8 +35,9 @@ export function AssetTypeIcon({
   connection,
   meta,
   className,
+  size = 16,
 }: AssetTypeIconProps) {
-  const resolved = resolveAssetIcon(assetType, connection, meta);
+  const resolved = resolveAssetIcon(assetType, connection, meta, size);
 
   if (!resolved) {
     return null;
@@ -44,10 +46,11 @@ export function AssetTypeIcon({
   return <span className={cn(className)}>{resolved.icon}</span>;
 }
 
-function resolveAssetIcon(
+export function resolveAssetIcon(
   assetType?: string,
   connection?: string,
-  meta?: Record<string, string>
+  meta?: Record<string, string>,
+  size = 16
 ): { icon: ReactNode } | null {
   const type = normalize(assetType);
   const provider = providerFromAssetType(type);
@@ -65,44 +68,44 @@ function resolveAssetIcon(
   const value = provider || fallback;
 
   if (isPythonType(type)) {
-    return iconWithColor(SiPython({ size: 16 }), "#3b82f6");
+    return iconWithColor(SiPython({ size }), "#3b82f6");
   }
   if (isRType(type)) {
-    return iconWithColor(SiR({ size: 16 }), "#0284c7");
+    return iconWithColor(SiR({ size }), "#0284c7");
   }
   if (isIngestrType(type)) {
-    return iconWithColor(GiBearFace({ size: 16 }), "#d97706");
+    return iconWithColor(GiBearFace({ size }), "#d97706");
   }
   if (isSensorType(type)) {
-    return iconWithColor(SiPrometheus({ size: 16 }), "#f97316");
+    return iconWithColor(SiPrometheus({ size }), "#f97316");
   }
   if (isSeedType(type)) {
-    return iconWithColor(SiDbt({ size: 16 }), "#ea580c");
+    return iconWithColor(SiDbt({ size }), "#ea580c");
   }
   if (isDashboardType(type)) {
-    return iconWithColor(SiGrafana({ size: 16 }), "#f97316");
+    return iconWithColor(SiGrafana({ size }), "#f97316");
   }
 
   if (has(value, "athena")) {
     return null;
   }
   if (has(value, "clickhouse")) {
-    return iconWithColor(SiClickhouse({ size: 16 }), "#eab308");
+    return iconWithColor(SiClickhouse({ size }), "#eab308");
   }
   if (has(value, "databricks")) {
-    return iconWithColor(SiDatabricks({ size: 16 }), "#ef4444");
+    return iconWithColor(SiDatabricks({ size }), "#ef4444");
   }
   if (has(value, "motherduck")) {
-    return iconWithColor(SiDuckdb({ size: 16 }), "#ffff00");
+    return iconWithColor(SiDuckdb({ size }), "#ffff00");
   }
   if (has(value, "duckdb")) {
-    return iconWithColor(SiDuckdb({ size: 16 }), "#ffff00");
+    return iconWithColor(SiDuckdb({ size }), "#ffff00");
   }
   if (has(value, "oracle")) {
     return null;
   }
   if (has(value, "bigquery")) {
-    return iconWithColor(SiGooglebigquery({ size: 16 }), "#3b82f6");
+    return iconWithColor(SiGooglebigquery({ size }), "#3b82f6");
   }
   if (has(value, "microsoft sql server", "sqlserver", "mssql")) {
     return null;
@@ -111,16 +114,16 @@ function resolveAssetIcon(
     return null;
   }
   if (has(value, "mysql")) {
-    return iconWithColor(SiMysql({ size: 16 }), "#0369a1");
+    return iconWithColor(SiMysql({ size }), "#0369a1");
   }
   if (has(value, "postgres", "postgresql")) {
-    return iconWithColor(SiPostgresql({ size: 16 }), "#2563eb");
+    return iconWithColor(SiPostgresql({ size }), "#2563eb");
   }
   if (has(value, "redshift")) {
     return null;
   }
   if (has(value, "snowflake")) {
-    return iconWithColor(SiSnowflake({ size: 16 }), "#06b6d4");
+    return iconWithColor(SiSnowflake({ size }), "#06b6d4");
   }
   if (has(value, "synapse")) {
     return null;
@@ -129,7 +132,7 @@ function resolveAssetIcon(
     return null;
   }
   if (has(value, "trino")) {
-    return iconWithColor(SiTrino({ size: 16 }), "#6366f1");
+    return iconWithColor(SiTrino({ size }), "#6366f1");
   }
   if (has(value, "emr")) {
     return null;
@@ -139,7 +142,7 @@ function resolveAssetIcon(
   }
 
   if (has(type, ".sql") || has(value, "sql")) {
-    return iconWithColor(SiSqlite({ size: 16 }), "#8b5cf6");
+    return iconWithColor(SiSqlite({ size }), "#8b5cf6");
   }
 
   return null;

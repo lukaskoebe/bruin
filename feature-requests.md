@@ -11,6 +11,7 @@ This document tracks feature work that is still needed, items that need confirma
 - `Prevent creating a new asset that overlaps with another one` still matters for duplicate name/path prevention.
 - `Prevent creating a new asset that overlaps with another one` for duplicate SQL/output target prevention is already implemented.
 - `Change the query type selector (duckdb, postgres, etc.) from free-text input to an explicit selector` is already done.
+- The `ingestr` node redesign items are already done.
 - `Integrated terminal with AI/MCP` should stay in a maybe section for now.
 
 ## Highest Priority Fixes

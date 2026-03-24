@@ -1,11 +1,14 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { ArrowRight, Database, Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Handle, NodeProps, Position, useUpdateNodeInternals } from "reactflow";
 
-import { AssetNodePreview } from "@/components/asset-node-preview";
-import { AssetTypeIcon } from "@/components/asset-type-icon";
+import {
+  AssetNodeMeasurement,
+  AssetNodePreview,
+} from "@/components/asset-node-preview";
+import { AssetTypeIcon, resolveAssetIcon } from "@/components/asset-type-icon";
 import { Button } from "@/components/ui/button";
 import { AssetNodeData } from "@/lib/graph";
 import {
@@ -17,6 +20,7 @@ import {
 
 export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
   const updateNodeInternals = useUpdateNodeInternals();
+  const isIngestrAsset = data.assetType.trim().toLowerCase() === "ingestr";
   const materializationType = normalizeMaterialization(data.materializedAs);
 
   const previewMode = getAssetViewMode(data.meta);
@@ -40,12 +44,31 @@ export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
     () => buildMarkdown(data.meta, previewRows),
     [data.meta, previewRows]
   );
+  const measurementRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const [measuredSize, setMeasuredSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
   const [showAddButton, setShowAddButton] = useState(false);
   const { prefix, leaf } = useMemo(
     () => splitAssetName(data.name),
     [data.name]
   );
+  const ingestrSource = useMemo(
+    () =>
+      buildIngestrEndpoint(
+        data.parameters?.source_connection,
+        data.parameters?.source_table
+      ),
+    [data.parameters?.source_connection, data.parameters?.source_table]
+  );
+  const ingestrDestination = useMemo(
+    () => buildIngestrEndpoint(data.parameters?.destination, data.connection),
+    [data.connection, data.parameters?.destination]
+  );
+  const chartWidth = isIngestrAsset ? 400 : 380;
+  const chartMinHeight = isIngestrAsset ? 304 : 280;
 
   useEffect(() => {
     const element = containerRef.current;
@@ -61,6 +84,41 @@ export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
 
     return () => observer.disconnect();
   }, [id, updateNodeInternals]);
+
+  useEffect(() => {
+    if (previewMode !== "table" && previewMode !== "markdown") {
+      return;
+    }
+
+    const element = measurementRef.current;
+    if (!element) {
+      return;
+    }
+
+    const nextWidth = Math.ceil(element.scrollWidth);
+    const nextHeight = Math.ceil(element.scrollHeight);
+    if (nextWidth === 0 || nextHeight === 0) {
+      return;
+    }
+
+    setMeasuredSize({
+      width: Math.min(
+        760,
+        Math.max(isIngestrAsset ? 340 : 260, nextWidth + 24)
+      ),
+      height: Math.min(
+        500,
+        Math.max(isIngestrAsset ? 150 : 126, nextHeight + 24)
+      ),
+    });
+  }, [
+    chart,
+    isIngestrAsset,
+    markdown,
+    previewColumns,
+    previewMode,
+    previewRows,
+  ]);
 
   const rowCountClass =
     data.rowCount === undefined || data.rowCount === null
@@ -93,9 +151,15 @@ export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
         style={
           previewMode === "chart"
             ? {
-                width: 380,
-                minHeight: 280,
+                width: chartWidth,
+                minHeight: chartMinHeight,
               }
+            : (previewMode === "table" || previewMode === "markdown") &&
+                measuredSize
+              ? {
+                  width: measuredSize.width,
+                  minHeight: measuredSize.height,
+                }
             : undefined
         }
       >
@@ -109,39 +173,83 @@ export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
           />
         )}
 
-        <div className="flex items-center gap-1.5 pr-4">
-          <AssetTypeIcon
-            assetType={data.assetType}
-            className="shrink-0 text-muted-foreground px-2"
-            connection={data.connection}
-            meta={data.meta}
-          />
-          <div className="min-w-0 flex-1 overflow-hidden">
-            <div
-              className="truncate text-sm font-semibold leading-tight"
-              title={data.name}
-            >
-              {leaf}
-            </div>
-            {prefix && (
-              <div
-                className="truncate text-[10px] leading-tight text-muted-foreground/90"
-                title={prefix}
-              >
-                {prefix}
+        {isIngestrAsset ? (
+          <div>
+            <div className="flex items-center gap-2">
+              <AssetTypeIcon
+                assetType={data.assetType}
+                className="shrink-0 px-2 text-muted-foreground"
+                size={18}
+              />
+              <div className="min-w-0 mr-4">
+                <div
+                  className="truncate text-sm font-semibold leading-tight"
+                  title={data.name}
+                >
+                  {leaf}
+                </div>
+                {prefix && (
+                  <div
+                    className="truncate text-[10px] leading-tight text-muted-foreground/90"
+                    title={prefix}
+                  >
+                    {prefix}
+                  </div>
+                )}
               </div>
-            )}
+            </div>
+
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-2">
+              <IngestrEndpoint
+                connection={data.parameters?.source_connection}
+                label={ingestrSource.primaryLabel}
+                secondaryLabel={ingestrSource.secondaryLabel}
+              />
+              <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+              <IngestrEndpoint
+                connection={data.parameters?.destination}
+                label={ingestrDestination.primaryLabel}
+                secondaryLabel={ingestrDestination.secondaryLabel}
+              />
+            </div>
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-1.5 pr-4">
+              <AssetTypeIcon
+                assetType={data.assetType}
+                className="shrink-0 px-2 text-muted-foreground"
+                connection={data.connection}
+                meta={data.meta}
+              />
+              <div className="min-w-0 flex-1 overflow-hidden">
+                <div
+                  className="truncate text-sm font-semibold leading-tight"
+                  title={data.name}
+                >
+                  {leaf}
+                </div>
+                {prefix && (
+                  <div
+                    className="truncate text-[10px] leading-tight text-muted-foreground/90"
+                    title={prefix}
+                  >
+                    {prefix}
+                  </div>
+                )}
+              </div>
+            </div>
 
-        <div className="mt-2 text-xs">
-          Materialization:{" "}
-          <span className="font-medium">{materializationType}</span>
-        </div>
+            <div className="mt-2 text-xs">
+              Materialization:{" "}
+              <span className="font-medium">{materializationType}</span>
+            </div>
 
-        <div className={`text-xs ${rowCountClass}`}>
-          Rows: {formatRowCount(data.rowCount)}
-        </div>
+            <div className={`text-xs ${rowCountClass}`}>
+              Rows: {formatRowCount(data.rowCount)}
+            </div>
+          </>
+        )}
 
         <AssetNodePreview
           assetId={id}
@@ -154,6 +262,18 @@ export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
           previewColumns={previewColumns}
           dense={tableDense}
           previewError={previewError}
+          previewMode={previewMode}
+          previewRows={previewRows}
+        />
+
+        <AssetNodeMeasurement
+          assetId={id}
+          canLoadMorePreviewRows={data.canLoadMorePreviewRows}
+          dense={tableDense}
+          isPreviewLoading={isPreviewLoading}
+          markdown={markdown || ""}
+          measurementRef={measurementRef}
+          previewColumns={previewColumns}
           previewMode={previewMode}
           previewRows={previewRows}
         />
@@ -178,6 +298,39 @@ export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
       </div>
       <Handle type="source" position={Position.Bottom} />
     </>
+  );
+}
+
+function IngestrEndpoint({
+  connection,
+  label,
+  secondaryLabel,
+}: {
+  connection?: string;
+  label: string;
+  secondaryLabel?: string;
+}) {
+  const resolvedIcon = resolveAssetIcon(undefined, connection, undefined, 18);
+
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground shadow-sm ring-1 ring-border/70">
+        {resolvedIcon?.icon ?? <Database className="size-4.5" />}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-xs font-semibold" title={label}>
+          {label}
+        </div>
+        {secondaryLabel ? (
+          <div
+            className="truncate text-[10px] text-muted-foreground"
+            title={secondaryLabel}
+          >
+            {secondaryLabel}
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -213,4 +366,37 @@ function splitAssetName(name: string) {
     prefix: parts.slice(0, -1).join("."),
     leaf: parts[parts.length - 1],
   };
+}
+
+function buildIngestrEndpoint(primary?: string, secondary?: string) {
+  const normalizedPrimary = compactLabel(primary);
+  const normalizedSecondary = compactLabel(secondary);
+
+  if (
+    normalizedPrimary &&
+    normalizedSecondary &&
+    normalizedPrimary !== normalizedSecondary
+  ) {
+    return {
+      primaryLabel: normalizedPrimary,
+      secondaryLabel: normalizedSecondary,
+    };
+  }
+
+  return {
+    primaryLabel: normalizedPrimary || normalizedSecondary || "Unknown",
+    secondaryLabel:
+      normalizedPrimary && normalizedSecondary && normalizedPrimary === normalizedSecondary
+        ? undefined
+        : normalizedSecondary,
+  };
+}
+
+function compactLabel(value?: string) {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  return trimmed.replace(/-default$/i, "");
 }

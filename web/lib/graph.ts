@@ -10,6 +10,7 @@ export type AssetNodeData = {
   name: string;
   assetType: string;
   connection?: string;
+  parameters?: Record<string, string>;
   meta?: Record<string, string>;
   isMaterialized: boolean;
   freshnessStatus?: "fresh" | "stale";
@@ -55,7 +56,7 @@ export function buildFlowFromPipeline(
     const isPreviewLoading = inspectLoadingByAssetID?.[asset.id] === true;
     sizeByAssetId.set(
       asset.id,
-      estimateNodeSize(previewMode, inspect, isPreviewLoading)
+      estimateNodeSize(asset.type, previewMode, inspect, isPreviewLoading)
     );
   }
 
@@ -153,6 +154,7 @@ export function buildFlowFromPipeline(
         name: asset.name,
         assetType: asset.type,
         connection: asset.connection,
+        parameters: asset.parameters,
         meta: asset.meta,
         isMaterialized: asset.is_materialized,
         freshnessStatus: asset.freshness_status,
@@ -206,6 +208,7 @@ export function computeGraphLayoutPositions(
     const inspect = inspectByAssetID?.[asset.id];
     const previewMode = getAssetViewMode(asset.meta);
     const size = estimateNodeSize(
+      asset.type,
       previewMode,
       inspect,
       inspectLoadingByAssetID?.[asset.id] === true
@@ -231,7 +234,12 @@ export function computeGraphLayoutPositions(
     const inspect = inspectByAssetID?.[asset.id];
     const previewMode = getAssetViewMode(asset.meta);
     const isPreviewLoading = inspectLoadingByAssetID?.[asset.id] === true;
-    const size = estimateNodeSize(previewMode, inspect, isPreviewLoading);
+    const size = estimateNodeSize(
+      asset.type,
+      previewMode,
+      inspect,
+      isPreviewLoading
+    );
     const layoutNode = graph.node(asset.id) as
       | { x: number; y: number }
       | undefined;
@@ -259,27 +267,40 @@ function defaultNodePosition(index: number) {
 }
 
 function estimateNodeSize(
+  assetType: string,
   mode: AssetViewMode | null,
   inspect: AssetInspectResponse | undefined,
   isLoading: boolean
 ) {
+  const isIngestrAsset = assetType.trim().toLowerCase() === "ingestr";
+
   if (!mode) {
-    return { width: 260, height: 126 };
+    return isIngestrAsset
+      ? { width: 320, height: 150 }
+      : { width: 260, height: 126 };
   }
 
   if (mode === "chart") {
-    return { width: 380, height: 280 };
+    return isIngestrAsset
+      ? { width: 400, height: 304 }
+      : { width: 380, height: 280 };
   }
 
   if (isLoading) {
     if (mode === "table") {
-      return { width: 420, height: 230 };
+      return isIngestrAsset
+        ? { width: 440, height: 260 }
+        : { width: 420, height: 230 };
     }
-    return { width: 420, height: 240 };
+    return isIngestrAsset
+      ? { width: 440, height: 270 }
+      : { width: 420, height: 240 };
   }
 
   if (!inspect) {
-    return { width: 260, height: 126 };
+    return isIngestrAsset
+      ? { width: 320, height: 150 }
+      : { width: 260, height: 126 };
   }
 
   if (mode === "table") {
@@ -287,16 +308,22 @@ function estimateNodeSize(
     const estimatedWidth = estimateTableWidth(inspect.columns, sampledRows);
     const rowCount = Math.min(8, inspect.rows.length);
     return {
-      width: estimatedWidth,
-      height: Math.min(420, Math.max(170, 96 + rowCount * 28)),
+      width: isIngestrAsset ? Math.max(340, estimatedWidth) : estimatedWidth,
+      height: Math.min(
+        420,
+        Math.max(isIngestrAsset ? 210 : 170, 96 + rowCount * 28)
+      ),
     };
   }
 
   const textLength = JSON.stringify(inspect.rows[0] ?? {}).length;
   const estimatedLines = Math.max(6, Math.min(22, Math.ceil(textLength / 56)));
   return {
-    width: 420,
-    height: Math.min(500, Math.max(190, 90 + estimatedLines * 18)),
+    width: isIngestrAsset ? 440 : 420,
+    height: Math.min(
+      500,
+      Math.max(isIngestrAsset ? 214 : 190, 90 + estimatedLines * 18)
+    ),
   };
 }
 
