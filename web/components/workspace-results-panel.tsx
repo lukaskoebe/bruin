@@ -70,7 +70,7 @@ export function WorkspaceResultsPanel({
           </div>
         </div>
 
-        <TabsContent className="min-h-0 flex-1 p-2" value="inspect">
+        <TabsContent className="min-h-0 flex flex-1 flex-col overflow-hidden p-2" value="inspect">
           {inspectLoading && !inspectResult ? (
             <LoadingState label="Inspecting asset..." />
           ) : inspectResult?.error ? (
@@ -96,7 +96,7 @@ export function WorkspaceResultsPanel({
           )}
         </TabsContent>
 
-        <TabsContent className="min-h-0 flex-1 p-2" value="materialize">
+        <TabsContent className="min-h-0 flex flex-1 flex-col overflow-hidden p-2" value="materialize">
           <div className="flex h-full min-h-0 overflow-hidden rounded border bg-background">
             <div className="w-56 min-w-0">
               <WorkspaceMaterializeHistoryList

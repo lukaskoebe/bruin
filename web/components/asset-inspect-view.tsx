@@ -168,15 +168,17 @@ export function AssetInspectView({
   }
 
   return (
-    <VirtualDataTable
-      columns={columns}
-      rows={rows}
-      height={200}
-      dense={tableDense}
-      loading={loading}
-      canLoadMore={canLoadMore}
-      onLoadMore={onLoadMore}
-      autoLoadMore
-    />
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <VirtualDataTable
+        columns={columns}
+        rows={rows}
+        height="100%"
+        dense={tableDense}
+        loading={loading}
+        canLoadMore={canLoadMore}
+        onLoadMore={onLoadMore}
+        autoLoadMore
+      />
+    </div>
   );
 }

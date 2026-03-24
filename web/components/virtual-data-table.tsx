@@ -3,16 +3,19 @@
 import { Loader2 } from "lucide-react";
 import { UIEvent, useLayoutEffect, useMemo, useRef } from "react";
 
+const tableScrollPositions = new Map<string, { top: number; left: number }>();
+
 type Props = {
   columns: string[];
   rows: Record<string, unknown>[];
-  height?: number;
+  height?: number | string;
   dense?: boolean;
   loading?: boolean;
   canLoadMore?: boolean;
   onLoadMore?: () => void;
   emptyLabel?: string;
   autoLoadMore?: boolean;
+  scrollKey?: string;
 };
 
 export function VirtualDataTable({
@@ -25,7 +28,9 @@ export function VirtualDataTable({
   onLoadMore,
   emptyLabel = "No rows returned.",
   autoLoadMore = false,
+  scrollKey,
 }: Props) {
+  const fillAvailableHeight = typeof height === "string";
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRequestedRef = useRef(false);
   const scrollSnapshotRef = useRef({ top: 0, left: 0, height: 0 });
@@ -54,6 +59,13 @@ export function VirtualDataTable({
       height: event.currentTarget.scrollHeight,
     };
 
+    if (scrollKey) {
+      tableScrollPositions.set(scrollKey, {
+        top: event.currentTarget.scrollTop,
+        left: event.currentTarget.scrollLeft,
+      });
+    }
+
     if (!autoLoadMore || !canLoadMore || !onLoadMore) {
       return;
     }
@@ -70,21 +82,35 @@ export function VirtualDataTable({
   }
 
   useLayoutEffect(() => {
-    if (!loadMoreRequestedRef.current) {
-      return;
-    }
-
     const element = scrollContainerRef.current;
     if (!element) {
       return;
     }
 
-    element.scrollTop = scrollSnapshotRef.current.top;
-    element.scrollLeft = scrollSnapshotRef.current.left;
-  }, [rows.length]);
+    if (!loadMoreRequestedRef.current && !scrollKey) {
+      return;
+    }
+
+    const savedPosition = scrollKey ? tableScrollPositions.get(scrollKey) : null;
+
+    if (savedPosition) {
+      element.scrollTop = savedPosition.top;
+      element.scrollLeft = savedPosition.left;
+      return;
+    }
+
+    if (loadMoreRequestedRef.current) {
+      element.scrollTop = scrollSnapshotRef.current.top;
+      element.scrollLeft = scrollSnapshotRef.current.left;
+    }
+  }, [rows.length, scrollKey]);
 
   return (
-    <div className="relative overflow-hidden rounded border bg-background">
+    <div
+      className={`relative overflow-hidden rounded border bg-background ${
+        fillAvailableHeight ? "flex h-full min-h-0 flex-col" : ""
+      }`}
+    >
       {loading ? (
         <div className="pointer-events-none absolute right-2 top-1.5 z-20 rounded bg-background/90 p-1 text-muted-foreground shadow-sm">
           <Loader2 className="size-3.5 animate-spin" />
@@ -93,8 +119,8 @@ export function VirtualDataTable({
 
       <div
         ref={scrollContainerRef}
-        style={{ height }}
-        className="overflow-auto"
+        style={fillAvailableHeight ? undefined : { height }}
+        className={fillAvailableHeight ? "min-h-0 flex-1 overflow-auto" : "overflow-auto"}
         onScroll={handleScroll}
       >
         <table className="min-w-full border-collapse text-xs">

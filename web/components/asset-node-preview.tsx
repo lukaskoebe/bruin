@@ -24,6 +24,7 @@ import { AssetViewMode, LineChartSpec } from "@/lib/asset-visualization";
 const ReactMarkdown = lazy(() => import("react-markdown"));
 
 interface AssetNodePreviewProps {
+  assetId: string;
   previewMode: AssetViewMode | null;
   chartType: string;
   chart: LineChartSpec | null;
@@ -38,6 +39,7 @@ interface AssetNodePreviewProps {
 }
 
 export function AssetNodePreview({
+  assetId,
   previewMode,
   chartType,
   chart,
@@ -63,6 +65,7 @@ export function AssetNodePreview({
       return (
         <div className="mt-2">
           <TablePreview
+            assetId={assetId}
             canLoadMore={canLoadMorePreviewRows}
             columns={previewColumns}
             dense={dense}
@@ -89,6 +92,7 @@ export function AssetNodePreview({
       )}
       {previewMode === "table" && (
         <TablePreview
+          assetId={assetId}
           canLoadMore={canLoadMorePreviewRows}
           columns={previewColumns}
           dense={dense}
@@ -105,6 +109,7 @@ export function AssetNodePreview({
 }
 
 interface AssetNodeMeasurementProps {
+  assetId: string;
   previewMode: AssetViewMode | null;
   previewColumns: string[];
   previewRows: Record<string, unknown>[];
@@ -116,6 +121,7 @@ interface AssetNodeMeasurementProps {
 }
 
 export function AssetNodeMeasurement({
+  assetId,
   previewMode,
   previewColumns,
   previewRows,
@@ -140,6 +146,7 @@ export function AssetNodeMeasurement({
     >
       {previewMode === "table" ? (
         <TablePreview
+          assetId={assetId}
           canLoadMore={canLoadMorePreviewRows}
           columns={previewColumns}
           dense={dense}
@@ -235,6 +242,7 @@ function ChartPreview({
 }
 
 function TablePreview({
+  assetId,
   canLoadMore,
   columns,
   dense = false,
@@ -242,6 +250,7 @@ function TablePreview({
   onLoadMore,
   rows,
 }: {
+  assetId: string;
   canLoadMore?: boolean;
   columns: string[];
   dense?: boolean;
@@ -260,6 +269,7 @@ function TablePreview({
         canLoadMore={canLoadMore}
         onLoadMore={onLoadMore}
         autoLoadMore
+        scrollKey={`asset-preview:${assetId}`}
       />
     </div>
   );

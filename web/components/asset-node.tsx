@@ -144,6 +144,7 @@ export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
         </div>
 
         <AssetNodePreview
+          assetId={id}
           canLoadMorePreviewRows={data.canLoadMorePreviewRows}
           chart={chart}
           chartType={chartType}
