@@ -2,7 +2,7 @@
 
 import type { Monaco } from "@monaco-editor/react";
 import type * as MonacoNS from "monaco-editor";
-import { CSSProperties, useCallback, useMemo, useState } from "react";
+import { CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
 import { UseFormReturn } from "react-hook-form";
 import { Panel } from "react-resizable-panels";
 
@@ -20,7 +20,6 @@ import { useYAMLIntellisense } from "@/hooks/use-yaml-intellisense";
 import { WebAsset } from "@/lib/types";
 
 export type AssetConfigForm = {
-  name: string;
   type: string;
   materialization: string;
   custom_checks: string;
@@ -38,6 +37,7 @@ type WorkspaceEditorPaneProps = {
   materializeLoading: boolean;
   inspectLoading: boolean;
   deleteLoading: boolean;
+  assetRenameLoading?: boolean;
   editorValue: string;
   monacoTheme: string;
   assetEditorTab: "configuration" | "checks" | "visualization";
@@ -49,8 +49,9 @@ type WorkspaceEditorPaneProps = {
   onEditorChange: (value?: string) => void;
   onMaterializeSelectedAsset: () => void;
   onInspectSelectedAsset: () => void;
+  onSaveSelectedAsset: () => Promise<false | "saved" | "already-saved">;
   onOpenDeleteDialog: () => void;
-  onAssetNameChange: (assetName: string) => void;
+  onAssetNameChange: (assetName: string) => Promise<boolean>;
   onAssetTypeChange: (assetType: string) => void;
   onMaterializationTypeChange: (materializationType: string) => void;
   onSaveVisualizationSettings: (
@@ -72,6 +73,7 @@ export function WorkspaceEditorPane({
   materializeLoading,
   inspectLoading,
   deleteLoading,
+  assetRenameLoading,
   editorValue,
   monacoTheme,
   assetEditorTab,
@@ -81,6 +83,7 @@ export function WorkspaceEditorPane({
   onEditorChange,
   onMaterializeSelectedAsset,
   onInspectSelectedAsset,
+  onSaveSelectedAsset,
   onOpenDeleteDialog,
   onAssetNameChange,
   onAssetTypeChange,
@@ -138,17 +141,50 @@ export function WorkspaceEditorPane({
       return `inmemory://bruin/assets/${asset.id}.${extension}`;
   }, [asset]);
 
+  useEffect(() => {
+    if (!editorInstance || !monacoInstance) {
+      return;
+    }
+
+    const subscription = editorInstance.onKeyDown((event) => {
+      const ctrlOrCmd = event.ctrlKey || event.metaKey;
+      if (!ctrlOrCmd) {
+        return;
+      }
+
+      if (event.keyCode === monacoInstance.KeyCode.KeyS) {
+        event.preventDefault();
+        event.stopPropagation();
+        void onSaveSelectedAsset();
+        return;
+      }
+
+      if (event.keyCode === monacoInstance.KeyCode.Enter) {
+        event.preventDefault();
+        event.stopPropagation();
+        onInspectSelectedAsset();
+      }
+    });
+
+    return () => {
+      subscription.dispose();
+    };
+  }, [editorInstance, monacoInstance, onInspectSelectedAsset, onSaveSelectedAsset]);
+
   const content = (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
       <AssetEditorHeader
+        assetName={asset?.name}
         assetPath={asset?.path}
         helpMode={helpMode}
         actionHighlighted={actionHighlighted}
         highlightStyle={highlightStyle}
         hasAsset={Boolean(asset)}
+        assetRenameLoading={assetRenameLoading}
         materializeLoading={materializeLoading}
         inspectLoading={inspectLoading}
         deleteLoading={deleteLoading}
+        onRenameAsset={onAssetNameChange}
         onMaterialize={onMaterializeSelectedAsset}
         onInspect={onInspectSelectedAsset}
         onDelete={onOpenDeleteDialog}
@@ -201,7 +237,6 @@ export function WorkspaceEditorPane({
                     activeConfigEnvironmentName={activeConfigEnvironment?.name}
                     availableAssetTypes={availableAssetTypes}
                     form={form}
-                    onAssetNameChange={onAssetNameChange}
                     onAssetTypeChange={onAssetTypeChange}
                     onMaterializationTypeChange={onMaterializationTypeChange}
                     requiredConnectionType={requiredConnectionType}

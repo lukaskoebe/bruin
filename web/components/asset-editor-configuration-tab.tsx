@@ -5,7 +5,6 @@ import { AlertTriangle } from "lucide-react";
 import { Controller, UseFormReturn } from "react-hook-form";
 
 import { AssetTypeIcon } from "@/components/asset-type-icon";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -22,7 +21,6 @@ export function AssetEditorConfigurationTab({
   activeConfigEnvironmentName,
   availableAssetTypes,
   form,
-  onAssetNameChange,
   onAssetTypeChange,
   onMaterializationTypeChange,
   requiredConnectionType,
@@ -31,7 +29,6 @@ export function AssetEditorConfigurationTab({
   activeConfigEnvironmentName?: string | null;
   availableAssetTypes: string[];
   form: UseFormReturn<AssetConfigForm>;
-  onAssetNameChange: (assetName: string) => void;
   onAssetTypeChange: (assetType: string) => void;
   onMaterializationTypeChange: (materializationType: string) => void;
   requiredConnectionType: string | null;
@@ -39,22 +36,6 @@ export function AssetEditorConfigurationTab({
 }) {
   return (
     <>
-      <div className="grid gap-1">
-        <Label>Name</Label>
-        <Controller
-          control={form.control}
-          name="name"
-          render={({ field }) => (
-            <Input
-              {...field}
-              onBlur={(event) => {
-                field.onBlur();
-                onAssetNameChange(event.target.value);
-              }}
-            />
-          )}
-        />
-      </div>
       <div className="grid gap-1">
         <Label>Type</Label>
         <Controller

@@ -53,8 +53,10 @@ export function WorkspacePage() {
   const asset = useAtomValue(enrichedSelectedAssetAtom);
   const isMobile = useIsMobile();
   const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
+  const [assetRenameLoading, setAssetRenameLoading] = useState(false);
 
-  const { scheduleSave, flushAssetSave } = useDebouncedAssetSave(500);
+  const { scheduleSave, flushAssetSave, hasPendingAssetSave, saveAssetNow } =
+    useDebouncedAssetSave(500);
   const { workspaceConfig } = useWorkspaceSettingsData();
 
   const { enrichedPipeline, refreshPipelineMaterialization } =
@@ -96,7 +98,6 @@ export function WorkspacePage() {
 
   const form = useForm<AssetConfigForm>({
     defaultValues: {
-      name: "",
       type: "",
       materialization: "",
       custom_checks: "",
@@ -152,14 +153,18 @@ export function WorkspacePage() {
     handleConfirmDeleteAsset,
     handleMaterializeSelectedAsset,
     handleInspectSelectedAsset,
+    handleSaveSelectedAsset,
     handleAssetNameChange,
     handleAssetTypeChange,
     handleMaterializationTypeChange,
   } = useEditorActions({
     editorValue,
     scheduleSave,
+    saveAssetNow,
+    hasPendingAssetSave,
     runUpdateAsset: assetActions.runUpdateAsset,
     runDeleteAsset: assetActions.runDeleteAsset,
+    runUpdatePipeline: assetActions.runUpdatePipeline,
     runInspectForAsset: assetResults.runInspectForAsset,
     runMaterializeForAsset: assetResults.runMaterializeForAsset,
     refreshPipelineMaterialization,
@@ -177,6 +182,30 @@ export function WorkspacePage() {
       await refreshPipelineMaterialization(pipeline.id).catch(() => undefined);
     });
   };
+
+  const handleSaveSelectedAssetShortcut = useCallback(async () => {
+    const result = await handleSaveSelectedAsset();
+
+    if (result === "saved") {
+      assetActions.pushUIMessage("success", "Saved.");
+    } else if (result === "already-saved") {
+      assetActions.pushUIMessage("success", "Already saved.");
+    }
+
+    return result;
+  }, [assetActions, handleSaveSelectedAsset]);
+
+  const handleAssetRename = useCallback(
+    async (assetName: string) => {
+      setAssetRenameLoading(true);
+      try {
+        return await handleAssetNameChange(assetName);
+      } finally {
+        setAssetRenameLoading(false);
+      }
+    },
+    [handleAssetNameChange]
+  );
 
   const handleSelectMaterializeEntry = useCallback(
     (entryId: string) => {
@@ -206,6 +235,7 @@ export function WorkspacePage() {
     materializeLoading: assetResults.materializeLoading,
     inspectLoading: assetResults.inspectLoading,
     deleteLoading,
+    assetRenameLoading,
     editorValue,
     monacoTheme,
     assetEditorTab,
@@ -215,8 +245,9 @@ export function WorkspacePage() {
     onEditorChange: handleEditorChange,
     onMaterializeSelectedAsset: handleMaterializeSelectedAsset,
     onInspectSelectedAsset: handleInspectSelectedAsset,
+    onSaveSelectedAsset: handleSaveSelectedAssetShortcut,
     onOpenDeleteDialog: () => setDeleteDialogOpen(true),
-    onAssetNameChange: handleAssetNameChange,
+    onAssetNameChange: handleAssetRename,
     onAssetTypeChange: handleAssetTypeChange,
     onMaterializationTypeChange: handleMaterializationTypeChange,
     onSaveVisualizationSettings: handleSaveVisualizationSettings,

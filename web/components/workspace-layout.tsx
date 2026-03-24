@@ -77,7 +77,13 @@ export function WorkspaceLayout() {
   const [deletePipelineDialogOpen, setDeletePipelineDialogOpen] =
     useState(false);
   const [deletePipelineLoading, setDeletePipelineLoading] = useState(false);
+  const [renamePipelineDialogOpen, setRenamePipelineDialogOpen] =
+    useState(false);
+  const [renamePipelineLoading, setRenamePipelineLoading] = useState(false);
+  const [renamePipelineName, setRenamePipelineName] = useState("");
   const [deletePipelineTargetId, setDeletePipelineTargetId] =
+    useState<string | null>(null);
+  const [renamePipelineTargetId, setRenamePipelineTargetId] =
     useState<string | null>(null);
   const [pendingPipelinePathSelection, setPendingPipelinePathSelection] =
     useState<string | null>(null);
@@ -115,18 +121,6 @@ export function WorkspaceLayout() {
 
     return pipeline?.name ?? "Workspace";
   }, [currentView, pipeline?.name]);
-
-  const handleRunPipeline = useCallback(() => {
-    if (!pipeline || assetResults.materializeLoading) {
-      return;
-    }
-
-    void assetResults.runMaterializePipeline(pipeline.id, async () => {
-      await pipelineMaterialization
-        .refreshPipelineMaterialization(pipeline.id)
-        .catch(() => undefined);
-    });
-  }, [assetResults, pipeline, pipelineMaterialization]);
 
   const handleRunPipelineById = useCallback(
     (pipelineId: string) => {
@@ -212,6 +206,35 @@ export function WorkspaceLayout() {
     }
     return created;
   }, [assetActions]);
+
+  const handleConfirmRenamePipeline = useCallback(async () => {
+    const targetPipelineId = renamePipelineTargetId;
+    const nextName = renamePipelineName.trim();
+    if (!targetPipelineId || !nextName || renamePipelineLoading) {
+      return false;
+    }
+
+    setRenamePipelineLoading(true);
+    try {
+      const renamed = await assetActions.runUpdatePipeline(targetPipelineId, {
+        name: nextName,
+      });
+      if (!renamed) {
+        return false;
+      }
+
+      setRenamePipelineDialogOpen(false);
+      setRenamePipelineTargetId(null);
+      return true;
+    } finally {
+      setRenamePipelineLoading(false);
+    }
+  }, [
+    assetActions,
+    renamePipelineLoading,
+    renamePipelineName,
+    renamePipelineTargetId,
+  ]);
 
   useEffect(() => {
     if (!pendingPipelinePathSelection || !workspace) {
@@ -321,12 +344,21 @@ export function WorkspaceLayout() {
             onRunPipeline={handleRunPipelineById}
             canRunPipeline={Boolean(pipeline)}
             runPipelineLoading={assetResults.pipelineMaterializeLoading}
+            onRenamePipeline={(pipelineId) => {
+              const targetPipeline = workspace.pipelines.find(
+                (currentPipeline) => currentPipeline.id === pipelineId
+              );
+              setRenamePipelineTargetId(pipelineId);
+              setRenamePipelineName(targetPipeline?.name ?? "");
+              setRenamePipelineDialogOpen(true);
+            }}
             onDeletePipeline={(pipelineId) => {
               setDeletePipelineTargetId(pipelineId);
               setDeletePipelineDialogOpen(true);
             }}
             canDeletePipeline={Boolean(pipeline)}
             deletePipelineLoading={deletePipelineLoading}
+            renamePipelineLoading={renamePipelineLoading}
             onOnboardingMountChange={setSidebarOnboardingMount}
           />
 
@@ -353,10 +385,14 @@ export function WorkspaceLayout() {
           <WorkspacePipelineDialogs
             deletePipelineDialogOpen={deletePipelineDialogOpen}
             deletePipelineLoading={deletePipelineLoading}
+            renamePipelineDialogOpen={renamePipelineDialogOpen}
+            renamePipelineLoading={renamePipelineLoading}
+            renamePipelineName={renamePipelineName}
             selectedPipelineName={
               workspace.pipelines.find(
                 (currentPipeline) =>
-                  currentPipeline.id === (deletePipelineTargetId ?? pipeline?.id)
+                  currentPipeline.id ===
+                  (renamePipelineTargetId ?? deletePipelineTargetId ?? pipeline?.id)
               )?.name
             }
             canDeletePipeline={Boolean(deletePipelineTargetId ?? pipeline)}
@@ -368,6 +404,16 @@ export function WorkspaceLayout() {
                 }
               }
             }}
+            onRenamePipelineDialogOpenChange={(open) => {
+              if (!renamePipelineLoading) {
+                setRenamePipelineDialogOpen(open);
+                if (!open) {
+                  setRenamePipelineTargetId(null);
+                }
+              }
+            }}
+            onRenamePipelineNameChange={setRenamePipelineName}
+            onConfirmRenamePipeline={handleConfirmRenamePipeline}
             onConfirmDeletePipeline={handleConfirmDeletePipeline}
             onCancelDeletePipeline={() => {
               setDeletePipelineDialogOpen(false);

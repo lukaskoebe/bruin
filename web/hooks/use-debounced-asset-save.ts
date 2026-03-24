@@ -20,30 +20,26 @@ export function useDebouncedAssetSave(delay = 500) {
   const pendingByAssetRef = useRef<Record<string, PendingAssetSave>>({});
 
   const runSaveNow = useCallback(
-    (assetId: string) => {
-      const pending = pendingByAssetRef.current[assetId];
-      if (!pending) {
-        return;
-      }
-
-      delete pendingByAssetRef.current[assetId];
-      void updateAsset(pending.pipelineId, pending.assetId, {
-        content: pending.content,
-      })
-        .then(() => {
-          setChangedAssetIds((prev: Set<string>) => {
-            if (prev.has(pending.assetId)) {
-              return prev;
-            }
-
-            const next = new Set(prev);
-            next.add(pending.assetId);
-            return next;
-          });
-        })
-        .catch(() => {
-          // noop: failed saves should not trigger preview refresh
+    async (pending: PendingAssetSave) => {
+      try {
+        await updateAsset(pending.pipelineId, pending.assetId, {
+          content: pending.content,
         });
+
+        setChangedAssetIds((prev: Set<string>) => {
+          if (prev.has(pending.assetId)) {
+            return prev;
+          }
+
+          const next = new Set(prev);
+          next.add(pending.assetId);
+          return next;
+        });
+
+        return true;
+      } catch {
+        return false;
+      }
     },
     [setChangedAssetIds]
   );
@@ -56,7 +52,13 @@ export function useDebouncedAssetSave(delay = 500) {
         delete timersByAssetRef.current[assetId];
       }
 
-      runSaveNow(assetId);
+      const pending = pendingByAssetRef.current[assetId];
+      if (!pending) {
+        return;
+      }
+
+      delete pendingByAssetRef.current[assetId];
+      void runSaveNow(pending);
     },
     [runSaveNow]
   );
@@ -68,7 +70,13 @@ export function useDebouncedAssetSave(delay = 500) {
     }
 
     for (const assetId of Object.keys(pendingByAssetRef.current)) {
-      runSaveNow(assetId);
+      const pending = pendingByAssetRef.current[assetId];
+      if (!pending) {
+        continue;
+      }
+
+      delete pendingByAssetRef.current[assetId];
+      void runSaveNow(pending);
     }
   }, [runSaveNow]);
 
@@ -93,15 +101,46 @@ export function useDebouncedAssetSave(delay = 500) {
 
       timersByAssetRef.current[assetId] = setTimeout(() => {
         delete timersByAssetRef.current[assetId];
-        runSaveNow(assetId);
+        const pending = pendingByAssetRef.current[assetId];
+        if (!pending) {
+          return;
+        }
+
+        delete pendingByAssetRef.current[assetId];
+        void runSaveNow(pending);
       }, delay);
     },
     [delay, runSaveNow]
+  );
+
+  const hasPendingAssetSave = useCallback((assetId: string) => {
+    return Boolean(pendingByAssetRef.current[assetId]);
+  }, []);
+
+  const saveAssetNow = useCallback(
+    async (pipelineId: string, assetId: string, content: string) => {
+      const timer = timersByAssetRef.current[assetId];
+      if (timer) {
+        clearTimeout(timer);
+        delete timersByAssetRef.current[assetId];
+      }
+
+      delete pendingByAssetRef.current[assetId];
+
+      return runSaveNow({
+        pipelineId,
+        assetId,
+        content,
+      });
+    },
+    [runSaveNow]
   );
 
   return {
     scheduleSave,
     flushAssetSave,
     flushAllSaves,
+    hasPendingAssetSave,
+    saveAssetNow,
   };
 }

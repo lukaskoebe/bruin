@@ -15,8 +15,8 @@ This document tracks feature work that is still needed, items that need confirma
 
 ## Highest Priority Fixes
 
-- Show the current pipeline name in the editor header instead of the static `Asset Editor` title, with inline rename support:
-  - default state shows pipeline name plus edit button
+- Show the current asset name in the editor header instead of the static `Asset Editor` title, with inline rename support:
+  - default state shows asset name plus edit button
   - edit state shows input plus save button
   - save on button click and `Enter`
 - Keep existing inspect/preview table data visible while refresh/load-more requests are in flight and show an inline spinner instead of replacing the table.
@@ -162,22 +162,23 @@ Avoids direct collision with:
 - settings/forms work
 - node visual redesign
 
-### Package B: Pipeline Header And Editor Shortcuts
+### Package B: Asset Header And Editor Shortcuts
 
 Scope:
 
-- pipeline name header with inline rename
+- asset name header with inline rename
 - save on `Enter`
 - `Ctrl+S` saved message
 - `Ctrl+Enter` inspect shortcut
-- editor-side rename entry point
+- pipeline rename entry point in the sidebar context menu
 
 Touches mostly:
 
 - editor header
 - editor pane
 - keyboard handling
-- pipeline rename actions
+- asset rename actions
+- sidebar pipeline actions
 
 Avoids direct collision with:
 

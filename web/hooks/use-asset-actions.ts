@@ -8,6 +8,7 @@ import {
   createPipeline,
   deleteAsset,
   deletePipeline,
+  updatePipeline,
   updateAsset,
 } from "@/lib/api";
 import { workspaceAtom } from "@/lib/atoms/domains/workspace";
@@ -28,6 +29,7 @@ type CreateAssetInput = {
 
 type UpdateAssetInput = {
   name?: string;
+  type?: string;
   content?: string;
   materialization_type?: string;
   meta?: Record<string, string>;
@@ -127,7 +129,7 @@ export function useAssetActions(defaultPipelinePath = "my-pipeline") {
         if (conflictingAssetName) {
           pushUIMessage(
             "error",
-            `Asset \"${trimmedName}\" already exists. Choose a different name.`
+            `Asset "${trimmedName}" already exists. Choose a different name.`
           );
           return null;
         }
@@ -172,6 +174,30 @@ export function useAssetActions(defaultPipelinePath = "my-pipeline") {
     [pushUIMessage]
   );
 
+  const runUpdatePipeline = useCallback(
+    async (pipelineId: string, input: { name?: string; content?: string }) => {
+      const trimmedName = input.name?.trim();
+
+      try {
+        await updatePipeline({
+          id: pipelineId,
+          name: trimmedName ?? input.name,
+          content: input.content,
+        });
+
+        if (trimmedName) {
+          pushUIMessage("success", `Pipeline "${trimmedName}" saved.`);
+        }
+
+        return true;
+      } catch (error) {
+        pushUIMessage("error", `Failed to update pipeline: ${String(error)}`);
+        return false;
+      }
+    },
+    [pushUIMessage]
+  );
+
   const runUpdateAsset = useCallback(
     async (pipelineId: string, assetId: string, input: UpdateAssetInput) => {
       const trimmedName = input.name?.trim();
@@ -182,7 +208,7 @@ export function useAssetActions(defaultPipelinePath = "my-pipeline") {
         if (conflictingAssetName) {
           pushUIMessage(
             "error",
-            `Asset \"${trimmedName}\" already exists. Choose a different name.`
+            `Asset "${trimmedName}" already exists. Choose a different name.`
           );
           return false;
         }
@@ -215,6 +241,7 @@ export function useAssetActions(defaultPipelinePath = "my-pipeline") {
     runCreateAsset,
     runDeleteAsset,
     runDeletePipeline,
+    runUpdatePipeline,
     runUpdateAsset,
   };
 }

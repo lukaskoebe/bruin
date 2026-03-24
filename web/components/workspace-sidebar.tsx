@@ -7,6 +7,7 @@ import {
   ChevronsLeft,
   FolderPlus,
   Moon,
+  Pencil,
   Play,
   Settings2,
   Sun,
@@ -53,8 +54,10 @@ type Props = {
   onToggleTheme: () => void;
   onCreatePipeline: () => void;
   onDeletePipeline: (pipelineId: string) => void;
+  onRenamePipeline: (pipelineId: string) => void;
   canDeletePipeline: boolean;
   deletePipelineLoading: boolean;
+  renamePipelineLoading: boolean;
   onRunPipeline: (pipelineId: string) => void;
   canRunPipeline: boolean;
   runPipelineLoading: boolean;
@@ -73,8 +76,10 @@ export function WorkspaceSidebar({
   onToggleTheme,
   onCreatePipeline,
   onDeletePipeline,
+  onRenamePipeline,
   canDeletePipeline,
   deletePipelineLoading,
+  renamePipelineLoading,
   onRunPipeline,
   canRunPipeline,
   runPipelineLoading,
@@ -286,6 +291,15 @@ export function WorkspaceSidebar({
                         </div>
                       </ContextMenuTrigger>
                       <ContextMenuContent>
+                        <ContextMenuItem disabled>{item.name}</ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          disabled={renamePipelineLoading}
+                          onClick={() => onRenamePipeline(item.id)}
+                        >
+                          <Pencil />
+                          Rename Pipeline
+                        </ContextMenuItem>
                         <ContextMenuItem
                           disabled={!canRunPipeline || runPipelineLoading}
                           onClick={() => onRunPipeline(item.id)}

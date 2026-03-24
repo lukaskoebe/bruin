@@ -15,9 +15,15 @@ import { Label } from "@/components/ui/label";
 type WorkspacePipelineDialogsProps = {
   deletePipelineDialogOpen: boolean;
   deletePipelineLoading: boolean;
+  renamePipelineDialogOpen: boolean;
+  renamePipelineLoading: boolean;
+  renamePipelineName: string;
   selectedPipelineName?: string;
   canDeletePipeline: boolean;
   onDeletePipelineDialogOpenChange: (open: boolean) => void;
+  onRenamePipelineDialogOpenChange: (open: boolean) => void;
+  onRenamePipelineNameChange: (value: string) => void;
+  onConfirmRenamePipeline: () => Promise<boolean>;
   onConfirmDeletePipeline: () => void;
   onCancelDeletePipeline: () => void;
   createPipelineDialogOpen: boolean;
@@ -31,9 +37,15 @@ type WorkspacePipelineDialogsProps = {
 export function WorkspacePipelineDialogs({
   deletePipelineDialogOpen,
   deletePipelineLoading,
+  renamePipelineDialogOpen,
+  renamePipelineLoading,
+  renamePipelineName,
   selectedPipelineName,
   canDeletePipeline,
   onDeletePipelineDialogOpenChange,
+  onRenamePipelineDialogOpenChange,
+  onRenamePipelineNameChange,
+  onConfirmRenamePipeline,
   onConfirmDeletePipeline,
   onCancelDeletePipeline,
   createPipelineDialogOpen,
@@ -45,6 +57,54 @@ export function WorkspacePipelineDialogs({
 }: WorkspacePipelineDialogsProps) {
   return (
     <>
+      <Dialog
+        open={renamePipelineDialogOpen}
+        onOpenChange={onRenamePipelineDialogOpenChange}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename pipeline</DialogTitle>
+            <DialogDescription>
+              Update the display name stored in `pipeline.yml`.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1">
+            <Label htmlFor="rename-pipeline-name">Pipeline name</Label>
+            <Input
+              id="rename-pipeline-name"
+              value={renamePipelineName}
+              onChange={(event) => onRenamePipelineNameChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void onConfirmRenamePipeline();
+                }
+              }}
+              placeholder="my-pipeline"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={renamePipelineLoading}
+              onClick={() => onRenamePipelineDialogOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={renamePipelineLoading || !renamePipelineName.trim()}
+              onClick={() => {
+                void onConfirmRenamePipeline();
+              }}
+            >
+              {renamePipelineLoading ? "Saving..." : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog
         open={deletePipelineDialogOpen}
         onOpenChange={onDeletePipelineDialogOpenChange}

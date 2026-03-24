@@ -12,6 +12,12 @@ import { VISUALIZATION_META_KEYS } from "@/lib/visualization-meta";
 type UseEditorActionsInput = {
   editorValue: string;
   scheduleSave: (pipelineId: string, assetId: string, content: string) => void;
+  saveAssetNow: (
+    pipelineId: string,
+    assetId: string,
+    content: string
+  ) => Promise<boolean>;
+  hasPendingAssetSave: (assetId: string) => boolean;
   runUpdateAsset: (
     pipelineId: string,
     assetId: string,
@@ -24,6 +30,10 @@ type UseEditorActionsInput = {
     }
   ) => Promise<boolean>;
   runDeleteAsset: (pipelineId: string, assetId: string) => Promise<boolean>;
+  runUpdatePipeline: (
+    pipelineId: string,
+    input: { name?: string; content?: string }
+  ) => Promise<boolean>;
   runInspectForAsset: (assetId: string) => Promise<unknown>;
   runMaterializeForAsset: (
     assetId: string,
@@ -46,6 +56,9 @@ export function useEditorActions({
   navigateSelection,
   clearResultsAfterDelete,
   clearPreviewForAsset,
+  hasPendingAssetSave,
+  saveAssetNow,
+  runUpdatePipeline,
 }: UseEditorActionsInput) {
   const asset = useAtomValue(enrichedSelectedAssetAtom);
   const pipeline = useAtomValue(pipelineAtom);
@@ -178,6 +191,65 @@ export function useEditorActions({
     void runInspectForAsset(asset.id);
   }, [asset, runInspectForAsset]);
 
+  const handleSaveSelectedAsset = useCallback(async () => {
+    if (!asset || !pipelineId) {
+      return false;
+    }
+
+    const hasPendingSave = hasPendingAssetSave(asset.id);
+    const hasUnsavedChanges = hasPendingSave || editorValue !== asset.content;
+
+    if (!hasUnsavedChanges) {
+      return "already-saved";
+    }
+
+    const saved = await saveAssetNow(pipelineId, asset.id, editorValue);
+    return saved ? "saved" : false;
+  }, [
+    asset,
+    editorValue,
+    hasPendingAssetSave,
+    pipelineId,
+    saveAssetNow,
+  ]);
+
+  const handlePipelineNameChange = useCallback(
+    (pipelineName: string) => {
+      if (!pipelineId) {
+        return Promise.resolve(false);
+      }
+
+      const trimmedName = pipelineName.trim();
+      if (!trimmedName || trimmedName === pipeline?.name) {
+        return Promise.resolve(true);
+      }
+
+      return runUpdatePipeline(pipelineId, {
+        name: trimmedName,
+      });
+    },
+    [pipeline?.name, pipelineId, runUpdatePipeline]
+  );
+
+  const handleAssetNameChange = useCallback(
+    async (assetName: string) => {
+      if (!asset || !pipelineId) {
+        return false;
+      }
+
+      const trimmedName = assetName.trim();
+      if (!trimmedName || trimmedName === asset.name) {
+        return true;
+      }
+
+      return runUpdateAsset(pipelineId, asset.id, {
+        name: trimmedName,
+        content: editorValue,
+      });
+    },
+    [asset, editorValue, pipelineId, runUpdateAsset]
+  );
+
   const handleMaterializationTypeChange = useCallback(
     (materializationType: string) => {
       if (!asset || !pipelineId) {
@@ -211,25 +283,6 @@ export function useEditorActions({
     [asset, editorValue, pipelineId, runUpdateAsset]
   );
 
-  const handleAssetNameChange = useCallback(
-    (assetName: string) => {
-      if (!asset || !pipelineId) {
-        return;
-      }
-
-      const trimmedName = assetName.trim();
-      if (!trimmedName || trimmedName === asset.name) {
-        return;
-      }
-
-      void runUpdateAsset(pipelineId, asset.id, {
-        name: trimmedName,
-        content: editorValue,
-      });
-    },
-    [asset, editorValue, pipelineId, runUpdateAsset]
-  );
-
   return {
     deleteDialogOpen,
     deleteLoading,
@@ -239,6 +292,8 @@ export function useEditorActions({
     handleConfirmDeleteAsset,
     handleMaterializeSelectedAsset,
     handleInspectSelectedAsset,
+    handleSaveSelectedAsset,
+    handlePipelineNameChange,
     handleAssetNameChange,
     handleAssetTypeChange,
     handleMaterializationTypeChange,

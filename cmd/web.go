@@ -1007,6 +1007,7 @@ func (s *webServer) handleCreatePipeline(w http.ResponseWriter, r *http.Request)
 
 type updatePipelineRequest struct {
 	ID      string `json:"id"`
+	Name    string `json:"name"`
 	Content string `json:"content"`
 }
 
@@ -1026,6 +1027,28 @@ func (s *webServer) handleUpdatePipeline(w http.ResponseWriter, r *http.Request)
 	absPath, err := safeJoin(s.workspaceRoot, relPath)
 	if err != nil {
 		webapi.WriteBadRequest(w, "invalid_pipeline_path", err.Error())
+		return
+	}
+
+	if strings.TrimSpace(req.Name) != "" && strings.TrimSpace(req.Content) == "" {
+		builder := s.newPipelineBuilder()
+		parsed, err := builder.CreatePipelineFromPath(r.Context(), absPath, pipeline.WithMutate(), pipeline.WithOnlyPipeline())
+		if err != nil {
+			webapi.WriteBadRequest(w, "pipeline_parse_failed", err.Error())
+			return
+		}
+
+		parsed.Name = strings.TrimSpace(req.Name)
+		parsed.DefinitionFile.Path = filepath.Join(absPath, "pipeline.yml")
+
+		if err := parsed.Persist(afero.NewOsFs()); err != nil {
+			webapi.WriteInternalError(w, "pipeline_write_failed", err.Error())
+			return
+		}
+
+		s.suppressWatcherFor(relPath)
+		s.pushWorkspaceUpdateImmediate(r.Context(), "pipeline.updated", relPath)
+		s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 	}
 

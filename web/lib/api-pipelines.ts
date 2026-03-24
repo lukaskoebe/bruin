@@ -24,6 +24,18 @@ export async function deletePipeline(pipelineId: string) {
   });
 }
 
+export async function updatePipeline(input: {
+  id: string;
+  name?: string;
+  content?: string;
+}) {
+  return fetchJSONWithBody<Record<string, string>>(
+    "/api/pipelines",
+    "PUT",
+    input
+  );
+}
+
 export async function materializePipelineStream(
   pipelineId: string,
   handlers: {

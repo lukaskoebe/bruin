@@ -78,7 +78,6 @@ export function WorkspacePageEffects({
 
   useEffect(() => {
     form.reset({
-      name: asset?.name ?? "",
       type: asset?.type ?? "",
       materialization: asset?.materialization_type ?? "",
       custom_checks: "",
