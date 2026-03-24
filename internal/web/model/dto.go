@@ -11,6 +11,7 @@ type Asset struct {
 	Path                string            `json:"path"`
 	Content             string            `json:"content"`
 	Upstreams           []string          `json:"upstreams"`
+	Parameters          map[string]string `json:"parameters,omitempty"`
 	Meta                map[string]string `json:"meta,omitempty"`
 	Columns             []Column          `json:"columns,omitempty"`
 	Connection          string            `json:"connection,omitempty"`

@@ -21,6 +21,7 @@ import (
 	"github.com/bruin-data/bruin/internal/web/events"
 	"github.com/bruin-data/bruin/internal/web/freshness"
 	"github.com/bruin-data/bruin/internal/web/service"
+	webstatic "github.com/bruin-data/bruin/internal/web/static"
 	"github.com/bruin-data/bruin/internal/web/watch"
 	"github.com/bruin-data/bruin/pkg/config"
 	"github.com/bruin-data/bruin/pkg/connection"
@@ -33,6 +34,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/spf13/afero"
 	"github.com/urfave/cli/v3"
+	webui "github.com/bruin-data/bruin/web"
 	"gopkg.in/yaml.v3"
 )
 
@@ -257,6 +259,7 @@ type workspaceEvent struct {
 type webServer struct {
 	workspaceRoot string
 	staticDir     string
+	staticHandler http.Handler
 	watchMode     string
 	watchPoll     time.Duration
 
@@ -305,7 +308,7 @@ func Web() *cli.Command {
 			&cli.StringFlag{
 				Name:  "static-dir",
 				Value: "web/dist",
-				Usage: "directory for static web assets",
+				Usage: "optional override directory for static web assets",
 			},
 			&cli.StringFlag{
 				Name:  "watch-mode",
@@ -358,6 +361,16 @@ func Web() *cli.Command {
 				freshness:          freshness.New(),
 				duckDBOps:          make(map[string]*sync.Mutex),
 				recentServerWrites: make(map[string]time.Time),
+			}
+
+			embeddedStaticFS, err := webui.DistFS()
+			if err != nil {
+				embeddedStaticFS = nil
+			}
+
+			server.staticHandler, err = webstatic.NewHandler(embeddedStaticFS, staticDir)
+			if err != nil {
+				return fmt.Errorf("failed to initialize static asset handler: %w", err)
 			}
 
 			// Bootstrap materialization timestamps from existing run logs.
@@ -3471,31 +3484,14 @@ func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *webServer) handleStatic(w http.ResponseWriter, r *http.Request) {
-	if stat, err := os.Stat(s.staticDir); err == nil && stat.IsDir() {
-		fileServer := http.FileServer(http.Dir(s.staticDir))
-		if r.URL.Path == "/" {
-			indexPath := filepath.Join(s.staticDir, "index.html")
-			if _, err := os.Stat(indexPath); err == nil {
-				http.ServeFile(w, r, indexPath)
-				return
-			}
-		}
-
-		if _, err := os.Stat(filepath.Join(s.staticDir, strings.TrimPrefix(r.URL.Path, "/"))); err == nil {
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-
-		indexPath := filepath.Join(s.staticDir, "index.html")
-		if _, err := os.Stat(indexPath); err == nil {
-			http.ServeFile(w, r, indexPath)
-			return
-		}
+	if s.staticHandler != nil {
+		s.staticHandler.ServeHTTP(w, r)
+		return
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("Bruin Web backend is running. Build frontend assets into web/dist to serve the UI."))
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_, _ = w.Write([]byte("Bruin Web UI assets are unavailable."))
 }
 
 // suppressWatcherFor marks a path as recently handled by a server-initiated

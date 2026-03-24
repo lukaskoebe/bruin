@@ -175,6 +175,7 @@ func (s *WorkspaceService) ComputeState(ctx context.Context) (model.WorkspaceSta
 				Path:                filepath.ToSlash(relAssetPath),
 				Content:             asset.ExecutableFile.Content,
 				Upstreams:           upstreams,
+				Parameters:          asset.Parameters,
 				Meta:                asset.Meta,
 				Columns:             PipelineColumnsToModelColumns(asset.Columns),
 				Connection:          connectionName,
