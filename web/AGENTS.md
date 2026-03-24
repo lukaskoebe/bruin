@@ -219,8 +219,9 @@ Relevant files:
 - Read existing hooks before adding new workspace behavior.
 - If a feature touches both inspect views and node previews, update both.
 - If a feature changes asset creation semantics, verify both frontend input building and backend-generated asset results.
+- Prefer `pnpm` over `npm` for web dependency installation, audits, and script execution when both are available.
 - Prefer small, surgical UI changes that preserve current interaction patterns.
-- Validate with a frontend build from [package.json](package.json): `npm run build`.
+- Validate with a frontend build from [package.json](package.json): `pnpm build`.
 
 ## Summary
 

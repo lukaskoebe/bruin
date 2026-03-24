@@ -13,6 +13,8 @@ This document tracks feature work that is still needed, items that need confirma
 - `Change the query type selector (duckdb, postgres, etc.) from free-text input to an explicit selector` is already done.
 - The `ingestr` node redesign items are already done.
 - Embedding `web/dist` into the Bruin binary is already done.
+- The Vite upgrade is already done.
+- Basic end-to-end coverage and a security audit workflow are already in place.
 - `Integrated terminal with AI/MCP` should stay in a maybe section for now.
 
 ## Highest Priority Fixes
@@ -349,7 +351,6 @@ Scope:
 
 - end-to-end tests
 - security audit
-- Vite upgrade
 - forms standardization
 
 Touches mostly:
