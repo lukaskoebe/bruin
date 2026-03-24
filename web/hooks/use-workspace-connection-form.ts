@@ -3,7 +3,13 @@
 import { Dispatch, SetStateAction, useEffect, useMemo, useState } from "react";
 
 import {
-  WorkspaceConfigConnection,
+  buildConnectionFieldDefaults,
+  findConnectionByName,
+  findEnvironmentByName,
+  getFallbackEnvironmentName,
+  getSelectedConnectionNameFromEnvironment,
+} from "@/lib/settings-form-utils";
+import {
   WorkspaceConfigConnectionType,
   WorkspaceConfigEnvironment,
   WorkspaceConfigResponse,
@@ -69,18 +75,12 @@ export function useWorkspaceConnectionForm({
   });
 
   const activeEnvironment = useMemo(
-    () =>
-      environments.find(
-        (environment) => environment.name === selectedEnvironmentName
-      ) ?? null,
+    () => findEnvironmentByName(environments, selectedEnvironmentName),
     [environments, selectedEnvironmentName]
   );
 
   const activeConnection = useMemo(
-    () =>
-      activeEnvironment?.connections.find(
-        (connection) => connection.name === selectedConnectionName
-      ) ?? null,
+    () => findConnectionByName(activeEnvironment, selectedConnectionName),
     [activeEnvironment, selectedConnectionName]
   );
 
@@ -102,11 +102,18 @@ export function useWorkspaceConnectionForm({
         connectionTypes[0]?.type_name ??
         "";
       setConnectionForm({
-        environmentName:
-          selectedEnvironmentName || defaultEnvironment || environments[0]?.name || "",
+        environmentName: getFallbackEnvironmentName({
+          defaultEnvironment,
+          environments,
+          selectedEnvironmentName,
+        }),
         name: "",
         type: fallbackType,
-        values: buildInitialConnectionValues(connectionTypes, fallbackType, null),
+        values: buildConnectionFieldDefaults({
+          connectionTypes,
+          typeName: fallbackType,
+          existingConnection: null,
+        }),
       });
       return;
     }
@@ -116,11 +123,11 @@ export function useWorkspaceConnectionForm({
         environmentName: selectedEnvironmentName ?? "",
         name: "",
         type: connectionTypes[0]?.type_name ?? "",
-        values: buildInitialConnectionValues(
+        values: buildConnectionFieldDefaults({
           connectionTypes,
-          connectionTypes[0]?.type_name ?? "",
-          null
-        ),
+          typeName: connectionTypes[0]?.type_name ?? "",
+          existingConnection: null,
+        }),
       });
       return;
     }
@@ -129,11 +136,11 @@ export function useWorkspaceConnectionForm({
       environmentName: activeEnvironment.name,
       name: activeConnection.name,
       type: activeConnection.type,
-      values: buildInitialConnectionValues(
+      values: buildConnectionFieldDefaults({
         connectionTypes,
-        activeConnection.type,
-        activeConnection
-      ),
+        typeName: activeConnection.type,
+        existingConnection: activeConnection,
+      }),
     });
   }, [
     activeConnection,
@@ -155,14 +162,15 @@ export function useWorkspaceConnectionForm({
     };
 
     if (mode === "create") {
-      const response = await onCreateConnection(payload);
-      const environment = response.environments.find(
-        (candidate) => candidate.name === connectionForm.environmentName
+    const response = await onCreateConnection(payload);
+      const environment = findEnvironmentByName(
+        response.environments,
+        connectionForm.environmentName
       );
       onModeChange("edit");
       onSelectedEnvironmentChange(connectionForm.environmentName);
       onSelectedConnectionChange(
-        connectionForm.name.trim() || environment?.connections[0]?.name || null
+        getSelectedConnectionNameFromEnvironment(environment, connectionForm.name.trim())
       );
       return;
     }
@@ -171,11 +179,12 @@ export function useWorkspaceConnectionForm({
       ...payload,
       current_name: activeConnection?.name,
     });
-    const environment = response.environments.find(
-      (candidate) => candidate.name === connectionForm.environmentName
+    const environment = findEnvironmentByName(
+      response.environments,
+      connectionForm.environmentName
     );
     onSelectedConnectionChange(
-      connectionForm.name.trim() || environment?.connections[0]?.name || null
+      getSelectedConnectionNameFromEnvironment(environment, connectionForm.name.trim())
     );
   };
 
@@ -188,10 +197,8 @@ export function useWorkspaceConnectionForm({
       environment_name: activeEnvironment.name,
       name: activeConnection.name,
     });
-    const environment = response.environments.find(
-      (candidate) => candidate.name === activeEnvironment.name
-    );
-    onSelectedConnectionChange(environment?.connections[0]?.name ?? null);
+    const environment = findEnvironmentByName(response.environments, activeEnvironment.name);
+    onSelectedConnectionChange(getSelectedConnectionNameFromEnvironment(environment));
   };
 
   return {
@@ -203,40 +210,4 @@ export function useWorkspaceConnectionForm({
     handleDelete,
     handleSave,
   };
-}
-
-function buildInitialConnectionValues(
-  connectionTypes: WorkspaceConfigConnectionType[],
-  typeName: string,
-  existingConnection: WorkspaceConfigConnection | null,
-  previousValues?: Record<string, string | number | boolean>
-) {
-  const connectionType = connectionTypes.find(
-    (candidate) => candidate.type_name === typeName
-  );
-  const values: Record<string, string | number | boolean> = {};
-
-  for (const field of connectionType?.fields ?? []) {
-    const existingValue = existingConnection?.values[field.name];
-    const previousValue = previousValues?.[field.name];
-    if (existingValue !== undefined && existingValue !== null) {
-      values[field.name] = existingValue as string | number | boolean;
-      continue;
-    }
-    if (previousValue !== undefined) {
-      values[field.name] = previousValue;
-      continue;
-    }
-    if (field.type === "bool") {
-      values[field.name] = field.default_value === "true";
-      continue;
-    }
-    if (field.type === "int") {
-      values[field.name] = field.default_value ? Number(field.default_value) : "";
-      continue;
-    }
-    values[field.name] = field.default_value ?? "";
-  }
-
-  return values;
 }

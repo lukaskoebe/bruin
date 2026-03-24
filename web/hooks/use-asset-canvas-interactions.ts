@@ -13,7 +13,10 @@ import { Edge, Node, ReactFlowInstance } from "reactflow";
 
 import { NewAssetKind, NewAssetNodeData } from "@/components/new-asset-node";
 import { StoredNodePositions } from "@/hooks/use-persisted-node-positions";
-import { pipelineAtom, resolvedSelectedAssetAtom } from "@/lib/atoms";
+import {
+  pipelineAtom,
+  resolvedSelectedAssetAtom,
+} from "@/lib/atoms/domains/workspace";
 
 type NewAssetDraftState = {
   flowX: number;

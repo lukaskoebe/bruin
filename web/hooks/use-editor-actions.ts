@@ -4,13 +4,10 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fillAssetColumnsFromDB } from "@/lib/api";
-import { VISUALIZATION_META_KEYS } from "@/components/visualization-settings-editor";
-import {
-  editorDraftAtom,
-  enrichedSelectedAssetAtom,
-  pipelineAtom,
-  workspaceAtom,
-} from "@/lib/atoms";
+import { editorDraftAtom } from "@/lib/atoms/domains/editor";
+import { enrichedSelectedAssetAtom } from "@/lib/atoms/domains/results";
+import { pipelineAtom } from "@/lib/atoms/domains/workspace";
+import { VISUALIZATION_META_KEYS } from "@/lib/visualization-meta";
 
 type UseEditorActionsInput = {
   editorValue: string;
@@ -59,7 +56,6 @@ export function useEditorActions({
     null
   );
   const setEditorDraft = useSetAtom(editorDraftAtom);
-  const setWorkspace = useSetAtom(workspaceAtom);
 
   const handleEditorChange = useCallback(
     (value?: string) => {
@@ -68,10 +64,10 @@ export function useEditorActions({
         return;
       }
 
-      setEditorDraft({
-        assetId: asset.id,
-        content: nextValue,
-      });
+      setEditorDraft((previous) => ({
+        ...previous,
+        [asset.id]: nextValue,
+      }));
       scheduleSave(pipelineId, asset.id, nextValue);
 
       const isSQLAsset =
@@ -210,37 +206,9 @@ export function useEditorActions({
       void runUpdateAsset(pipelineId, asset.id, {
         type: trimmedType,
         content: editorValue,
-      }).then((updated) => {
-        if (!updated) {
-          return;
-        }
-
-        setWorkspace((current) => {
-          if (!current) {
-            return current;
-          }
-
-          return {
-            ...current,
-            pipelines: current.pipelines.map((currentPipeline) => {
-              if (currentPipeline.id !== pipelineId) {
-                return currentPipeline;
-              }
-
-              return {
-                ...currentPipeline,
-                assets: currentPipeline.assets.map((currentAsset) =>
-                  currentAsset.id === asset.id
-                    ? { ...currentAsset, type: trimmedType }
-                    : currentAsset
-                ),
-              };
-            }),
-          };
-        });
       });
     },
-    [asset, editorValue, pipelineId, runUpdateAsset, setWorkspace]
+    [asset, editorValue, pipelineId, runUpdateAsset]
   );
 
   const handleAssetNameChange = useCallback(

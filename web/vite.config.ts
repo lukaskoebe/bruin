@@ -36,6 +36,65 @@ function prepareMonacoAssetsPlugin(): Plugin {
 
 export default defineConfig({
   plugins: [TanStackRouterVite({ target: "react" }), react(), prepareMonacoAssetsPlugin()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) {
+            return undefined;
+          }
+
+          if (id.includes("reactflow") || id.includes("dagre")) {
+            return "graph-vendor";
+          }
+
+          if (
+            id.includes("@tanstack/react-router") ||
+            id.includes("@tanstack/router-core")
+          ) {
+            return "router-vendor";
+          }
+
+          if (id.includes("@tanstack/react-virtual")) {
+            return "table-vendor";
+          }
+
+          if (
+            id.includes("jotai") ||
+            id.includes("react-hook-form") ||
+            id.includes("@base-ui/react") ||
+            id.includes("radix-ui")
+          ) {
+            return "ui-vendor";
+          }
+
+          if (
+            id.includes("recharts") ||
+            id.includes("victory-vendor") ||
+            id.includes("d3-")
+          ) {
+            return "chart-vendor";
+          }
+
+          if (id.includes("@monaco-editor") || id.includes("monaco-editor")) {
+            return "monaco-vendor";
+          }
+
+          if (
+            id.includes("react-markdown") ||
+            id.includes("remark-") ||
+            id.includes("mdast-util-") ||
+            id.includes("micromark") ||
+            id.includes("unified")
+          ) {
+            return "markdown-vendor";
+          }
+
+          return undefined;
+        },
+      },
+    },
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname),

@@ -14,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { findEnvironmentByName } from "@/lib/settings-form-utils";
 import { WorkspaceConfigEnvironment } from "@/lib/types";
 
 type WorkspaceConfigContentProps = {
@@ -45,10 +46,7 @@ export function WorkspaceConfigContent({
   onCloneEnvironment,
   onCreateConnection,
 }: WorkspaceConfigContentProps) {
-  const activeEnvironment =
-    environments.find((environment) => environment.name === selectedEnvironmentName) ??
-    environments[0] ??
-    null;
+  const activeEnvironment = findEnvironmentByName(environments, selectedEnvironmentName) ?? environments[0] ?? null;
 
   return (
     <div className="flex h-full flex-col bg-muted/10 p-8">

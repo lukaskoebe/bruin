@@ -5,7 +5,6 @@ import {
   Cable,
   ChevronRight,
   ChevronsLeft,
-  CirclePlus,
   FolderPlus,
   Moon,
   Play,
@@ -32,8 +31,12 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { WorkspaceState } from "@/lib/types";
@@ -88,6 +91,11 @@ export function WorkspaceSidebar({
     if (shouldAutoCloseOnNavigate) {
       setOpenMobile(false);
     }
+  };
+
+  const handleCreatePipeline = () => {
+    closeSidebarAfterNavigation();
+    onCreatePipeline();
   };
 
   useEffect(() => {
@@ -179,7 +187,7 @@ export function WorkspaceSidebar({
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton onClick={onCreatePipeline}>
+                <SidebarMenuButton onClick={handleCreatePipeline}>
                   <FolderPlus className="size-4" />
                   <span>New Pipeline</span>
                 </SidebarMenuButton>
@@ -246,41 +254,35 @@ export function WorkspaceSidebar({
                                 asset: item.assets[0]?.id ?? undefined,
                               }}
                               activeOptions={{ exact: true, includeSearch: false }}
-                              onClick={() => {
-                                closeSidebarAfterNavigation();
-                                setExpandedPipelineIds((previous) => {
-                                  const next = new Set(previous);
-                                  if (next.has(item.id)) {
-                                    next.delete(item.id);
-                                  } else {
-                                    next.add(item.id);
-                                  }
-                                  return next;
-                                });
-                              }}
+                              onClick={closeSidebarAfterNavigation}
                             >
-                              <ChevronRight
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  e.preventDefault();
-
-                                  setExpandedPipelineIds((previous) => {
-                                    const next = new Set(previous);
-                                    if (next.has(item.id)) {
-                                      next.delete(item.id);
-                                    } else {
-                                      next.add(item.id);
-                                    }
-                                    return next;
-                                  });
-                                }}
-                                className={`size-3 transition-transform ${
-                                  isExpanded ? "rotate-90" : ""
-                                }`}
-                              />
                               <span>{item.name}</span>
                             </Link>
                           </SidebarMenuButton>
+                          <SidebarMenuAction
+                            aria-label={isExpanded ? "Collapse pipeline" : "Expand pipeline"}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setExpandedPipelineIds((previous) => {
+                                const next = new Set(previous);
+                                if (next.has(item.id)) {
+                                  next.delete(item.id);
+                                } else {
+                                  next.add(item.id);
+                                }
+                                return next;
+                              });
+                            }}
+                            showOnHover
+                            type="button"
+                          >
+                            <ChevronRight
+                              className={`size-3 transition-transform ${
+                                isExpanded ? "rotate-90" : ""
+                              }`}
+                            />
+                          </SidebarMenuAction>
                         </div>
                       </ContextMenuTrigger>
                       <ContextMenuContent>
@@ -310,10 +312,10 @@ export function WorkspaceSidebar({
                     </ContextMenu>
 
                     {isExpanded && (
-                      <SidebarMenu className="pl-3">
+                      <SidebarMenuSub>
                         {item.assets.map((asset) => (
-                          <SidebarMenuItem key={asset.id}>
-                            <SidebarMenuButton
+                          <SidebarMenuSubItem key={asset.id}>
+                            <SidebarMenuSubButton
                               asChild
                               isActive={asset.id === selectedAsset}
                               size="sm"
@@ -329,10 +331,10 @@ export function WorkspaceSidebar({
                               >
                                 <span>{asset.name}</span>
                               </Link>
-                            </SidebarMenuButton>
-                          </SidebarMenuItem>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
                         ))}
-                      </SidebarMenu>
+                      </SidebarMenuSub>
                     )}
                   </SidebarMenuItem>
                 );

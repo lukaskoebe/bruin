@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { registerAssetColumnsAtom } from "@/lib/atoms";
+import { registerAssetColumnsAtom } from "@/lib/atoms/domains/suggestions";
 import { inferAssetColumns, updateAssetColumns } from "@/lib/api";
 import { WebColumn, WebColumnCheck } from "@/lib/types";
 

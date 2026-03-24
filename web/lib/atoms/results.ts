@@ -1,25 +1,33 @@
 import { atom } from "jotai";
 
-import { AssetInspectResponse } from "@/lib/types";
-
 export type AssetResultTab = "inspect" | "materialize";
 
+export type MaterializeHistoryEntry = {
+  id: string;
+  kind: "asset" | "pipeline" | "batch";
+  label: string;
+  assetId?: string | null;
+  assetName?: string | null;
+  pipelineId?: string | null;
+  pipelineName?: string | null;
+  output: string;
+  status: "ok" | "error" | null;
+  error: string;
+  loading: boolean;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type AssetResultsState = {
-  inspectResult: AssetInspectResponse | null;
-  inspectLoading: boolean;
-  materializeOutput: string;
-  materializeStatus: "ok" | "error" | null;
-  materializeError: string;
-  materializeLoading: boolean;
   resultTab: AssetResultTab;
+  selectedMaterializeEntryId: string | null;
+  materializeHistory: MaterializeHistoryEntry[];
 };
 
 export const assetResultsAtom = atom<AssetResultsState>({
-  inspectResult: null,
-  inspectLoading: false,
-  materializeOutput: "",
-  materializeStatus: null,
-  materializeError: "",
-  materializeLoading: false,
   resultTab: "inspect",
+  selectedMaterializeEntryId: null,
+  materializeHistory: [],
 });
+
+export const changedAssetIdsAtom = atom<Set<string>>(new Set<string>());

@@ -3,6 +3,11 @@
 import { Dispatch, SetStateAction, useEffect, useMemo, useState } from "react";
 
 import {
+  findEnvironmentByName,
+  getSelectedEnvironmentNameFromResponse,
+  trimOptionalValue,
+} from "@/lib/settings-form-utils";
+import {
   WorkspaceConfigEnvironment,
   WorkspaceConfigResponse,
 } from "@/lib/types";
@@ -61,10 +66,7 @@ export function useWorkspaceEnvironmentForm({
   });
 
   const activeEnvironment = useMemo(
-    () =>
-      environments.find(
-        (environment) => environment.name === selectedEnvironmentName
-      ) ?? null,
+    () => findEnvironmentByName(environments, selectedEnvironmentName),
     [environments, selectedEnvironmentName]
   );
 
@@ -81,9 +83,7 @@ export function useWorkspaceEnvironmentForm({
 
     if (mode === "clone") {
       const sourceName = selectedEnvironmentName ?? environments[0]?.name ?? "";
-      const sourceEnvironment = environments.find(
-        (environment) => environment.name === sourceName
-      );
+      const sourceEnvironment = findEnvironmentByName(environments, sourceName);
       setEnvironmentForm({
         name: "",
         schemaPrefix: sourceEnvironment?.schema_prefix ?? "",
@@ -115,15 +115,12 @@ export function useWorkspaceEnvironmentForm({
     if (mode === "create") {
       const response = await onCreateEnvironment({
         name: environmentForm.name.trim(),
-        schema_prefix: environmentForm.schemaPrefix.trim(),
+        schema_prefix: trimOptionalValue(environmentForm.schemaPrefix),
         set_as_default: environmentForm.setAsDefault,
       });
       onModeChange("edit");
       onSelectedEnvironmentChange(
-        environmentForm.name.trim() ||
-          response.default_environment ||
-          response.environments[0]?.name ||
-          null
+        getSelectedEnvironmentNameFromResponse(response, environmentForm.name.trim())
       );
       return;
     }
@@ -132,15 +129,12 @@ export function useWorkspaceEnvironmentForm({
       const response = await onCloneEnvironment({
         source_name: environmentForm.cloneSourceName,
         target_name: environmentForm.name.trim(),
-        schema_prefix: environmentForm.schemaPrefix.trim(),
+        schema_prefix: trimOptionalValue(environmentForm.schemaPrefix),
         set_as_default: environmentForm.setAsDefault,
       });
       onModeChange("edit");
       onSelectedEnvironmentChange(
-        environmentForm.name.trim() ||
-          response.default_environment ||
-          response.environments[0]?.name ||
-          null
+        getSelectedEnvironmentNameFromResponse(response, environmentForm.name.trim())
       );
       return;
     }
@@ -152,13 +146,14 @@ export function useWorkspaceEnvironmentForm({
     const response = await onUpdateEnvironment({
       name: activeEnvironment.name,
       new_name: environmentForm.name.trim(),
-      schema_prefix: environmentForm.schemaPrefix.trim(),
+      schema_prefix: trimOptionalValue(environmentForm.schemaPrefix),
       set_as_default: environmentForm.setAsDefault,
     });
     onSelectedEnvironmentChange(
-      environmentForm.name.trim() ||
-        response.default_environment ||
-        activeEnvironment.name
+      getSelectedEnvironmentNameFromResponse(
+        response,
+        environmentForm.name.trim() || activeEnvironment.name
+      )
     );
   };
 
@@ -169,9 +164,7 @@ export function useWorkspaceEnvironmentForm({
 
     const response = await onDeleteEnvironment(activeEnvironment.name);
     onModeChange("edit");
-    onSelectedEnvironmentChange(
-      response.default_environment || response.environments[0]?.name || null
-    );
+    onSelectedEnvironmentChange(getSelectedEnvironmentNameFromResponse(response));
   };
 
   return {

@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
-import { WorkspaceEnvironmentsRoutePage } from "./_workspace.settings.environments";
+import { WorkspaceEnvironmentsRoutePage } from "./environments";
 
 export const Route = createFileRoute("/_workspace/settings/")({
   component: WorkspaceSettingsIndexRouteComponent,

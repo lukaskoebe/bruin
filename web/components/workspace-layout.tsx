@@ -26,7 +26,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { pipelineAtom } from "@/lib/atoms";
+import { pipelineAtom } from "@/lib/atoms/domains/workspace";
 import { WebPipeline, WorkspaceState } from "@/lib/types";
 import { useAssetActions } from "@/hooks/use-asset-actions";
 import { useAssetResults } from "@/hooks/use-asset-results";
@@ -35,7 +35,7 @@ import { useWorkspaceSelection } from "@/hooks/use-workspace-selection";
 import { useWorkspaceSync } from "@/hooks/use-workspace-sync";
 import { useWorkspaceTheme } from "@/hooks/use-workspace-theme";
 
-type WorkspaceSidebarState = {
+export type WorkspaceSidebarState = {
   highlighted?: boolean;
   highlightStyle?: CSSProperties;
 };

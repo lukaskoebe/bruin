@@ -4,11 +4,8 @@ import { useAtom, useSetAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { inspectAsset } from "@/lib/api";
-import {
-  assetInspectAtom,
-  changedAssetIdsAtom,
-  registerAssetColumnsAtom,
-} from "@/lib/atoms";
+import { assetInspectAtom, changedAssetIdsAtom } from "@/lib/atoms/domains/results";
+import { registerAssetColumnsAtom } from "@/lib/atoms/domains/suggestions";
 import {
   getAssetViewMode,
   getTablePreviewLimit,
@@ -329,24 +326,24 @@ export function useAssetInspect(visualAssets: WebAsset[] = []) {
 
   const inspectByAssetId = useMemo<Record<string, AssetInspectResponse>>(() => {
     const next: Record<string, AssetInspectResponse> = {};
-    for (const assetId of assetIds) {
+    for (const assetId of Object.keys(byAssetId)) {
       const entry = byAssetId[assetId];
       if (entry) {
         next[assetId] = entry.result;
       }
     }
     return next;
-  }, [assetIds, byAssetId]);
+  }, [byAssetId]);
 
   const inspectLoadingByAssetId = useMemo<Record<string, boolean>>(() => {
     const next: Record<string, boolean> = {};
-    for (const assetId of assetIds) {
+    for (const assetId of Object.keys(loadingByAssetId)) {
       if (loadingByAssetId[assetId]) {
         next[assetId] = true;
       }
     }
     return next;
-  }, [assetIds, loadingByAssetId]);
+  }, [loadingByAssetId]);
 
   const clearPreviewForAsset = useCallback(
     (assetId: string) => {

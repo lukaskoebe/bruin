@@ -5,6 +5,7 @@ import { WorkspaceEnvironmentPane } from "@/components/workspace-environment-pan
 import { useWorkspaceSettingsLayout } from "@/components/workspace-settings-layout";
 import { WorkspaceSettingsSplitView } from "@/components/workspace-settings-split-view";
 import { useResolvedWorkspaceEnvironment } from "@/hooks/use-workspace-config-selection";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 export const Route = createFileRoute("/_workspace/settings/environments")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -49,6 +50,7 @@ export function WorkspaceEnvironmentsRoutePage({
     mode?: "edit" | "create" | "clone";
   }) => void;
 }) {
+  const isMobile = useIsMobile();
   const {
     fallbackConfigEnvironment,
     handleCloneWorkspaceEnvironment,
@@ -78,8 +80,25 @@ export function WorkspaceEnvironmentsRoutePage({
       }),
   });
 
+  const activeEnvironmentName =
+    effectiveMode === "edit" ? resolvedEnvironmentName ?? null : null;
+  const mobilePaneDescription =
+    effectiveMode === "create"
+      ? "Create a new environment."
+      : effectiveMode === "clone"
+        ? `Clone ${resolvedEnvironmentName ?? "an environment"}.`
+        : activeEnvironmentName
+          ? `Editing ${activeEnvironmentName}`
+          : "Create or edit an environment.";
+
   return (
     <WorkspaceSettingsSplitView
+      isPaneOpen={
+        !isMobile || effectiveMode !== "edit" || Boolean(activeEnvironmentName)
+      }
+      paneKey={`${effectiveMode}:${activeEnvironmentName ?? resolvedEnvironmentName ?? "new"}`}
+      paneTitle="Environment Editor"
+      paneDescription={mobilePaneDescription}
       content={
         <WorkspaceConfigContent
           view="environments"

@@ -1,6 +1,6 @@
 "use client";
 
-import ReactMarkdown from "react-markdown";
+import { lazy, Suspense } from "react";
 import {
   Bar,
   BarChart,
@@ -26,6 +26,8 @@ import {
   getTableDenseMode,
 } from "@/lib/asset-visualization";
 
+const ReactMarkdown = lazy(() => import("react-markdown"));
+
 type Props = {
   columns: string[];
   rows: Record<string, unknown>[];
@@ -42,43 +44,45 @@ export function AssetInspectView({ columns, rows, meta }: Props) {
     return (
       <div className="h-full overflow-auto rounded border bg-background p-3 text-sm">
         <article className="max-w-none text-sm leading-6 text-foreground">
-          <ReactMarkdown
-            components={{
-              h1: ({ children }) => (
-                <h1 className="mb-3 mt-1 text-2xl font-bold tracking-tight">
-                  {children}
-                </h1>
-              ),
-              h2: ({ children }) => (
-                <h2 className="mb-2 mt-4 text-xl font-semibold tracking-tight">
-                  {children}
-                </h2>
-              ),
-              h3: ({ children }) => (
-                <h3 className="mb-2 mt-3 text-lg font-semibold">{children}</h3>
-              ),
-              p: ({ children }) => <p className="mb-2">{children}</p>,
-              ul: ({ children }) => (
-                <ul className="mb-2 list-disc pl-6">{children}</ul>
-              ),
-              ol: ({ children }) => (
-                <ol className="mb-2 list-decimal pl-6">{children}</ol>
-              ),
-              li: ({ children }) => <li className="mb-1">{children}</li>,
-              code: ({ children }) => (
-                <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.9em]">
-                  {children}
-                </code>
-              ),
-              pre: ({ children }) => (
-                <pre className="mb-3 overflow-auto rounded border bg-muted/30 p-3 font-mono text-xs">
-                  {children}
-                </pre>
-              ),
-            }}
-          >
-            {markdown || "(No markdown content returned)"}
-          </ReactMarkdown>
+          <Suspense fallback={<div className="text-muted-foreground">Loading markdown...</div>}>
+            <ReactMarkdown
+              components={{
+                h1: ({ children }) => (
+                  <h1 className="mb-3 mt-1 text-2xl font-bold tracking-tight">
+                    {children}
+                  </h1>
+                ),
+                h2: ({ children }) => (
+                  <h2 className="mb-2 mt-4 text-xl font-semibold tracking-tight">
+                    {children}
+                  </h2>
+                ),
+                h3: ({ children }) => (
+                  <h3 className="mb-2 mt-3 text-lg font-semibold">{children}</h3>
+                ),
+                p: ({ children }) => <p className="mb-2">{children}</p>,
+                ul: ({ children }) => (
+                  <ul className="mb-2 list-disc pl-6">{children}</ul>
+                ),
+                ol: ({ children }) => (
+                  <ol className="mb-2 list-decimal pl-6">{children}</ol>
+                ),
+                li: ({ children }) => <li className="mb-1">{children}</li>,
+                code: ({ children }) => (
+                  <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.9em]">
+                    {children}
+                  </code>
+                ),
+                pre: ({ children }) => (
+                  <pre className="mb-3 overflow-auto rounded border bg-muted/30 p-3 font-mono text-xs">
+                    {children}
+                  </pre>
+                ),
+              }}
+            >
+              {markdown || "(No markdown content returned)"}
+            </ReactMarkdown>
+          </Suspense>
         </article>
       </div>
     );

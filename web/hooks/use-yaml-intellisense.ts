@@ -10,10 +10,10 @@ import {
   getIngestrTableSuggestionsFromCatalog,
   registerConnectionTablesAtom,
   RegisterConnectionTablesPayload,
-  selectedEnvironmentAtom,
   SuggestionCatalogState,
   suggestionCatalogAtom,
-} from "@/lib/atoms";
+} from "@/lib/atoms/domains/suggestions";
+import { selectedEnvironmentAtom } from "@/lib/atoms/domains/workspace";
 import { WebAsset } from "@/lib/types";
 
 type YamlFieldContext = {

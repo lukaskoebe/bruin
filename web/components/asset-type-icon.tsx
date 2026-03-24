@@ -93,7 +93,7 @@ function resolveAssetIcon(
     return iconWithColor(SiDatabricks({ size: 16 }), "#ef4444");
   }
   if (has(value, "motherduck")) {
-    return iconWithColor(SiDuckdb({ size: 16 }), "#10b981");
+    return iconWithColor(SiDuckdb({ size: 16 }), "#ffff00");
   }
   if (has(value, "duckdb")) {
     return iconWithColor(SiDuckdb({ size: 16 }), "#ffff00");

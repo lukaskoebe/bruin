@@ -1,62 +1,34 @@
 "use client";
 
 import { useAtom, useAtomValue } from "jotai";
-import {
-  CSSProperties,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
-import {
-  NodeTypes,
-  ReactFlowInstance,
-  useEdgesState,
-  useNodesState,
-} from "reactflow";
-import { Plus } from "lucide-react";
-import { PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import "reactflow/dist/style.css";
 
-import { AssetNode } from "@/components/asset-node";
-import { NewAssetNode } from "@/components/new-asset-node";
 import { WorkspaceAssetDialogs } from "@/components/workspace-asset-dialogs";
+import { WorkspaceMainContent } from "@/components/workspace-main-content";
+import { WorkspacePageEffects } from "@/components/workspace-page-effects";
 import {
   AssetConfigForm,
   WorkspaceEditorPane,
 } from "@/components/workspace-editor-pane";
-import { WorkspaceCanvasPane } from "@/components/workspace-canvas-pane";
-import { WorkspaceOnboardingPanel } from "@/components/workspace-onboarding-panel";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { Button } from "@/components/ui/button";
 import {
   assetEditorTabAtom,
   editorValueAtom,
+} from "@/lib/atoms/domains/editor";
+import {
   enrichedSelectedAssetAtom,
-} from "@/lib/atoms";
+} from "@/lib/atoms/domains/results";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
-  buildFlowFromPipeline,
   computeGraphLayoutPositions,
 } from "@/lib/graph";
 import { buildCreateAssetInput } from "@/lib/workspace-shell-helpers";
 import { useAssetCanvasInteractions } from "@/hooks/use-asset-canvas-interactions";
-import { useAssetPreviews } from "@/hooks/use-asset-previews";
-import { getTablePreviewLimit } from "@/lib/asset-visualization";
 import { useDebouncedAssetSave } from "@/hooks/use-debounced-asset-save";
 import { useEditorActions } from "@/hooks/use-editor-actions";
-import { useGraphViewportFocus } from "@/hooks/use-graph-viewport-focus";
-import { useOnboardingActions } from "@/hooks/use-onboarding-actions";
-import { useOnboardingState } from "@/hooks/use-onboarding-state";
-import { usePersistedNodePositions } from "@/hooks/use-persisted-node-positions";
+import { useWorkspaceGraphController } from "@/hooks/use-workspace-graph-controller";
+import { useWorkspaceOnboardingController } from "@/hooks/use-workspace-onboarding-controller";
 import { useWorkspaceSettingsData } from "@/hooks/use-workspace-settings-data";
 import { useWorkspaceDerivedState } from "@/hooks/use-workspace-derived-state";
 import { getAvailableAssetTypes } from "@/lib/asset-types";
@@ -79,25 +51,11 @@ export function WorkspacePage() {
   const [assetEditorTab, setAssetEditorTab] = useAtom(assetEditorTabAtom);
   const editorValue = useAtomValue(editorValueAtom);
   const asset = useAtomValue(enrichedSelectedAssetAtom);
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const [reactFlowInstance, setReactFlowInstance] =
-    useState<ReactFlowInstance | null>(null);
-  const [storedNodePositions, setStoredNodePositions] =
-    usePersistedNodePositions();
-  const [showOnboarding, setShowOnboarding] = useState(true);
-  const [helpMode, setHelpMode] = useState(false);
-  const [recomputeVersion, setRecomputeVersion] = useState(0);
-  const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const isMobile = useIsMobile();
   const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
 
   const { scheduleSave, flushAssetSave } = useDebouncedAssetSave(500);
   const { workspaceConfig } = useWorkspaceSettingsData();
-  const nodeTypes = useMemo<NodeTypes>(
-    () => ({ assetNode: AssetNode, newAssetNode: NewAssetNode }),
-    []
-  );
 
   const { enrichedPipeline, refreshPipelineMaterialization } =
     pipelineMaterialization;
@@ -108,61 +66,33 @@ export function WorkspacePage() {
     });
 
   const {
+    areVisualPreviewsReady,
+    assetPreviewRows,
+    canvasContainerRef,
+    clearPreviewForAsset,
+    connectedNodeIDs,
+    edges,
+    graph,
+    handleRecomputeGraph,
     inspectByAssetId,
     inspectLoadingByAssetId,
-    canLoadMoreByAssetId,
-    loadMorePreviewRows,
-    clearPreviewForAsset,
-    getRowsForAsset,
-  } = useAssetPreviews(visualAssets);
-
-  const areVisualPreviewsReady = useMemo(() => {
-    if (visualAssets.length === 0) {
-      return true;
-    }
-
-    return visualAssets.every((visualAsset) =>
-      Boolean(inspectByAssetId[visualAsset.id])
-    );
-  }, [inspectByAssetId, visualAssets]);
-
-  const assetPreviewRows = useMemo(() => {
-    if (!asset) {
-      return [] as Record<string, unknown>[];
-    }
-
-    const limit = getTablePreviewLimit(asset.meta, 25);
-    return getRowsForAsset(asset.id, limit) ?? assetResults.inspectResult?.rows ?? [];
-  }, [asset, assetResults.inspectResult, getRowsForAsset]);
-
-  const graph = useMemo(
-    () =>
-      buildFlowFromPipeline(
-        enrichedPipeline,
-        inspectByAssetId,
-        inspectLoadingByAssetId,
-        storedNodePositions,
-        canLoadMoreByAssetId,
-        loadMorePreviewRows
-      ),
-    [
-      canLoadMoreByAssetId,
-      enrichedPipeline,
-      inspectByAssetId,
-      inspectLoadingByAssetId,
-      loadMorePreviewRows,
-      storedNodePositions,
-    ]
-  );
-
-  const connectedNodeIDs = useMemo(() => {
-    const ids = new Set<string>();
-    for (const edge of graph.edges) {
-      ids.add(edge.source);
-      ids.add(edge.target);
-    }
-    return ids;
-  }, [graph.edges]);
+    nodeTypes,
+    nodes,
+    onEdgesChange,
+    onNodesChange,
+    reactFlowInstance,
+    setEdges,
+    setNodes,
+    setReactFlowInstance,
+    setStoredNodePositions,
+    storedNodePositions,
+  } = useWorkspaceGraphController({
+    asset,
+    enrichedPipeline,
+    selectedAssetId: selectedAsset,
+    selectedInspectRows: assetResults.inspectResult?.rows,
+    visualAssets,
+  });
 
   const form = useForm<AssetConfigForm>({
     defaultValues: {
@@ -174,160 +104,23 @@ export function WorkspacePage() {
     },
   });
 
-  useGraphViewportFocus({
-    reactFlowInstance,
-    activePipelineId: pipeline?.id ?? null,
-    recomputeVersion,
-    graphNodes: graph.nodes,
-    graphEdges: graph.edges,
-    selectedAssetId: selectedAsset,
-    storedNodePositions,
-    canvasContainerRef,
-  });
-
-  useEffect(() => {
-    if (!enrichedPipeline || enrichedPipeline.assets.length === 0) {
-      return;
-    }
-
-    if (!areVisualPreviewsReady) {
-      return;
-    }
-
-    const assetIds = enrichedPipeline.assets.map(
-      (currentAsset) => currentAsset.id
-    );
-    const hasStoredPositionsForPipeline = assetIds.some(
-      (assetId) => storedNodePositions[assetId]
-    );
-
-    if (hasStoredPositionsForPipeline) {
-      return;
-    }
-
-    const initialPositions = computeGraphLayoutPositions(
-      enrichedPipeline,
-      inspectByAssetId,
-      inspectLoadingByAssetId
-    );
-
-    setStoredNodePositions((previous) => ({
-      ...previous,
-      ...initialPositions,
-    }));
-  }, [
-    areVisualPreviewsReady,
-    enrichedPipeline,
-    inspectByAssetId,
-    inspectLoadingByAssetId,
-    setStoredNodePositions,
-    storedNodePositions,
-  ]);
-
-  useEffect(() => {
-    form.reset({
-      name: asset?.name ?? "",
-      type: asset?.type ?? "",
-      materialization: asset?.materialization_type ?? "",
-      custom_checks: "",
-      columns: "",
-    });
-  }, [asset?.materialization_type, asset?.name, asset?.type, form]);
-
-  useEffect(() => {
-    if (!isMobile) {
-      setMobileEditorOpen(false);
-      return;
-    }
-
-    if (asset) {
-      setMobileEditorOpen(true);
-    }
-  }, [asset, isMobile]);
-
-  const previousSelectedAssetRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    const previousSelectedAsset = previousSelectedAssetRef.current;
-    if (previousSelectedAsset && previousSelectedAsset !== selectedAsset) {
-      flushAssetSave(previousSelectedAsset);
-    }
-    previousSelectedAssetRef.current = selectedAsset;
-  }, [flushAssetSave, selectedAsset]);
-
-  const { onboarding, onboardingHelp } = useOnboardingState(enrichedPipeline);
   const {
-    onboardingMaterializeLoading,
-    handleCreateOnboardingAsset,
-    handleApplyPythonStarter,
-    handleApplySQLStarter,
-    handleMaterializeOnboardingAssets,
-    handleApplyVisualizationStarter,
-  } = useOnboardingActions({
+    helpMode,
+    helpPulseStyle,
+    onboardingContent,
+    onboardingHelp,
+  } = useWorkspaceOnboardingController({
     editorValue,
-    onboarding,
     existingAssetNames,
     navigateSelection,
+    openCreatePipelineDialog: assetActions.openCreatePipelineDialog,
+    pipeline,
+    refreshPipelineMaterialization,
     runCreateAsset: assetActions.runCreateAsset,
     runUpdateAsset: assetActions.runUpdateAsset,
-    refreshPipelineMaterialization,
     setMaterializeBatchResult: assetResults.setMaterializeBatchResult,
+    setSidebarState,
   });
-
-  const helpPulseStyle = useMemo<CSSProperties>(
-    () => ({
-      animation: "bruin-help-scale 520ms ease-in-out infinite alternate",
-    }),
-    []
-  );
-
-  const onboardingContent = useMemo(
-    () => (
-      <WorkspaceOnboardingPanel
-        helpMode={helpMode}
-        onboarding={onboarding}
-        onboardingHelp={onboardingHelp}
-        onboardingMaterializeLoading={onboardingMaterializeLoading}
-        pipelineExists={Boolean(pipeline)}
-        showOnboarding={showOnboarding}
-        onApplyPythonStarter={handleApplyPythonStarter}
-        onApplySQLStarter={handleApplySQLStarter}
-        onApplyVisualizationStarter={handleApplyVisualizationStarter}
-        onCreateOnboardingAsset={handleCreateOnboardingAsset}
-        onCreatePipeline={assetActions.openCreatePipelineDialog}
-        onHide={() => setShowOnboarding(false)}
-        onMaterializeOnboardingAssets={handleMaterializeOnboardingAssets}
-        onShow={() => setShowOnboarding(true)}
-        onToggleHelp={() => setHelpMode((previous) => !previous)}
-      />
-    ),
-    [
-      assetActions.openCreatePipelineDialog,
-      handleApplyPythonStarter,
-      handleApplySQLStarter,
-      handleApplyVisualizationStarter,
-      handleCreateOnboardingAsset,
-      handleMaterializeOnboardingAssets,
-      helpMode,
-      onboarding,
-      onboardingHelp,
-      onboardingMaterializeLoading,
-      pipeline,
-      showOnboarding,
-    ]
-  );
-
-  useEffect(() => {
-    setSidebarState({
-      highlighted: helpMode && onboardingHelp.target === "sidebar",
-      highlightStyle:
-        helpMode && onboardingHelp.target === "sidebar"
-          ? helpPulseStyle
-          : undefined,
-    });
-
-    return () => setSidebarState({});
-  }, [helpMode, helpPulseStyle, onboardingHelp.target, setSidebarState]);
 
   const {
     handlePaneClick,
@@ -375,24 +168,6 @@ export function WorkspacePage() {
     clearPreviewForAsset,
   });
 
-  const handleRecomputeGraph = () => {
-    if (!enrichedPipeline) {
-      return;
-    }
-
-    const recomputedPositions = computeGraphLayoutPositions(
-      enrichedPipeline,
-      inspectByAssetId,
-      inspectLoadingByAssetId
-    );
-
-    setStoredNodePositions((previous) => ({
-      ...previous,
-      ...recomputedPositions,
-    }));
-    setRecomputeVersion((previous) => previous + 1);
-  };
-
   const handleRunPipeline = () => {
     if (!pipeline || assetResults.materializeLoading) {
       return;
@@ -403,129 +178,123 @@ export function WorkspacePage() {
     });
   };
 
+  const handleSelectMaterializeEntry = useCallback(
+    (entryId: string) => {
+      assetResults.selectMaterializeEntry(entryId);
+
+      const entry = assetResults.materializeHistory.find((item) => item.id === entryId);
+      if (entry?.assetId && pipeline?.id) {
+        navigateSelection(pipeline.id, entry.assetId);
+      }
+    },
+    [assetResults, navigateSelection, pipeline?.id]
+  );
+
   const hasPipelines = workspace.pipelines.length > 0;
   const availableAssetTypes = useMemo(
     () => getAvailableAssetTypes(workspaceConfig?.connection_types ?? []),
     [workspaceConfig?.connection_types]
   );
-  const editorPane = (
-    <WorkspaceEditorPane
-      asset={asset}
-      pipelineId={pipeline?.id ?? null}
-      helpMode={helpMode}
-      actionHighlighted={onboardingHelp.target === "actions"}
-      editorHighlighted={onboardingHelp.target === "editor"}
-      visualizationHighlighted={onboardingHelp.target === "visualization"}
-      highlightStyle={helpPulseStyle}
-      materializeLoading={assetResults.materializeLoading}
-      inspectLoading={assetResults.inspectLoading}
-      deleteLoading={deleteLoading}
-      editorValue={editorValue}
-      monacoTheme={monacoTheme}
-      assetEditorTab={assetEditorTab}
-      form={form}
-      assetPreviewRows={assetPreviewRows}
-      onEditorTabChange={setAssetEditorTab}
-      onEditorChange={handleEditorChange}
-      onMaterializeSelectedAsset={handleMaterializeSelectedAsset}
-      onInspectSelectedAsset={handleInspectSelectedAsset}
-      onOpenDeleteDialog={() => setDeleteDialogOpen(true)}
-      onAssetNameChange={handleAssetNameChange}
-      onAssetTypeChange={handleAssetTypeChange}
-      onMaterializationTypeChange={handleMaterializationTypeChange}
-      onSaveVisualizationSettings={handleSaveVisualizationSettings}
-      onGoToAsset={navigateSelection}
-      mobile={isMobile}
-      availableAssetTypes={availableAssetTypes}
-    />
-  );
+  const editorPaneProps = {
+    asset,
+    pipelineId: pipeline?.id ?? null,
+    helpMode,
+    actionHighlighted: onboardingHelp.target === "actions",
+    editorHighlighted: onboardingHelp.target === "editor",
+    visualizationHighlighted: onboardingHelp.target === "visualization",
+    highlightStyle: helpPulseStyle,
+    materializeLoading: assetResults.materializeLoading,
+    inspectLoading: assetResults.inspectLoading,
+    deleteLoading,
+    editorValue,
+    monacoTheme,
+    assetEditorTab,
+    form,
+    assetPreviewRows,
+    onEditorTabChange: setAssetEditorTab,
+    onEditorChange: handleEditorChange,
+    onMaterializeSelectedAsset: handleMaterializeSelectedAsset,
+    onInspectSelectedAsset: handleInspectSelectedAsset,
+    onOpenDeleteDialog: () => setDeleteDialogOpen(true),
+    onAssetNameChange: handleAssetNameChange,
+    onAssetTypeChange: handleAssetTypeChange,
+    onMaterializationTypeChange: handleMaterializationTypeChange,
+    onSaveVisualizationSettings: handleSaveVisualizationSettings,
+    onGoToAsset: navigateSelection,
+    availableAssetTypes,
+  } as const;
+
+  const editorPane = <WorkspaceEditorPane {...editorPaneProps} mobile={isMobile} />;
 
   return (
     <>
-      {sidebarOnboardingMount
-        ? createPortal(onboardingContent, sidebarOnboardingMount)
-        : null}
+      <WorkspacePageEffects
+        asset={asset}
+        enrichedPipeline={enrichedPipeline}
+        areVisualPreviewsReady={areVisualPreviewsReady}
+        inspectByAssetId={inspectByAssetId}
+        inspectLoadingByAssetId={inspectLoadingByAssetId}
+        storedNodePositions={storedNodePositions}
+        setStoredNodePositions={setStoredNodePositions}
+        computeInitialPositions={() =>
+          computeGraphLayoutPositions(
+            enrichedPipeline,
+            inspectByAssetId,
+            inspectLoadingByAssetId
+          )
+        }
+        form={form}
+        isMobile={isMobile}
+        setMobileEditorOpen={setMobileEditorOpen}
+        selectedAsset={selectedAsset}
+        flushAssetSave={flushAssetSave}
+        sidebarOnboardingMount={sidebarOnboardingMount}
+        onboardingContent={onboardingContent}
+      />
 
-      {hasPipelines ? (
-        <>
-          <PanelGroup direction="horizontal" className="h-full min-h-0 overflow-hidden">
-            <WorkspaceCanvasPane
-              highlighted={helpMode && onboardingHelp.target === "canvas"}
-              highlightStyle={helpPulseStyle}
-              hasResultData={assetResults.hasResultData}
-              canvasContainerRef={canvasContainerRef}
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              inspectResult={assetResults.inspectResult}
-              inspectLoading={assetResults.inspectLoading}
-              materializeLoading={assetResults.materializeLoading}
-              pipelineMaterializeLoading={assetResults.pipelineMaterializeLoading}
-              hasInspectData={assetResults.hasInspectData}
-              hasMaterializeData={assetResults.hasMaterializeData}
-              effectiveResultTab={assetResults.effectiveResultTab}
-              materializeStatus={assetResults.materializeStatus}
-              materializeError={assetResults.materializeError}
-              materializeOutputHtml={assetResults.materializeOutputHtml}
-              onResultTabChange={assetResults.setResultTab}
-              onInit={setReactFlowInstance}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onNodeDragStop={handleNodeDragStop}
-              onPaneClick={handlePaneClick}
-              onPaneContextMenu={handlePaneContextMenu}
-              onNodeClick={handleNodeClick}
-              onRecomputeGraph={handleRecomputeGraph}
-              onRunPipeline={handleRunPipeline}
-              canRunPipeline={Boolean(pipeline)}
-              showEditorButton={isMobile}
-              isEditorButtonDisabled={!asset}
-              onOpenEditor={() => setMobileEditorOpen(true)}
-            />
-
-            {!isMobile ? (
-              <>
-                <PanelResizeHandle className="w-px bg-border" />
-                {editorPane}
-              </>
-            ) : null}
-          </PanelGroup>
-
-          {isMobile ? (
-            <Sheet open={mobileEditorOpen} onOpenChange={setMobileEditorOpen}>
-              <SheetContent
-                side="bottom"
-                className="h-[88vh] rounded-t-2xl p-0 sm:max-w-none"
-              >
-                <SheetHeader className="border-b px-4 py-3 text-left">
-                  <SheetTitle>Asset Editor</SheetTitle>
-                  <SheetDescription className="truncate">
-                    {asset?.path ?? "No asset selected"}
-                  </SheetDescription>
-                </SheetHeader>
-                <div className="min-h-0 flex-1 overflow-hidden">{editorPane}</div>
-              </SheetContent>
-            </Sheet>
-          ) : null}
-        </>
-      ) : (
-        <div className="flex h-full items-center justify-center bg-muted/10 p-8">
-          <div className="max-w-md rounded-lg border bg-card p-6 text-center shadow-sm">
-            <h2 className="text-lg font-semibold">No pipelines yet</h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Create your first pipeline to start editing assets and building your workflow.
-            </p>
-            <Button
-              className="mt-4"
-              onClick={assetActions.openCreatePipelineDialog}
-              type="button"
-            >
-              <Plus className="mr-2 size-4" />
-              Create pipeline
-            </Button>
-          </div>
-        </div>
-      )}
+      <WorkspaceMainContent
+        hasPipelines={hasPipelines}
+        isMobile={isMobile}
+        mobileEditorOpen={mobileEditorOpen}
+        setMobileEditorOpen={setMobileEditorOpen}
+        assetPath={asset?.path}
+        editorPane={editorPane}
+        emptyStateAction={assetActions.openCreatePipelineDialog}
+        canvasPaneProps={{
+          highlighted: helpMode && onboardingHelp.target === "canvas",
+          highlightStyle: helpPulseStyle,
+          hasResultData: assetResults.hasResultData,
+          canvasContainerRef,
+          nodes,
+          edges,
+          nodeTypes,
+          inspectResult: assetResults.inspectResult,
+          inspectLoading: assetResults.inspectLoading,
+          inspectMeta: asset?.meta,
+          materializeLoading: assetResults.materializeLoading,
+          pipelineMaterializeLoading: assetResults.pipelineMaterializeLoading,
+          hasInspectData: assetResults.hasInspectData,
+          effectiveResultTab: assetResults.effectiveResultTab,
+          selectedMaterializeEntry: assetResults.selectedMaterializeEntry,
+          materializeHistory: assetResults.materializeHistory,
+          materializeOutputHtml: assetResults.materializeOutputHtml,
+          onResultTabChange: assetResults.setResultTab,
+          onSelectMaterializeEntry: handleSelectMaterializeEntry,
+          onInit: setReactFlowInstance,
+          onNodesChange,
+          onEdgesChange,
+          onNodeDragStop: handleNodeDragStop,
+          onPaneClick: handlePaneClick,
+          onPaneContextMenu: handlePaneContextMenu,
+          onNodeClick: handleNodeClick,
+          onRecomputeGraph: handleRecomputeGraph,
+          onRunPipeline: handleRunPipeline,
+          canRunPipeline: Boolean(pipeline),
+          showEditorButton: isMobile,
+          isEditorButtonDisabled: !asset,
+          onOpenEditor: () => setMobileEditorOpen(true),
+        }}
+      />
 
       <WorkspaceAssetDialogs
         deleteDialogOpen={deleteDialogOpen}

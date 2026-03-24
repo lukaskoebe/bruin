@@ -2,7 +2,6 @@
 
 import { AlertCircle, RefreshCcw } from "lucide-react";
 import { CSSProperties, ReactNode } from "react";
-import { Panel } from "react-resizable-panels";
 
 import { Button } from "@/components/ui/button";
 
@@ -35,7 +34,7 @@ export function WorkspaceConfigPaneLayout({
   onReload,
   children,
 }: WorkspaceConfigPaneLayoutProps) {
-  const content = (
+  return (
     <div className="flex h-full min-h-0 min-w-0 flex-col border-l bg-background">
       <div
         className={`border-b px-4 py-3 ${
@@ -78,6 +77,4 @@ export function WorkspaceConfigPaneLayout({
       </div>
     </div>
   );
-
-  return <Panel defaultSize={32} minSize={24}>{content}</Panel>;
 }

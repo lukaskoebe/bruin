@@ -5,11 +5,10 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useEffect } from "react";
 
 import {
-  activePipelineAtom,
   resolvedActivePipelineAtom,
   resolvedSelectedAssetAtom,
-  selectedAssetAtom,
-} from "@/lib/atoms";
+  routeSelectionAtom,
+} from "@/lib/atoms/domains/workspace";
 
 export function useWorkspaceSelection(): {
   activePipeline: string | null;
@@ -17,10 +16,7 @@ export function useWorkspaceSelection(): {
   navigateSelection: (pipelineId: string, assetId: string | null) => void;
 } {
   const navigate = useNavigate();
-  const setRequestedPipeline = useSetAtom(activePipelineAtom);
-  const setRequestedAsset = useSetAtom(selectedAssetAtom);
-  const requestedPipeline = useAtomValue(activePipelineAtom);
-  const requestedAsset = useAtomValue(selectedAssetAtom);
+  const setRouteSelection = useSetAtom(routeSelectionAtom);
   const activePipeline = useAtomValue(resolvedActivePipelineAtom);
   const selectedAsset = useAtomValue(resolvedSelectedAssetAtom);
   const locationState = useRouterState({
@@ -38,24 +34,15 @@ export function useWorkspaceSelection(): {
       return;
     }
 
-    const nextPipeline = locationState.search.pipeline ?? null;
-    const nextAsset = locationState.search.asset ?? null;
-
-    if (requestedPipeline !== nextPipeline) {
-      setRequestedPipeline(nextPipeline);
-    }
-
-    if (requestedAsset !== nextAsset) {
-      setRequestedAsset(nextAsset);
-    }
+    setRouteSelection({
+      pipeline: locationState.search.pipeline ?? null,
+      asset: locationState.search.asset ?? null,
+    });
   }, [
     locationState.pathname,
     locationState.search.asset,
     locationState.search.pipeline,
-    requestedAsset,
-    requestedPipeline,
-    setRequestedAsset,
-    setRequestedPipeline,
+    setRouteSelection,
   ]);
 
   const navigateSelection = useCallback(

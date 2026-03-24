@@ -1,4 +1,4 @@
-import ReactMarkdown from "react-markdown";
+import { lazy, Suspense } from "react";
 import { ChevronDown, Loader2 } from "lucide-react";
 import {
   Bar,
@@ -18,6 +18,8 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import { AssetViewMode, LineChartSpec } from "@/lib/asset-visualization";
+
+const ReactMarkdown = lazy(() => import("react-markdown"));
 
 interface AssetNodePreviewProps {
   previewMode: AssetViewMode | null;
@@ -293,23 +295,25 @@ function MarkdownPreview({ markdown }: { markdown: string }) {
   return (
     <div className="max-h-56 overflow-auto rounded border bg-background p-2">
       <article className="max-w-none text-xs leading-5 text-foreground">
-        <ReactMarkdown
-          components={{
-            h1: ({ children }) => (
-              <h1 className="mb-2 mt-1 text-lg font-bold">{children}</h1>
-            ),
-            h2: ({ children }) => (
-              <h2 className="mb-2 mt-2 text-base font-semibold">{children}</h2>
-            ),
-            p: ({ children }) => <p className="mb-1.5">{children}</p>,
-            ul: ({ children }) => (
-              <ul className="mb-1.5 list-disc pl-4">{children}</ul>
-            ),
-            li: ({ children }) => <li className="mb-0.5">{children}</li>,
-          }}
-        >
-          {markdown}
-        </ReactMarkdown>
+        <Suspense fallback={<div className="text-muted-foreground">Loading preview...</div>}>
+          <ReactMarkdown
+            components={{
+              h1: ({ children }) => (
+                <h1 className="mb-2 mt-1 text-lg font-bold">{children}</h1>
+              ),
+              h2: ({ children }) => (
+                <h2 className="mb-2 mt-2 text-base font-semibold">{children}</h2>
+              ),
+              p: ({ children }) => <p className="mb-1.5">{children}</p>,
+              ul: ({ children }) => (
+                <ul className="mb-1.5 list-disc pl-4">{children}</ul>
+              ),
+              li: ({ children }) => <li className="mb-0.5">{children}</li>,
+            }}
+          >
+            {markdown}
+          </ReactMarkdown>
+        </Suspense>
       </article>
     </div>
   );

@@ -7,8 +7,8 @@ import {
   enrichedPipelineAtom,
   materializationByAssetIdAtom,
   MaterializationByAssetId,
-  resolvedActivePipelineAtom,
-} from "@/lib/atoms";
+} from "@/lib/atoms/domains/results";
+import { resolvedActivePipelineAtom } from "@/lib/atoms/domains/workspace";
 import { getPipelineMaterialization } from "@/lib/api";
 import { WebPipeline } from "@/lib/types";
 

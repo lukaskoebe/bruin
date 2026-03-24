@@ -4,12 +4,11 @@ import { useAtomValue, useSetAtom } from "jotai";
 import { useCallback, useState } from "react";
 
 import { materializeAssetStream } from "@/lib/api";
+import { assetEditorTabAtom, editorDraftAtom } from "@/lib/atoms/domains/editor";
 import {
-  assetEditorTabAtom,
-  editorDraftAtom,
   pipelineAtom,
   resolvedSelectedAssetAtom,
-} from "@/lib/atoms";
+} from "@/lib/atoms/domains/workspace";
 import {
   buildCreateAssetInput,
   buildOnboardingPythonStarterQuery,

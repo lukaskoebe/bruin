@@ -3,7 +3,10 @@
 import { useAtomValue, useSetAtom } from "jotai";
 import { useEffect } from "react";
 
-import { workspaceAtom, workspaceSyncSourceAtom } from "@/lib/atoms";
+import {
+  workspaceAtom,
+  workspaceSyncSourceAtom,
+} from "@/lib/atoms/domains/workspace";
 import { getWorkspace } from "@/lib/api";
 import { WebAsset, WorkspaceEvent, WorkspaceState } from "@/lib/types";
 

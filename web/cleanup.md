@@ -18,6 +18,27 @@ The goal is not a rewrite. The goal is to reduce overlap, tighten state ownershi
 
 ## Highest-Priority Cleanup Opportunities
 
+## Status Update
+
+Completed or substantially completed:
+
+- shared inspect fetching/state now flows through `web/hooks/use-asset-inspect.ts`
+- settings route state is normalized around route search params
+- effective config environment resolution is shared via `web/lib/settings-environment.ts`
+- `WorkspacePage` has been decomposed into orchestration helpers/components
+- `WorkspaceEditorPane` has been split into focused subcomponents and hooks
+- settings panes/layout now follow the same mobile sheet pattern as workspace
+- sidebar expansion is decoupled from navigation
+- settings route files have been migrated to directory-style organization under `web/src/routes/_workspace/settings/`
+- `web/lib/api.ts` now has clearer internal helpers for text parsing, parsed text responses, and materialize stream handling
+
+Still active / remaining:
+
+- results/materialize state should finish moving from global console-like behavior to explicit asset-scoped history-backed behavior
+- atom organization can still be cleaned up further by ownership/domain
+- `web/lib/api.ts` still concentrates many endpoint exports in one file even though internal helpers are cleaner now
+- suggestion-catalog state remains a large derived-state pipeline
+
 ### 1. Unify inspect state and fetching
 
 Files:
@@ -48,6 +69,12 @@ Recommended cleanup:
   - limit expansion rules
 - let preview and results panel only differ in rendering and selection behavior
 
+Status:
+
+- largely completed
+- inspect fetch/dedupe/cache/refresh/column registration now live in `web/hooks/use-asset-inspect.ts`
+- results and previews now consume the shared inspect source instead of maintaining separate fetch paths
+
 ### 2. Simplify selection ownership; reduce route + atom duplication
 
 Files:
@@ -72,6 +99,12 @@ Recommended cleanup:
 - keep URL search as the requested selection
 - derive resolved selection from workspace in one direction only
 - avoid route -> atom -> derived atom -> route loops
+
+Status:
+
+- substantially completed
+- route-backed requested selection now flows through `routeSelectionAtom`
+- resolved selection is derived from workspace state rather than maintained as a parallel writable mirror
 
 ### 3. Remove or centralize ad hoc optimistic workspace mutations
 
@@ -99,6 +132,12 @@ Recommended cleanup:
   - content-edit optimism that is required for editor UX
   - metadata/config optimism that should usually defer to backend/SSE reconciliation
 
+Status:
+
+- substantially completed
+- editor draft optimism is preserved per asset to avoid Monaco/editor regressions
+- metadata-specific optimistic workspace patching for asset type updates has been removed
+
 ### 4. Split `WorkspacePage` into smaller orchestration units
 
 File:
@@ -122,6 +161,11 @@ Recommended cleanup:
   - `WorkspaceMobileEditorSheet`
   - `WorkspacePageResultsController`
 - keep `WorkspacePage` as the orchestration shell, not the implementation body
+
+Status:
+
+- largely completed
+- extracted helpers/components now include `useWorkspaceGraphController`, `useWorkspaceOnboardingController`, `WorkspaceMainContent`, `WorkspaceMobileEditorSheet`, and `WorkspacePageEffects`
 
 ### 5. Split `WorkspaceEditorPane` by responsibility
 
@@ -149,6 +193,11 @@ Recommended cleanup:
   - `AssetDebugTab`
 - keep Monaco/editor shell separate from metadata/config concerns
 
+Status:
+
+- largely completed
+- extracted pieces now include `AssetEditorHeader`, `AssetCodeEditor`, `AssetEditorConfigurationTab`, `AssetEditorVisualizationTab`, `WorkspaceEditorFooter`, `AssetSqlDebugPanel`, and `useWorkspaceEditorDerivedState`
+
 ### 6. Consolidate API response/error/stream handling
 
 File:
@@ -174,6 +223,12 @@ Recommended cleanup:
   - inspect output normalization
 - keep endpoint exports thin
 
+Status:
+
+- partially completed
+- shared helpers now cover JSON parsing, text response handling, parsed text responses, query-string building, SSE reading, stream materialization helpers, and inspect normalization
+- remaining work is mostly organizational/decomposition rather than urgent correctness work
+
 ### 7. Decouple sidebar selection from expansion state
 
 File:
@@ -195,6 +250,10 @@ Recommended cleanup:
 - make expansion an explicit disclosure action
 - keep navigation/select behavior independent
 - context menu and disclosure behavior should not rely on active-route side effects
+
+Status:
+
+- completed
 
 ### 8. Align settings architecture with workspace patterns
 
@@ -230,6 +289,11 @@ Recommended cleanup:
   - editor mode
   - requested connection type
 
+Status:
+
+- largely completed
+- settings pages now use route search for page identity, share a mobile pane shell, and live under directory-style route files
+
 ## Medium-Priority Cleanup Opportunities
 
 ### Global results state is not asset-scoped
@@ -251,6 +315,12 @@ Cleanup direction:
   - per-selected-asset output
 - then encode that model in state instead of leaving it implicit
 
+Status:
+
+- now actively being addressed
+- inspect selection already follows selected asset state
+- materialize output is moving toward asset-scoped history-backed state instead of one global output blob
+
 ### Environment/config state is assembled from overlapping sources
 
 Files:
@@ -266,6 +336,10 @@ Issue:
 Cleanup direction:
 
 - define one helper for “effective config environment” and reuse it everywhere
+
+Status:
+
+- completed via `web/lib/settings-environment.ts`
 
 ### Atom organization is uneven
 
@@ -291,6 +365,12 @@ Cleanup direction:
   - editor/form
   - settings/config
 
+Status:
+
+- partially completed
+- `changedAssetIdsAtom` has moved out of `graph.ts` into `results.ts`
+- broader atom file/domain organization is still worth doing
+
 ### Settings route/search state can be standardized further
 
 Files:
@@ -310,6 +390,10 @@ Cleanup direction:
 - use local state only for transient input, not for page identity
 - when touching route files, prefer migrating toward directory-style route file organization instead of extending the dot-style layout
 
+Status:
+
+- largely completed
+
 ### Mobile layout strategy is inconsistent across app sections
 
 Files:
@@ -326,6 +410,11 @@ Cleanup direction:
 
 - choose a shared mobile pattern for secondary editors/panes
 - either stacked panels or sheets, but intentionally
+
+Status:
+
+- completed for workspace/settings secondary panes
+- resize-transition safety was also fixed so settings no longer crashes when crossing the mobile breakpoint
 
 ## Files/Components That Are Too Large or Overloaded
 
@@ -368,11 +457,15 @@ Cleanup direction:
 2. centralize inspect error parsing and validation error parsing
 3. normalize settings route search state contracts
 
+Status: completed
+
 ### Phase 2: Inspect/state cleanup
 
 4. unify inspect fetching/caching between previews and results
 5. remove duplicated inspect-related column registration paths
 6. move `changedAssetIdsAtom` and related inspect refresh logic into a clearer domain
+
+Status: completed
 
 ### Phase 3: State ownership cleanup
 
@@ -380,16 +473,48 @@ Cleanup direction:
 8. remove one-off optimistic workspace mutations or centralize them explicitly
 9. define one helper for effective config environment resolution
 
+Status: completed
+
 ### Phase 4: Component decomposition
 
 10. split `WorkspacePage` into orchestration helpers
 11. split `WorkspaceEditorPane` into focused subcomponents + hooks
 12. split connection/environment panes into field rendering vs action shell
 
+Status: completed
+
 ### Phase 5: Interaction consistency cleanup
 
 13. decouple sidebar expansion from navigation
 14. standardize mobile secondary-pane behavior across workspace/settings
+
+Status: completed
+
+Additional follow-up completed:
+
+- settings breakpoint transitions no longer leave `Panel` components orphaned during desktop/mobile switches
+
+### Phase 6: API/helper cleanup
+
+15. continue splitting repeated response parsing and streaming helpers in `web/lib/api.ts`
+16. keep endpoint exports thin while preserving current API surface
+
+Status: partially completed
+
+Completed so far:
+
+- `readJSON`
+- structured response error parsing
+- `fetchJSON` / `fetchJSONWithBody`
+- `fetchText` / `fetchParsedText`
+- `readSSEStream`
+- `streamMaterialization`
+- inspect response normalization
+
+Still open:
+
+- endpoint exports are still concentrated in `web/lib/api.ts`
+- further internal file decomposition may still be worthwhile later
 
 ## Notable Fragile Areas to Avoid Making Worse
 

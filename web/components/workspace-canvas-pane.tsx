@@ -15,9 +15,10 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 
 import { WorkspaceResultsPanel } from "@/components/workspace-results-panel";
 import { Button } from "@/components/ui/button";
+import { MaterializeHistoryEntry } from "@/lib/atoms/results";
 import { AssetInspectResponse } from "@/lib/types";
 
-type WorkspaceCanvasPaneProps = {
+export type WorkspaceCanvasPaneProps = {
   highlighted: boolean;
   highlightStyle?: CSSProperties;
   hasResultData: boolean;
@@ -27,15 +28,16 @@ type WorkspaceCanvasPaneProps = {
   nodeTypes: NodeTypes;
   inspectResult: AssetInspectResponse | null;
   inspectLoading: boolean;
+  inspectMeta?: Record<string, string>;
   materializeLoading: boolean;
   pipelineMaterializeLoading?: boolean;
   hasInspectData: boolean;
-  hasMaterializeData: boolean;
   effectiveResultTab: "inspect" | "materialize";
-  materializeStatus: "ok" | "error" | null;
-  materializeError: string;
-  materializeOutputHtml: string;
+  selectedMaterializeEntry: MaterializeHistoryEntry | null;
+  materializeHistory: MaterializeHistoryEntry[];
+  materializeOutputHtml: string | null;
   onResultTabChange: (tab: "inspect" | "materialize") => void;
+  onSelectMaterializeEntry: (entryId: string) => void;
   onInit: (instance: ReactFlowInstance) => void;
   onNodesChange: Parameters<typeof ReactFlow>[0]["onNodesChange"];
   onEdgesChange: Parameters<typeof ReactFlow>[0]["onEdgesChange"];
@@ -61,15 +63,16 @@ export function WorkspaceCanvasPane({
   nodeTypes,
   inspectResult,
   inspectLoading,
+  inspectMeta,
   materializeLoading,
   pipelineMaterializeLoading = false,
   hasInspectData,
-  hasMaterializeData,
   effectiveResultTab,
-  materializeStatus,
-  materializeError,
+  selectedMaterializeEntry,
+  materializeHistory,
   materializeOutputHtml,
   onResultTabChange,
+  onSelectMaterializeEntry,
   onInit,
   onNodesChange,
   onEdgesChange,
@@ -159,15 +162,16 @@ export function WorkspaceCanvasPane({
               <WorkspaceResultsPanel
                 inspectResult={inspectResult}
                 inspectLoading={inspectLoading}
+                inspectMeta={inspectMeta}
                 materializeLoading={materializeLoading}
                 pipelineMaterializeLoading={pipelineMaterializeLoading}
                 hasInspectData={hasInspectData}
-                hasMaterializeData={hasMaterializeData}
                 effectiveResultTab={effectiveResultTab}
-                materializeStatus={materializeStatus}
-                materializeError={materializeError}
+                selectedMaterializeEntry={selectedMaterializeEntry}
+                materializeHistory={materializeHistory}
                 materializeOutputHtml={materializeOutputHtml}
                 onResultTabChange={onResultTabChange}
+                onSelectMaterializeEntry={onSelectMaterializeEntry}
               />
             </Panel>
           </>

@@ -2,16 +2,59 @@
 
 import AnsiToHtml from "ansi-to-html";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   assetResultsAtom,
   changedAssetIdsAtom,
+  enrichedSelectedAssetAtom,
+} from "@/lib/atoms/domains/results";
+import {
+  pipelineAtom,
   resolvedSelectedAssetAtom,
-} from "@/lib/atoms";
+} from "@/lib/atoms/domains/workspace";
 import { useAssetInspect } from "@/hooks/use-asset-inspect";
 import { materializeAssetStream, materializePipelineStream } from "@/lib/api";
 import { AssetInspectResponse } from "@/lib/types";
+
+let nextMaterializeHistoryId = 0;
+
+function createMaterializeHistoryId() {
+  nextMaterializeHistoryId += 1;
+  return `materialize-${Date.now()}-${nextMaterializeHistoryId}`;
+}
+
+function createMaterializeEntry(input: {
+  id: string;
+  kind: "asset" | "pipeline" | "batch";
+  label: string;
+  assetId?: string | null;
+  assetName?: string | null;
+  pipelineId?: string | null;
+  pipelineName?: string | null;
+  output?: string;
+  status?: "ok" | "error" | null;
+  error?: string;
+  loading?: boolean;
+  createdAt: number;
+  updatedAt?: number;
+}) {
+  return {
+    id: input.id,
+    kind: input.kind,
+    label: input.label,
+    assetId: input.assetId,
+    assetName: input.assetName,
+    pipelineId: input.pipelineId,
+    pipelineName: input.pipelineName,
+    output: input.output ?? "",
+    status: input.status ?? null,
+    error: input.error ?? "",
+    loading: input.loading ?? false,
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt ?? input.createdAt,
+  };
+}
 
 export function useAssetResults() {
   const [results, setResults] = useAtom(assetResultsAtom);
@@ -19,14 +62,16 @@ export function useAssetResults() {
   const [pipelineMaterializeLoading, setPipelineMaterializeLoading] =
     useState(false);
   const [assetMaterializeLoading, setAssetMaterializeLoading] = useState(false);
+  const asset = useAtomValue(enrichedSelectedAssetAtom);
+  const pipeline = useAtomValue(pipelineAtom);
+  const pipelineId = pipeline?.id ?? null;
   const selectedAssetId = useAtomValue(resolvedSelectedAssetAtom);
   const { inspectAssetById, inspectByAssetId, inspectLoadingByAssetId } =
     useAssetInspect();
   const {
-    materializeOutput,
-    materializeStatus,
-    materializeError,
     resultTab,
+    selectedMaterializeEntryId,
+    materializeHistory,
   } = results;
 
   const inspectResult = selectedAssetId
@@ -39,14 +84,6 @@ export function useAssetResults() {
   const effectiveMaterializeLoading =
     assetMaterializeLoading || pipelineMaterializeLoading;
 
-  useEffect(() => {
-    setResults((previous) =>
-      previous.materializeLoading === effectiveMaterializeLoading
-        ? previous
-        : { ...previous, materializeLoading: effectiveMaterializeLoading }
-    );
-  }, [effectiveMaterializeLoading, setResults]);
-
   const setResultTab = (tab: "inspect" | "materialize") => {
     setResults((previous) => ({
       ...previous,
@@ -54,36 +91,68 @@ export function useAssetResults() {
     }));
   };
 
-  const hasInspectData = Boolean(
-    inspectResult && (inspectResult.rows.length > 0 || inspectResult.error)
-  );
-  const hasMaterializeData =
-    materializeOutput.trim().length > 0 ||
-    materializeError.trim().length > 0 ||
-    effectiveMaterializeLoading;
+  const selectMaterializeEntry = (entryId: string) => {
+    const entry = materializeHistory.find((item) => item.id === entryId);
+    if (!entry) {
+      return;
+    }
+
+    setResults((previous) => ({
+      ...previous,
+      resultTab: "materialize",
+      selectedMaterializeEntryId: entryId,
+    }));
+  };
+
+  const hasInspectData = Boolean(inspectResult);
+  const selectedMaterializeEntry =
+    materializeHistory.find((entry) => entry.id === selectedMaterializeEntryId) ?? null;
   const hasResultData =
     hasInspectData ||
-    hasMaterializeData ||
+    resultTab === "materialize" ||
+    materializeHistory.length > 0 ||
     inspectLoading ||
     effectiveMaterializeLoading;
 
   const ansiConverter = useMemo(() => new AnsiToHtml({ escapeXML: true }), []);
   const materializeOutputHtml = useMemo(() => {
-    const normalized = materializeOutput.replace(/\r\n/g, "\n");
+    const normalized = (selectedMaterializeEntry?.output ?? "").replace(/\r\n/g, "\n");
     return ansiConverter.toHtml(normalized);
-  }, [ansiConverter, materializeOutput]);
+  }, [ansiConverter, selectedMaterializeEntry?.output]);
 
   const effectiveResultTab = useMemo(() => {
-    if (resultTab === "inspect" && !hasInspectData && hasMaterializeData) {
+    if (resultTab === "inspect" && !hasInspectData && materializeHistory.length > 0) {
       return "materialize" as const;
     }
 
-    if (resultTab === "materialize" && !hasMaterializeData && hasInspectData) {
+    if (resultTab === "materialize" && materializeHistory.length === 0 && hasInspectData) {
       return "inspect" as const;
     }
 
     return resultTab;
-  }, [hasInspectData, hasMaterializeData, resultTab]);
+  }, [hasInspectData, materializeHistory.length, resultTab]);
+
+  const upsertMaterializeEntry = (
+    entryId: string,
+    updater: (previous: typeof materializeHistory[number] | null) => typeof materializeHistory[number]
+  ) => {
+    setResults((previous) => {
+      const existingEntry =
+        previous.materializeHistory.find((entry) => entry.id === entryId) ?? null;
+      const nextEntry = updater(existingEntry);
+      const nextHistory = [
+        nextEntry,
+        ...previous.materializeHistory.filter((entry) => entry.id !== entryId),
+      ].sort((left, right) => right.updatedAt - left.updatedAt);
+
+      return {
+        ...previous,
+        resultTab: "materialize",
+        selectedMaterializeEntryId: entryId,
+        materializeHistory: nextHistory,
+      };
+    });
+  };
 
   const runInspectForAsset = async (assetId: string) => {
     try {
@@ -109,30 +178,64 @@ export function useAssetResults() {
     assetId: string,
     refresh?: () => Promise<void> | void
   ) => {
+    const entryId = createMaterializeHistoryId();
+    const startedAt = Date.now();
+
     setAssetMaterializeLoading(true);
-    setResults((previous) => ({
-      ...previous,
-      materializeOutput: "",
-      materializeStatus: null,
-      materializeError: "",
-      resultTab: "materialize",
+    upsertMaterializeEntry(entryId, () => ({
+      ...createMaterializeEntry({
+        id: entryId,
+        kind: "asset",
+        label: asset?.name ? `Asset: ${asset.name}` : "Asset materialize",
+        assetId,
+        assetName: asset?.name ?? null,
+        pipelineId: pipelineId ?? null,
+        pipelineName: pipeline?.name ?? null,
+        loading: true,
+        createdAt: startedAt,
+      }),
     }));
 
     try {
       const result = await materializeAssetStream(assetId, {
         onChunk: (chunk) => {
-          setResults((previous) => ({
-            ...previous,
-            materializeOutput: previous.materializeOutput + chunk,
-            resultTab: "materialize",
+          upsertMaterializeEntry(entryId, (previous) => ({
+            ...(previous ??
+              createMaterializeEntry({
+                id: entryId,
+                kind: "asset",
+                label: asset?.name ? `Asset: ${asset.name}` : "Asset materialize",
+                assetId,
+                assetName: asset?.name ?? null,
+                pipelineId: pipelineId ?? null,
+                pipelineName: pipeline?.name ?? null,
+                loading: true,
+                createdAt: startedAt,
+              })),
+            output: (previous?.output ?? "") + chunk,
+            loading: true,
+            updatedAt: Date.now(),
           }));
         },
       });
-      setResults((previous) => ({
-        ...previous,
-        materializeOutput: result.output ?? previous.materializeOutput,
-        materializeStatus: result.status ?? "error",
-        materializeError: result.error ?? "",
+      upsertMaterializeEntry(entryId, (previous) => ({
+        ...(previous ??
+          createMaterializeEntry({
+            id: entryId,
+            kind: "asset",
+            label: asset?.name ? `Asset: ${asset.name}` : "Asset materialize",
+            assetId,
+            assetName: asset?.name ?? null,
+            pipelineId: pipelineId ?? null,
+            pipelineName: pipeline?.name ?? null,
+            loading: true,
+            createdAt: startedAt,
+          })),
+        output: result.output ?? previous?.output ?? "",
+        status: result.status ?? "error",
+        error: result.error ?? "",
+        loading: false,
+        updatedAt: Date.now(),
       }));
 
       const affectedIds = result.changed_asset_ids;
@@ -148,24 +251,30 @@ export function useAssetResults() {
         setChangedAssetIds((prev: Set<string>) => new Set([...prev, assetId]));
       }
 
-      if (
-        (result.output ?? "").trim().length > 0 ||
-        (result.error ?? "").trim().length > 0
-      ) {
-        setResultTab("materialize");
-      }
       return result;
     } catch (error) {
-      setResults((previous) => ({
-        ...previous,
-        materializeOutput:
-          previous.materializeOutput +
-          (previous.materializeOutput ? "\n" : "") +
+      upsertMaterializeEntry(entryId, (previous) => ({
+        ...(previous ??
+          createMaterializeEntry({
+            id: entryId,
+            kind: "asset",
+            label: asset?.name ? `Asset: ${asset.name}` : "Asset materialize",
+            assetId,
+            assetName: asset?.name ?? null,
+            pipelineId: pipelineId ?? null,
+            pipelineName: pipeline?.name ?? null,
+            loading: true,
+            createdAt: startedAt,
+          })),
+        output:
+          (previous?.output ?? "") +
+          (previous?.output ? "\n" : "") +
           String(error),
-        materializeStatus: "error",
-        materializeError: String(error),
+        status: "error",
+        error: String(error),
+        loading: false,
+        updatedAt: Date.now(),
       }));
-      setResultTab("materialize");
       return null;
     } finally {
       setAssetMaterializeLoading(false);
@@ -179,32 +288,61 @@ export function useAssetResults() {
     pipelineId: string,
     refresh?: () => Promise<void> | void
   ) => {
+    const entryId = createMaterializeHistoryId();
+    const startedAt = Date.now();
+
     setPipelineMaterializeLoading(true);
-    setResults((previous) => ({
-      ...previous,
-      materializeOutput: "",
-      materializeStatus: null,
-      materializeError: "",
-      resultTab: "materialize",
+    upsertMaterializeEntry(entryId, () => ({
+      ...createMaterializeEntry({
+        id: entryId,
+        kind: "pipeline",
+        label: pipeline?.name ? `Pipeline: ${pipeline.name}` : "Pipeline materialize",
+        pipelineId,
+        pipelineName: pipeline?.name ?? null,
+        loading: true,
+        createdAt: startedAt,
+      }),
     }));
 
     try {
       const result = await materializePipelineStream(pipelineId, {
         onChunk: (chunk) => {
-          setResults((previous) => ({
-            ...previous,
-            materializeOutput: previous.materializeOutput + chunk,
-            resultTab: "materialize",
+          upsertMaterializeEntry(entryId, (previous) => ({
+            ...(previous ??
+              createMaterializeEntry({
+                id: entryId,
+                kind: "pipeline",
+                label: pipeline?.name
+                  ? `Pipeline: ${pipeline.name}`
+                  : "Pipeline materialize",
+                pipelineId,
+                pipelineName: pipeline?.name ?? null,
+                loading: true,
+                createdAt: startedAt,
+              })),
+            output: (previous?.output ?? "") + chunk,
+            loading: true,
+            updatedAt: Date.now(),
           }));
         },
       });
 
-      setResults((previous) => ({
-        ...previous,
-        materializeOutput: result.output ?? previous.materializeOutput,
-        materializeStatus: result.status ?? "error",
-        materializeError: result.error ?? "",
-        resultTab: "materialize",
+      upsertMaterializeEntry(entryId, (previous) => ({
+        ...(previous ??
+          createMaterializeEntry({
+            id: entryId,
+            kind: "pipeline",
+            label: pipeline?.name ? `Pipeline: ${pipeline.name}` : "Pipeline materialize",
+            pipelineId,
+            pipelineName: pipeline?.name ?? null,
+            loading: true,
+            createdAt: startedAt,
+          })),
+        output: result.output ?? previous?.output ?? "",
+        status: result.status ?? "error",
+        error: result.error ?? "",
+        loading: false,
+        updatedAt: Date.now(),
       }));
 
       const affectedIds = result.changed_asset_ids ?? [];
@@ -220,15 +358,25 @@ export function useAssetResults() {
 
       return result;
     } catch (error) {
-      setResults((previous) => ({
-        ...previous,
-        materializeStatus: "error",
-        materializeError: String(error),
-        materializeOutput:
-          previous.materializeOutput +
-          (previous.materializeOutput ? "\n" : "") +
+      upsertMaterializeEntry(entryId, (previous) => ({
+        ...(previous ??
+          createMaterializeEntry({
+            id: entryId,
+            kind: "pipeline",
+            label: pipeline?.name ? `Pipeline: ${pipeline.name}` : "Pipeline materialize",
+            pipelineId,
+            pipelineName: pipeline?.name ?? null,
+            loading: true,
+            createdAt: startedAt,
+          })),
+        output:
+          (previous?.output ?? "") +
+          (previous?.output ? "\n" : "") +
           String(error),
-        resultTab: "materialize",
+        status: "error",
+        error: String(error),
+        loading: false,
+        updatedAt: Date.now(),
       }));
       return null;
     } finally {
@@ -244,21 +392,50 @@ export function useAssetResults() {
     status: "ok" | "error",
     errorMessage: string
   ) => {
+    const entryId = createMaterializeHistoryId();
+    const now = Date.now();
+
     setResults((previous) => ({
       ...previous,
-      materializeOutput: output,
-      materializeStatus: status,
-      materializeError: errorMessage,
       resultTab: "materialize",
+      selectedMaterializeEntryId: entryId,
+      materializeHistory: [
+        {
+          id: entryId,
+          kind: "batch",
+          label: "Tutorial materialize",
+          assetId: selectedAssetId,
+          assetName: asset?.name ?? null,
+          pipelineId: pipelineId ?? null,
+          pipelineName: pipeline?.name ?? null,
+          output,
+          status,
+          error: errorMessage,
+          loading: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+        ...previous.materializeHistory,
+      ],
     }));
   };
 
   const clearResultsAfterDelete = () => {
-    setResults((previous) => ({
-      ...previous,
-      materializeOutput: "",
-      materializeError: "",
-    }));
+    setResults((previous) => {
+      const remainingHistory = previous.materializeHistory.filter(
+        (entry) => entry.assetId !== selectedAssetId
+      );
+
+      return {
+        ...previous,
+        materializeHistory: remainingHistory,
+        selectedMaterializeEntryId: remainingHistory.some(
+          (entry) => entry.id === previous.selectedMaterializeEntryId
+        )
+          ? previous.selectedMaterializeEntryId
+          : remainingHistory[0]?.id ?? null,
+      };
+    });
   };
 
   return {
@@ -266,14 +443,15 @@ export function useAssetResults() {
     inspectLoading,
     materializeLoading: effectiveMaterializeLoading,
     pipelineMaterializeLoading,
-    materializeStatus,
-    materializeError,
     hasInspectData,
-    hasMaterializeData,
+    hasMaterializeData: true,
     hasResultData,
     effectiveResultTab,
     materializeOutputHtml,
+    selectedMaterializeEntry,
+    materializeHistory,
     setResultTab,
+    selectMaterializeEntry,
     runInspectForAsset,
     runMaterializeForAsset,
     runMaterializePipeline,

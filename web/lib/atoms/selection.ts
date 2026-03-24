@@ -4,8 +4,21 @@ import { WebAsset, WebPipeline } from "@/lib/types";
 
 import { workspaceAtom } from "./workspace";
 
-export const activePipelineAtom = atom<string | null>(null);
-export const selectedAssetAtom = atom<string | null>(null);
+export const routeSelectionAtom = atom<{
+  pipeline: string | null;
+  asset: string | null;
+}>({
+  pipeline: null,
+  asset: null,
+});
+
+export const activePipelineAtom = atom<string | null>((get) => {
+  return get(routeSelectionAtom).pipeline;
+});
+
+export const selectedAssetAtom = atom<string | null>((get) => {
+  return get(routeSelectionAtom).asset;
+});
 
 export const resolvedActivePipelineAtom = atom<string | null>((get) => {
   const workspace = get(workspaceAtom);

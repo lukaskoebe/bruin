@@ -10,7 +10,7 @@ import {
   deletePipeline,
   updateAsset,
 } from "@/lib/api";
-import { workspaceAtom } from "@/lib/atoms";
+import { workspaceAtom } from "@/lib/atoms/domains/workspace";
 import { normalizeAssetName } from "@/lib/workspace-shell-helpers";
 
 export type UIMessage = {

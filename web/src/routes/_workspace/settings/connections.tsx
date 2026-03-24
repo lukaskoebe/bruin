@@ -8,6 +8,7 @@ import {
   useResolvedWorkspaceConnection,
   useResolvedWorkspaceEnvironment,
 } from "@/hooks/use-workspace-config-selection";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 export const Route = createFileRoute("/_workspace/settings/connections")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -68,6 +69,7 @@ function WorkspaceConnectionsRoutePage({
     mode?: "edit" | "create";
   }) => void;
 }) {
+  const isMobile = useIsMobile();
   const {
     fallbackConfigEnvironment,
     handleCreateWorkspaceConnection,
@@ -109,9 +111,22 @@ function WorkspaceConnectionsRoutePage({
   });
 
   const effectiveMode = requestedMode === "create" ? "create" : "edit";
+  const activeConnectionName =
+    effectiveMode === "create" ? null : resolvedConnectionName ?? null;
+  const mobilePaneDescription = activeConnectionName
+    ? `${resolvedEnvironmentName ?? "Environment"} / ${activeConnectionName}`
+    : resolvedEnvironmentName
+      ? `${resolvedEnvironmentName} / New connection`
+      : "Create or edit a connection.";
 
   return (
     <WorkspaceSettingsSplitView
+      isPaneOpen={
+        !isMobile || effectiveMode === "create" || Boolean(activeConnectionName)
+      }
+      paneKey={`${effectiveMode}:${resolvedEnvironmentName ?? "none"}:${activeConnectionName ?? "new"}`}
+      paneTitle="Connection Editor"
+      paneDescription={mobilePaneDescription}
       content={
         <WorkspaceConfigContent
           view="connections"
