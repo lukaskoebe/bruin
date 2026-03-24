@@ -144,6 +144,7 @@ export function WorkspaceCanvasPane({
               edges={edges}
               nodeTypes={nodeTypes}
               panActivationKeyCode={null}
+              minZoom={0.1}
               onInit={onInit}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}

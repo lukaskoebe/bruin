@@ -315,10 +315,10 @@ function estimateTableWidth(
       return Math.max(widest, width);
     }, 0);
 
-    return sum + Math.max(96, widestText + 28);
+    return sum + Math.max(128, widestText + 32);
   }, 0);
 
-  return Math.min(760, Math.max(300, totalWidth + 4));
+  return Math.min(760, Math.max(320, totalWidth + 8));
 }
 
 let measurementContext: CanvasRenderingContext2D | null | undefined;
