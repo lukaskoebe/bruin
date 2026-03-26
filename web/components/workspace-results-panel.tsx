@@ -45,7 +45,10 @@ export function WorkspaceResultsPanel({
   const inspectErrorDetails = extractInspectErrorText(inspectResult?.raw_output);
 
   return (
-    <div className="flex h-full min-h-0 flex-col border-t bg-muted/20">
+    <div
+      className="flex h-full min-h-0 flex-col border-t bg-muted/20"
+      data-testid="workspace-results-panel"
+    >
       <Tabs
         className="flex min-h-0 flex-1 flex-col"
         onValueChange={(value) =>

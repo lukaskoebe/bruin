@@ -103,9 +103,12 @@ export function AssetEditorHeader({
           ) : (
             <div className="flex min-w-0 items-center gap-2">
               <div className="truncate text-sm font-semibold">
+                <span data-testid="editor-asset-name">
                 {assetName ?? "No asset selected"}
+                </span>
               </div>
               <Button
+                aria-label="Rename asset"
                 size="icon-sm"
                 type="button"
                 variant="ghost"
@@ -118,7 +121,9 @@ export function AssetEditorHeader({
           )}
         </div>
       </div>
-      <div className="text-xs opacity-70">{assetPath ?? "No asset selected"}</div>
+      <div className="text-xs opacity-70" data-testid="editor-asset-path">
+        {assetPath ?? "No asset selected"}
+      </div>
       <div
         className={`mt-2 flex flex-wrap gap-2 ${
           helpMode && actionHighlighted

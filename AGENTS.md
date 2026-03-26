@@ -235,6 +235,19 @@ Each CLI command is implemented in its own file:
 
 ## Contributing Guidelines
 
+### Tutorial Writing Guidelines
+
+When authoring automated Bruin Web tutorials:
+
+- Write narration like a person walking someone through the product, not like release notes or UI documentation.
+- Use a casual, direct voice with contractions and occasional first-person phrasing when it feels natural.
+- Vary sentence length and rhythm. Avoid repetitive two-sentence segments with the same cadence.
+- Let narration lead the action. Say what the viewer is about to notice or do, then show it.
+- Keep each segment focused on one meaningful idea or step, with a clear reason the viewer should care.
+- Prefer concrete language tied to what is visible on screen over generic descriptions of the interface.
+- When calling attention to something specific, use cursor movement or highlighting deliberately instead of repeating the label in narration.
+- For build-from-scratch tutorials, show real edits and realistic workflows rather than only jumping between finished states.
+
 ### Code Style & Formatting
 
 #### Go Code
