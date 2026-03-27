@@ -45,8 +45,8 @@
       "text": "Now I'll write the SQL directly in the editor. Nothing fancy here, just a couple of customers so we have something real to build on.",
       "action": {
         "type": "typeInEditor",
-        "typingDelayMs": 11,
-        "content": "/* @bruin\nname: demo_shop.customers\ntype: duckdb.sql\nmaterialization:\n  type: view\n@bruin */\n\nselect 1 as customer_id, 'Ada' as customer_name\nunion all\nselect 2 as customer_id, 'Grace' as customer_name\n"
+        "typingDelayMs": 18,
+        "content": "select 1 as customer_id, 'Ada' as customer_name\nunion all\nselect 2 as customer_id, 'Grace' as customer_name\n"
       },
       "paddingMs": 900
     },
@@ -59,7 +59,7 @@
         "kind": "sql",
         "xFactor": 0.62,
         "yFactor": 0.3,
-        "typingDelayMs": 55
+        "typingDelayMs": 60
       },
       "paddingMs": 700
     },
@@ -68,8 +68,8 @@
       "text": "I'll keep this one simple too. A couple of orders is enough to make the downstream join obvious when the third asset shows up.",
       "action": {
         "type": "typeInEditor",
-        "typingDelayMs": 11,
-        "content": "/* @bruin\nname: demo_shop.orders\ntype: duckdb.sql\nmaterialization:\n  type: view\n@bruin */\n\nselect 100 as order_id, 1 as customer_id, 42 as total_amount\nunion all\nselect 101 as order_id, 2 as customer_id, 84 as total_amount\n"
+        "typingDelayMs": 18,
+        "content": "select 100 as order_id, 1 as customer_id, 42 as total_amount\nunion all\nselect 101 as order_id, 2 as customer_id, 84 as total_amount\n"
       },
       "paddingMs": 900
     },
@@ -82,30 +82,58 @@
         "kind": "sql",
         "xFactor": 0.44,
         "yFactor": 0.68,
-        "typingDelayMs": 50
+        "typingDelayMs": 60
       },
       "paddingMs": 700
     },
     {
       "id": "write-join-sql",
-      "text": "I'm writing the dependency block and the join query by hand here. As soon as Bruin sees that this asset depends on customers and orders, the lineage view can connect the nodes for me.",
+      "text": "Here I'm just typing the query itself. The editor stays focused on the SQL, while the rest of the asset details are handled elsewhere in the workspace.",
       "action": {
         "type": "typeInEditor",
-        "typingDelayMs": 10,
+        "typingDelayMs": 18,
         "waitForEdgeCount": 2,
         "edgeTimeoutMs": 30000,
-        "content": "/* @bruin\nname: demo_shop.customer_orders\ntype: duckdb.sql\ndepends:\n  - demo_shop.customers\n  - demo_shop.orders\nmaterialization:\n  type: view\n@bruin */\n\nselect\n  orders.order_id,\n  customers.customer_name,\n  orders.total_amount\nfrom demo_shop.orders as orders\njoin demo_shop.customers as customers\n  on orders.customer_id = customers.customer_id\norder by orders.order_id\n"
+        "content": "select\n  orders.order_id,\n  customers.customer_name,\n  orders.total_amount\nfrom \"demo_shop\".\"orders\" as orders\njoin \"demo_shop\".\"customers\" as customers\n  on orders.customer_id = customers.customer_id\norder by orders.order_id\n"
       },
       "paddingMs": 900
     },
     {
+      "id": "run-pipeline",
+      "text": "Before inspecting anything, I'll run the pipeline so the upstream pieces are materialized and ready. That gives the joined asset something real to build on.",
+      "action": {
+        "type": "runPipeline",
+        "pipelineName": "demo_shop",
+        "timeoutMs": 40000
+      },
+      "paddingMs": 1000
+    },
+    {
+      "id": "inspect-join-asset",
+      "text": "Now that the pipeline has run, I can inspect the joined asset right here. It's a quick way to sanity-check the result without leaving the workspace.",
+      "action": {
+        "type": "inspectAsset",
+        "assetName": "demo_shop.customer_orders"
+      },
+      "paddingMs": 900
+    },
+    {
+      "id": "materialize-join-asset",
+      "text": "And if I want to actually run it, I can materialize it from the same spot. Bruin keeps that result history right there while I keep working.",
+      "action": {
+        "type": "materializeAsset",
+        "assetName": "demo_shop.customer_orders"
+      },
+      "paddingMs": 1000
+    },
+    {
       "id": "circle-joined-graph",
-      "text": "And there it is. You can see the join asset sitting under the two sources, with the graph already connected around the dependencies we just typed.",
+      "text": "And there it is. The joined model is sitting under the two source assets, and the graph has already drawn those connections for us.",
       "action": {
         "type": "circleElement",
         "target": {
-          "type": "link",
-          "name": "demo_shop.customer_orders"
+          "type": "css",
+          "value": ".react-flow__node:has([title=\"demo_shop.customer_orders\"])"
         },
         "loops": 2,
         "durationMs": 2200,

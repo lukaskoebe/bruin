@@ -6,6 +6,7 @@ import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 
 const require = createRequire(import.meta.url);
+const PROXY_TARGET = process.env.PROXY_TARGET ?? "http://127.0.0.1:3000"
 
 function prepareMonacoAssetsPlugin(): Plugin {
   let hasPreparedAssets = false;
@@ -104,19 +105,19 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "^/api/pipelines/.*/materialize/stream$": {
-        target: "http://127.0.0.1:3000",
+        target: PROXY_TARGET,
         changeOrigin: true,
         timeout: 0,
         proxyTimeout: 0,
       },
       "^/api/assets/.*/materialize/stream$": {
-        target: "http://127.0.0.1:3000",
+        target: PROXY_TARGET,
         changeOrigin: true,
         timeout: 0,
         proxyTimeout: 0,
       },
       "/api": {
-        target: "http://127.0.0.1:3000",
+        target: PROXY_TARGET,
         changeOrigin: true,
         ws: true,
       },

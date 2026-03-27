@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import http from "node:http";
 import net from "node:net";
 import { chromium } from "playwright";
@@ -72,9 +72,13 @@ const server = spawn(
 
 try {
   await waitForServer(baseURL);
-  const rawVideoPath = await recordTutorial({ baseURL, tutorial, timings, videoRoot });
-  const finalVideoPath = await buildVideoWithIntro(rawVideoPath, thumbnailPath, tutorial);
-  await muxVideoAndAudio(finalVideoPath, audioRoot, tutorial.id);
+  const recording = await recordTutorial({ baseURL, tutorial, timings, videoRoot });
+  writeFileSync(
+    resolve(outputRoot, "video-segment-timings.json"),
+    JSON.stringify(recording.segmentTimings, null, 2)
+  );
+  const finalVideoPath = await buildVideoWithIntro(recording.videoPath, thumbnailPath, tutorial);
+  await muxVideoAndAudio(finalVideoPath, audioRoot, tutorial.id, timings, recording.segmentTimings);
 } finally {
   server.kill("SIGTERM");
   await waitForExit(server);
@@ -110,6 +114,7 @@ async function recordTutorial({ baseURL, tutorial, timings, videoRoot }) {
   await page.goto(baseURL);
   await installTutorialCursor(page);
   await page.waitForTimeout(1200);
+  const segmentTimings = [];
 
   for (const [index, segment] of tutorial.segments.entries()) {
     const timing = timings[index];
@@ -125,6 +130,15 @@ async function recordTutorial({ baseURL, tutorial, timings, videoRoot }) {
     const elapsedMs = Date.now() - segmentStartedAt;
     const remainingMs = Math.max(0, segmentDurationMs - elapsedMs);
     await page.waitForTimeout(remainingMs);
+    segmentTimings.push({
+      id: segment.id,
+      action_delay_ms: actionDelayMs,
+      audio_duration_ms: timing?.duration_ms ?? 0,
+      configured_padding_ms: timing?.padding_ms ?? 0,
+      target_duration_ms: segmentDurationMs,
+      action_elapsed_ms: elapsedMs,
+      final_duration_ms: Date.now() - segmentStartedAt,
+    });
   }
 
   await page.waitForTimeout(1000);
@@ -136,7 +150,10 @@ async function recordTutorial({ baseURL, tutorial, timings, videoRoot }) {
     throw new Error("Playwright did not produce a video recording.");
   }
 
-  return await video.path();
+  return {
+    videoPath: await video.path(),
+    segmentTimings,
+  };
 }
 
 async function buildVideoWithIntro(rawVideoPath, thumbnailPath, tutorial) {
@@ -213,21 +230,56 @@ async function runTutorialAction(page, action) {
       await typeInEditor(page, action);
       break;
     case "inspectAsset":
+      if (action.assetName) {
+        await clickLocator(page, page.getByRole("link", { name: action.assetName }));
+      }
+      const inspectResponsePromise = page.waitForResponse(
+        (response) =>
+          response.request().method() === "GET" && response.url().includes("/api/assets/") &&
+          response.url().includes("/inspect"),
+        { timeout: Number(action.timeoutMs ?? 20000) }
+      );
       await clickLocator(
         page,
         page.getByRole("button", { name: "Inspect Data", exact: true })
       );
-      await page.getByText("2 rows", { exact: true }).waitFor({ timeout: 15000 });
+      await waitForInspectResult(page, await inspectResponsePromise, action);
       break;
     case "materializeAsset":
+      const selectedAssetName = action.assetName ?? (await getSelectedAssetName(page));
+      const materializeResponsePromise = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" && response.url().includes("/api/assets/") &&
+          response.url().includes("/materialize/stream"),
+        { timeout: Number(action.timeoutMs ?? 20000) }
+      );
       await clickLocator(page, page.getByRole("tab", { name: "Materialize" }));
       await clickLocator(
         page,
         page.getByRole("button", { name: "Materialize", exact: true })
       );
-      await page
-        .getByText("Asset: analytics.customers", { exact: true })
-        .waitFor({ timeout: 15000 });
+      await waitForMaterializeResult(
+        page,
+        selectedAssetName,
+        await materializeResponsePromise,
+        action
+      );
+      break;
+    case "runPipeline":
+      const selectedPipelineName = await getSelectedPipelineName(page, action);
+      const pipelineResponsePromise = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" && response.url().includes("/api/pipelines/") &&
+          response.url().includes("/materialize/stream"),
+        { timeout: Number(action.timeoutMs ?? 30000) }
+      );
+      await clickLocator(page, page.getByRole("button", { name: "Run pipeline", exact: true }));
+      await waitForPipelineRunResult(
+        page,
+        selectedPipelineName,
+        await pipelineResponsePromise,
+        action
+      );
       break;
     case "renameAsset":
       await clickLocator(page, page.getByRole("button", { name: "Rename asset" }));
@@ -255,8 +307,8 @@ async function runTutorialAction(page, action) {
   }
 }
 
-async function muxVideoAndAudio(rawVideo, audioRoot, tutorialId) {
-  const narrationPath = resolve(audioRoot, "narration.wav");
+async function muxVideoAndAudio(rawVideo, audioRoot, tutorialId, audioTimings, videoTimings) {
+  const narrationPath = await buildAlignedNarration(audioRoot, audioTimings, videoTimings);
   const outputPath = resolve(outputRoot, `${tutorialId}.mp4`);
   const delayedNarrationFilter =
     introDurationMs > 0
@@ -283,6 +335,66 @@ async function muxVideoAndAudio(rawVideo, audioRoot, tutorialId) {
     "+faststart",
     "-shortest",
     outputPath,
+  ]);
+}
+
+async function buildAlignedNarration(audioRoot, audioTimings, videoTimings) {
+  const concatManifestPath = resolve(audioRoot, "segments-aligned.txt");
+  const outputPath = resolve(audioRoot, "narration-aligned.wav");
+  const concatLines = [];
+
+  for (const [index, audioTiming] of audioTimings.entries()) {
+    const videoTiming = videoTimings[index];
+    if (!audioTiming?.audio_path) {
+      throw new Error(`Missing audio timing for segment ${index + 1}.`);
+    }
+
+    concatLines.push(`file '${basename(audioTiming.audio_path)}'`);
+
+    const targetDurationMs = Math.max(
+      Number(audioTiming.duration_ms ?? 0) + Number(audioTiming.padding_ms ?? 0),
+      Number(videoTiming?.final_duration_ms ?? 0)
+    );
+    const silenceDurationMs = Math.max(0, targetDurationMs - Number(audioTiming.duration_ms ?? 0));
+
+    if (silenceDurationMs > 0) {
+      const silencePath = resolve(
+        audioRoot,
+        `${String(index + 1).padStart(2, "0")}-${audioTiming.id}-aligned-padding-${silenceDurationMs}.wav`
+      );
+      if (!existsSync(silencePath)) {
+        await createSilence(silencePath, silenceDurationMs);
+      }
+      concatLines.push(`file '${basename(silencePath)}'`);
+    }
+  }
+
+  writeFileSync(concatManifestPath, `${concatLines.join("\n")}\n`);
+
+  await runCommand("ffmpeg", [
+    "-y",
+    "-f",
+    "concat",
+    "-safe",
+    "0",
+    "-i",
+    concatManifestPath,
+    outputPath,
+  ]);
+
+  return outputPath;
+}
+
+async function createSilence(filePath, durationMs) {
+  await runCommand("ffmpeg", [
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    "anullsrc=r=24000:cl=mono",
+    "-t",
+    (durationMs / 1000).toFixed(3),
+    filePath,
   ]);
 }
 
@@ -462,13 +574,25 @@ async function typeInEditor(page, action) {
   await clickLocator(page, editor);
   await page.keyboard.press("Control+A");
   await page.keyboard.press("Backspace");
-  await page.keyboard.type(action.content, {
-    delay: Number(action.typingDelayMs ?? 18),
-  });
+  await typeEditorContent(page, action.content, Number(action.typingDelayMs ?? 18));
 
   if (action.saveShortcut ?? true) {
+    const saveResponsePromise = page
+      .waitForResponse(
+        (response) =>
+          response.request().method() === "PUT" && response.url().includes("/api/pipelines/") &&
+          response.url().includes("/assets/"),
+        { timeout: Number(action.saveTimeoutMs ?? 15000) }
+      )
+      .catch(() => null);
+
     await page.waitForTimeout(Number(action.beforeSaveDelayMs ?? 180));
     await page.keyboard.press("Control+S");
+
+    const saveResponse = await saveResponsePromise;
+    if (saveResponse && !saveResponse.ok()) {
+      throw new Error(`Asset save failed with status ${saveResponse.status()}.`);
+    }
   }
 
   if (action.waitForEdgeCount) {
@@ -556,6 +680,206 @@ async function moveCursor(page, x, y) {
     window.__tutorialCursorMove?.({ x: cursorX, y: cursorY, active: false });
   }, { cursorX: x, cursorY: y });
   await page.waitForTimeout(120);
+}
+
+async function typeEditorContent(page, content, typingDelayMs) {
+  const expected = String(content);
+  const lines = expected.split("\n");
+  let expectedSoFar = "";
+
+  for (const [index, line] of lines.entries()) {
+    const indentation = line.match(/^\s*/)?.[0] ?? "";
+    const body = line.slice(indentation.length);
+
+    if (index > 0) {
+      await alignCurrentLineIndentation(page, indentation);
+    } else if (indentation.length > 0) {
+      await page.keyboard.type(indentation);
+    }
+
+    if (body.length > 0) {
+      await page.keyboard.type(body, { delay: typingDelayMs });
+    }
+
+    expectedSoFar += line;
+    await assertEditorMatchesIgnoringWhitespace(page, expectedSoFar);
+
+    if (index < lines.length - 1) {
+      await page.keyboard.press("Escape");
+      await page.keyboard.press("Enter");
+      expectedSoFar += "\n";
+      await assertEditorMatchesIgnoringWhitespace(page, expectedSoFar);
+    }
+  }
+
+  await page.keyboard.press("Escape");
+  await assertEditorMatchesIgnoringWhitespace(page, expected);
+}
+
+async function alignCurrentLineIndentation(page, expectedIndentation) {
+  for (let attempts = 0; attempts < 20; attempts += 1) {
+    const currentLine = await readCurrentEditorLine(page);
+    const trimmed = currentLine.trim();
+
+    if (trimmed.length > 0) {
+      throw new Error(`Expected an empty editor line before typing, got ${JSON.stringify(currentLine)}.`);
+    }
+
+    const currentIndentation = currentLine.match(/^\s*/)?.[0] ?? "";
+    if (currentIndentation === expectedIndentation) {
+      return;
+    }
+
+    if (currentIndentation.length > expectedIndentation.length) {
+      await page.keyboard.press("Backspace");
+      continue;
+    }
+
+    if (expectedIndentation.startsWith(currentIndentation)) {
+      await page.keyboard.type(expectedIndentation.slice(currentIndentation.length));
+      continue;
+    }
+
+    await page.keyboard.press("Backspace");
+  }
+
+  throw new Error("Failed to align editor indentation with expected SQL.");
+}
+
+async function assertEditorMatchesIgnoringWhitespace(page, expected) {
+  const actual = await readEditorText(page);
+  const actualNormalized = actual.replace(/\s+/g, "");
+  const expectedNormalized = expected.replace(/\s+/g, "");
+
+  if (actualNormalized !== expectedNormalized) {
+    const mismatchIndex = firstMismatchIndex(actualNormalized, expectedNormalized);
+    throw new Error(
+      `Editor content diverged at normalized index ${mismatchIndex}. Expected ${JSON.stringify(expectedNormalized[mismatchIndex] ?? "<eof>")}, got ${JSON.stringify(actualNormalized[mismatchIndex] ?? "<eof>")}.`
+    );
+  }
+}
+
+async function readEditorText(page) {
+  const lines = await page.locator(".view-lines .view-line").evaluateAll((elements) =>
+    elements.map((element) => {
+      const text = element.textContent ?? "";
+      return text.replace(/\u00a0/g, " ");
+    })
+  );
+
+  const value = lines.join("\n");
+
+  if (typeof value !== "string") {
+    throw new Error("Could not read Monaco editor content for tutorial verification.");
+  }
+
+  return value;
+}
+
+async function readCurrentEditorLine(page) {
+  const lines = await page.locator(".view-lines .view-line").evaluateAll((elements) =>
+    elements.map((element) => (element.textContent ?? "").replace(/\u00a0/g, " "))
+  );
+
+  return lines.at(-1) ?? "";
+}
+
+function firstMismatchIndex(left, right) {
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    if (left[index] !== right[index]) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+async function getSelectedAssetName(page) {
+  const name = (await page.getByTestId("editor-asset-name").textContent())?.trim();
+  if (!name) {
+    throw new Error("Could not determine the selected asset name.");
+  }
+
+  return name;
+}
+
+async function getSelectedPipelineName(page, action = {}) {
+  if (action.pipelineName) {
+    return action.pipelineName;
+  }
+
+  const link = page.locator('a[aria-current="page"]').first();
+  const name = (await link.textContent())?.trim();
+  if (!name) {
+    throw new Error("Could not determine the selected pipeline name.");
+  }
+
+  return name;
+}
+
+async function waitForInspectResult(page, response, action = {}) {
+  const timeout = Number(action.timeoutMs ?? 20000);
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok() || payload?.error) {
+    throw new Error(
+      `Inspect asset failed: ${payload?.error ?? `request returned ${response.status()}`}\n${
+        payload?.raw_output ?? ""
+      }`
+    );
+  }
+
+  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+  const columns = Array.isArray(payload?.columns) ? payload.columns : [];
+
+  await page.getByTestId("workspace-results-panel").waitFor({ state: "visible", timeout });
+  await page.getByText(`${rows.length} rows`, { exact: true }).waitFor({ timeout });
+
+  if (columns.length > 0) {
+    await page
+      .getByRole("columnheader", { name: String(columns[0]), exact: true })
+      .waitFor({ timeout });
+  }
+
+  if (rows.length > 0 && columns.length > 0) {
+    const firstValue = rows[0]?.[columns[0]];
+    if (firstValue !== undefined && firstValue !== null) {
+      await page
+        .getByRole("cell", { name: String(firstValue), exact: true })
+        .first()
+        .waitFor({ timeout });
+    }
+  }
+}
+
+async function waitForMaterializeResult(page, assetName, response, action = {}) {
+  const timeout = Number(action.timeoutMs ?? 20000);
+
+  if (!response.ok()) {
+    throw new Error(`Materialize asset failed: request returned ${response.status()}`);
+  }
+
+  await page.getByTestId("workspace-results-panel").waitFor({ state: "visible", timeout });
+  await page
+    .getByText(`Asset: ${assetName}`, { exact: true })
+    .waitFor({ timeout });
+}
+
+async function waitForPipelineRunResult(page, pipelineName, response, action = {}) {
+  const timeout = Number(action.timeoutMs ?? 30000);
+
+  if (!response.ok()) {
+    throw new Error(`Run pipeline failed: request returned ${response.status()}`);
+  }
+
+  const entry = page.getByText(`Pipeline: ${pipelineName}`, { exact: true });
+  await page.getByTestId("workspace-results-panel").waitFor({ state: "visible", timeout });
+  await entry.waitFor({ timeout });
+  await page
+    .getByTestId("workspace-results-panel")
+    .getByText("Running pipeline...")
+    .waitFor({ state: "hidden", timeout });
 }
 
 function resolveTutorialLocator(page, target) {

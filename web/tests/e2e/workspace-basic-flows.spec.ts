@@ -66,6 +66,50 @@ test.describe("workspace basic flows", () => {
     await expect(page.getByRole("dialog")).toBeVisible();
     await expect(page.getByText('This will permanently delete "analytics.customers"')).toBeVisible();
   });
+
+  test("keeps previous inspect result visible and shows subtle warning on inspect error", async ({ page }) => {
+    await mockWorkspaceEndpoints(page, createPopulatedWorkspaceState());
+
+    let inspectCallCount = 0;
+    await page.route("**/api/assets/asset-customers/inspect**", async (route) => {
+      inspectCallCount += 1;
+
+      const body =
+        inspectCallCount === 1
+          ? {
+              status: "ok",
+              columns: ["customer_id", "customer_name"],
+              rows: [{ customer_id: 1, customer_name: "Ada" }],
+              raw_output: "",
+            }
+          : {
+              status: "error",
+              columns: [],
+              rows: [],
+              raw_output:
+                '{"error":"query execution failed: Internal: Parser Error: syntax error at or near \")\"\\n\\nLINE 3: ) as t LIMIT 200\\n ^"}\n',
+              error:
+                "query execution failed: Internal: Parser Error: syntax error at or near \")\"\n\nLINE 3: ) as t LIMIT 200\n ^",
+            };
+
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      });
+    });
+
+    await page.goto("/?pipeline=pipeline-analytics&asset=asset-customers");
+
+    await expect(page.getByRole("cell", { name: "Ada" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Inspect Data" }).click();
+
+    await expect(page.getByRole("cell", { name: "Ada" })).toBeVisible();
+    await expect(page.getByTestId("inspect-warning-banner")).toBeVisible();
+    await expect(page.getByTestId("inspect-warning-banner")).toContainText("Parser Error");
+    await expect(page.getByTestId("inspect-warning-banner")).not.toContainText('"attempts"');
+    await expect(page.getByTestId("inspect-warning-banner")).not.toContainText('Error: {');
+  });
 });
 
 function createPipelineButton(page: Page) {

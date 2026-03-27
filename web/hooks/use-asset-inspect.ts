@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { inspectAsset } from "@/lib/api";
 import { assetInspectAtom, changedAssetIdsAtom } from "@/lib/atoms/domains/results";
+import { normalizeInspectErrorMessage } from "@/lib/inspect-errors";
 import { registerAssetColumnsAtom } from "@/lib/atoms/domains/suggestions";
 import {
   getAssetViewMode,
@@ -15,12 +16,14 @@ import { AssetInspectResponse, WebAsset } from "@/lib/types";
 const inFlightInspectRequests = new Map<string, Promise<AssetInspectResponse>>();
 
 function inspectFailure(error: unknown): AssetInspectResponse {
+  const message = normalizeInspectErrorMessage(String(error));
+
   return {
     status: "error",
     columns: [],
     rows: [],
     raw_output: "",
-    error: String(error),
+    error: message || String(error),
   };
 }
 
@@ -111,8 +114,25 @@ export function useAssetInspect(visualAssets: WebAsset[] = []) {
         const nextByAssetId = { ...previous.byAssetId };
 
         for (const [assetId, result] of Object.entries(results)) {
+          const previousResult = previous.byAssetId[assetId]?.result;
+          const nextResult =
+            result.status === "error" && previousResult && previousResult.rows.length > 0
+              ? {
+                  ...previousResult,
+                  status: previousResult.status,
+                  warning: normalizeInspectErrorMessage(result.error) || previousResult.warning,
+                  raw_output: result.raw_output,
+                  command: result.command,
+                  error: undefined,
+                }
+              : {
+                  ...result,
+                  error: normalizeInspectErrorMessage(result.error),
+                  warning: undefined,
+                };
+
           nextByAssetId[assetId] = {
-            result,
+            result: nextResult,
             fetchedLimit: fetchedLimitByAssetId[assetId] ?? result.rows.length,
           };
         }

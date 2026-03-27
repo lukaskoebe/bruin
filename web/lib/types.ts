@@ -103,6 +103,7 @@ export type AssetInspectResponse = {
   raw_output: string;
   command?: string[];
   error?: string;
+  warning?: string;
 };
 
 export type PipelineMaterializationResponse = {

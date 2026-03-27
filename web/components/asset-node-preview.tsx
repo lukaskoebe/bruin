@@ -1,6 +1,8 @@
 import { lazy, Suspense, type WheelEvent } from "react";
 import { createPortal } from "react-dom";
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
+
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import {
   Bar,
   BarChart,
@@ -54,8 +56,12 @@ export function AssetNodePreview({
 }: AssetNodePreviewProps) {
   if (previewError) {
     return (
-      <div className="mt-2 rounded border border-destructive/40 bg-destructive/10 p-2 text-[11px] text-destructive">
-        {previewError}
+      <div className="mt-2 px-2 py-2" data-testid="asset-preview-warning-card">
+        <Alert>
+          <AlertTriangle className="text-amber-500" />
+	  <AlertTitle>Preview failed</AlertTitle>
+          <AlertDescription>Fetching preview data failed.</AlertDescription>
+        </Alert>
       </div>
     );
   }

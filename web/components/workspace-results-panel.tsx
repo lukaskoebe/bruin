@@ -1,6 +1,7 @@
 "use client";
 
 import { AssetInspectView } from "@/components/asset-inspect-view";
+import { InspectWarningCard } from "@/components/inspect-warning-card";
 import { WorkspaceMaterializeHistoryList } from "@/components/workspace-materialize-history-list";
 import { WorkspaceMaterializeOutputView } from "@/components/workspace-materialize-output-view";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -77,15 +78,11 @@ export function WorkspaceResultsPanel({
           {inspectLoading && !inspectResult ? (
             <LoadingState label="Inspecting asset..." />
           ) : inspectResult?.error ? (
-            <div className="flex h-full min-h-0 flex-col gap-2">
-              <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
-                {inspectResult.error}
-              </div>
-              {inspectErrorDetails && (
-                <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded border border-destructive/30 bg-destructive/5 p-2 font-mono text-[11px]">
-                  {inspectErrorDetails}
-                </pre>
-              )}
+            <div className="flex h-full min-h-0 items-center justify-center p-6">
+              <InspectWarningCard
+                message={inspectResult.error || inspectErrorDetails || "Inspect failed."}
+                testId="inspect-warning-empty-state"
+              />
             </div>
           ) : (
             <AssetInspectView
@@ -95,6 +92,7 @@ export function WorkspaceResultsPanel({
               loading={inspectLoading}
               canLoadMore={canLoadMoreInspectRows}
               onLoadMore={onLoadMoreInspectRows}
+              warning={inspectResult?.warning}
             />
           )}
         </TabsContent>

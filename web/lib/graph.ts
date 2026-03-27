@@ -171,7 +171,7 @@ export function buildFlowFromPipeline(
                 mode: previewMode,
                 columns: inspect.columns,
                 rows: inspect.rows,
-                error: inspect.error,
+                error: inspect.warning || inspect.error,
               }
             : undefined,
       },

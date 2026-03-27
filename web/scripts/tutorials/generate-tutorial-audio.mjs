@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { basename, resolve } from "node:path";
 
 const tutorialPath = process.argv[2];
@@ -23,29 +24,45 @@ mkdirSync(outputDir, { recursive: true });
 for (const [index, segment] of segments.entries()) {
   const segmentID = segment.id;
   const segmentPath = resolve(outputDir, `${String(index + 1).padStart(2, "0")}-${segmentID}.wav`);
-
-  const response = await fetch(apiURL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      input: segment.text,
-      voice,
-      response_format: "wav",
-      ...ttsOptions,
-    }),
+  const segmentMetaPath = resolve(
+    outputDir,
+    `${String(index + 1).padStart(2, "0")}-${segmentID}.json`
+  );
+  const paddingMs = Number(segment.paddingMs ?? 0);
+  const cacheKey = hashSegment({
+    text: segment.text,
+    voice,
+    ttsOptions,
+    paddingMs,
   });
 
-  if (!response.ok) {
-    throw new Error(`Chatterbox TTS request failed with ${response.status}: ${await response.text()}`);
+  const cachedMeta = readJSONIfExists(segmentMetaPath);
+  const canReuseSegment = existsSync(segmentPath) && cachedMeta?.cache_key === cacheKey;
+
+  if (!canReuseSegment) {
+    const response = await fetch(apiURL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        input: segment.text,
+        voice,
+        response_format: "wav",
+        ...ttsOptions,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Chatterbox TTS request failed with ${response.status}: ${await response.text()}`);
+    }
+
+    const audioBuffer = Buffer.from(await response.arrayBuffer());
+    writeFileSync(segmentPath, audioBuffer);
+    writeFileSync(segmentMetaPath, JSON.stringify({ cache_key: cacheKey }, null, 2));
   }
 
-  const audioBuffer = Buffer.from(await response.arrayBuffer());
-  writeFileSync(segmentPath, audioBuffer);
-
   const durationMs = await probeDurationMs(segmentPath);
-  const paddingMs = Number(segment.paddingMs ?? 0);
 
   renderedSegments.push({
     id: segmentID,
@@ -60,7 +77,9 @@ for (const [index, segment] of segments.entries()) {
       outputDir,
       `${String(index + 1).padStart(2, "0")}-${segmentID}-padding.wav`
     );
-    await createSilence(silencePath, paddingMs);
+    if (!existsSync(silencePath)) {
+      await createSilence(silencePath, paddingMs);
+    }
     renderedSegments[renderedSegments.length - 1].padding_path = silencePath;
   }
 }
@@ -160,4 +179,16 @@ async function captureCommand(command, args) {
       reject(new Error(`${command} exited with code ${code ?? 1}`));
     });
   });
+}
+
+function readJSONIfExists(filePath) {
+  if (!existsSync(filePath)) {
+    return null;
+  }
+
+  return JSON.parse(readFileSync(filePath, "utf8"));
+}
+
+function hashSegment(value) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }

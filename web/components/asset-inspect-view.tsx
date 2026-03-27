@@ -1,6 +1,8 @@
 "use client";
 
 import { lazy, Suspense } from "react";
+
+import { InspectWarningCard } from "@/components/inspect-warning-card";
 import {
   Bar,
   BarChart,
@@ -35,6 +37,7 @@ type Props = {
   loading?: boolean;
   canLoadMore?: boolean;
   onLoadMore?: () => void;
+  warning?: string;
 };
 
 export function AssetInspectView({
@@ -44,6 +47,7 @@ export function AssetInspectView({
   loading = false,
   canLoadMore = false,
   onLoadMore,
+  warning,
 }: Props) {
   const view = getAssetViewMode(meta);
   const chartType = (meta?.web_chart_type ?? "line").trim().toLowerCase();
@@ -52,7 +56,7 @@ export function AssetInspectView({
   if (view === "markdown") {
     const markdown = buildMarkdown(meta, rows);
     return (
-      <div className="h-full overflow-auto rounded border bg-background p-3 text-sm">
+      <div className="relative h-full overflow-auto rounded border bg-background p-3 text-sm">
         <article className="max-w-none text-sm leading-6 text-foreground">
           <Suspense fallback={<div className="text-muted-foreground">Loading markdown...</div>}>
             <ReactMarkdown
@@ -94,6 +98,7 @@ export function AssetInspectView({
             </ReactMarkdown>
           </Suspense>
         </article>
+        <InspectWarningBanner warning={warning} />
       </div>
     );
   }
@@ -109,7 +114,7 @@ export function AssetInspectView({
     }
 
     return (
-      <div className="h-full rounded border bg-background p-2">
+      <div className="relative h-full rounded border bg-background p-2">
         <ChartContainer
           className="h-full min-h-55 w-full"
           config={chart.config}
@@ -163,12 +168,13 @@ export function AssetInspectView({
             </LineChart>
           )}
         </ChartContainer>
+        <InspectWarningBanner warning={warning} />
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
       <VirtualDataTable
         columns={columns}
         rows={rows}
@@ -179,6 +185,22 @@ export function AssetInspectView({
         onLoadMore={onLoadMore}
         autoLoadMore
       />
+      <InspectWarningBanner warning={warning} />
+    </div>
+  );
+}
+
+function InspectWarningBanner({ warning }: { warning?: string }) {
+  if (!warning) {
+    return null;
+  }
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6">
+      <div className="absolute inset-0 bg-background/40 backdrop-brightness-75" />
+      <div className="pointer-events-auto">
+        <InspectWarningCard message={warning} testId="inspect-warning-banner" />
+      </div>
     </div>
   );
 }
