@@ -21,6 +21,7 @@ import (
 	"github.com/bruin-data/bruin/internal/web/events"
 	"github.com/bruin-data/bruin/internal/web/freshness"
 	"github.com/bruin-data/bruin/internal/web/service"
+	"github.com/bruin-data/bruin/internal/web/sqlintelligence"
 	webstatic "github.com/bruin-data/bruin/internal/web/static"
 	"github.com/bruin-data/bruin/internal/web/watch"
 	"github.com/bruin-data/bruin/pkg/config"
@@ -153,6 +154,103 @@ type sqlPathSuggestionsResponse struct {
 	Status      string                  `json:"status"`
 	Suggestions []ingestrSuggestionItem `json:"suggestions"`
 	Error       string                  `json:"error,omitempty"`
+}
+
+type sqlParseContextRequest struct {
+	AssetID string `json:"asset_id"`
+	Content string `json:"content"`
+	Schema  []struct {
+		Name    string `json:"name"`
+		Columns []struct {
+			Name string `json:"name"`
+			Type string `json:"type,omitempty"`
+		} `json:"columns"`
+	} `json:"schema"`
+}
+
+type sqlParseContextRangeResponse struct {
+	Start   int `json:"start"`
+	End     int `json:"end"`
+	Line    int `json:"line"`
+	Col     int `json:"col"`
+	EndLine int `json:"end_line"`
+	EndCol  int `json:"end_col"`
+}
+
+type sqlParseContextPartResponse struct {
+	Name  string                       `json:"name"`
+	Kind  string                       `json:"kind"`
+	Range sqlParseContextRangeResponse `json:"range"`
+}
+
+type sqlParseContextDiagnosticResponse struct {
+	Message  string                        `json:"message"`
+	Severity string                        `json:"severity"`
+	Range    *sqlParseContextRangeResponse `json:"range,omitempty"`
+}
+
+type sqlParseContextTableResponse struct {
+	Name         string                        `json:"name"`
+	SourceKind   string                        `json:"source_kind,omitempty"`
+	ResolvedName string                        `json:"resolved_name,omitempty"`
+	Alias        string                        `json:"alias,omitempty"`
+	Parts        []sqlParseContextPartResponse `json:"parts"`
+	AliasRange   *sqlParseContextRangeResponse `json:"alias_range,omitempty"`
+}
+
+type sqlParseContextColumnResponse struct {
+	Name          string                        `json:"name"`
+	Qualifier     string                        `json:"qualifier,omitempty"`
+	ResolvedTable string                        `json:"resolved_table,omitempty"`
+	Parts         []sqlParseContextPartResponse `json:"parts"`
+}
+
+type sqlParseContextResponse struct {
+	Status         string                          `json:"status"`
+	AssetID        string                          `json:"asset_id"`
+	Dialect        string                          `json:"dialect,omitempty"`
+	QueryKind      string                          `json:"query_kind,omitempty"`
+	IsSingleSelect bool                            `json:"is_single_select"`
+	Tables         []sqlParseContextTableResponse  `json:"tables"`
+	Columns        []sqlParseContextColumnResponse `json:"columns"`
+	Diagnostics    []sqlParseContextDiagnosticResponse `json:"diagnostics,omitempty"`
+	Errors         []string                        `json:"errors,omitempty"`
+	Error          string                          `json:"error,omitempty"`
+}
+
+type sqlColumnValuesRequest struct {
+	Connection  string `json:"connection"`
+	Environment string `json:"environment,omitempty"`
+	Query       string `json:"query"`
+}
+
+type sqlColumnValuesResponse struct {
+	Status string `json:"status"`
+	Values []any  `json:"values"`
+	Error  string `json:"error,omitempty"`
+}
+
+var assetTypeDialectMap = map[pipeline.AssetType]string{
+	pipeline.AssetTypeBigqueryQuery:   "bigquery",
+	pipeline.AssetTypeSnowflakeQuery:  "snowflake",
+	pipeline.AssetTypePostgresQuery:   "postgres",
+	pipeline.AssetTypeMySQLQuery:      "mysql",
+	pipeline.AssetTypeRedshiftQuery:   "redshift",
+	pipeline.AssetTypeAthenaQuery:     "athena",
+	pipeline.AssetTypeClickHouse:      "clickhouse",
+	pipeline.AssetTypeDatabricksQuery: "databricks",
+	pipeline.AssetTypeMsSQLQuery:      "tsql",
+	pipeline.AssetTypeSynapseQuery:    "tsql",
+	pipeline.AssetTypeDuckDBQuery:     "duckdb",
+}
+
+func assetTypeToDialect(assetType pipeline.AssetType) (string, error) {
+	dialect, ok := assetTypeDialectMap[assetType]
+	if !ok {
+		return "", fmt.Errorf("unsupported asset type %s", assetType)
+	}
+
+	return dialect, nil
 }
 
 type workspaceConfigFieldDef struct {
@@ -439,6 +537,8 @@ func (s *webServer) registerRoutes(router chi.Router) {
 	router.Post("/api/config/connections/test", s.handleTestWorkspaceConnection)
 	router.Get("/api/ingestr/suggestions", s.handleGetIngestrSuggestions)
 	router.Get("/api/assets/{assetID}/sql-path-suggestions", s.handleGetSQLPathSuggestions)
+	router.Post("/api/sql/parse-context", s.handleSQLParseContext)
+	router.Post("/api/sql/column-values", s.handleSQLColumnValues)
 	router.Get("/api/sql/databases", s.handleGetSQLDatabases)
 	router.Get("/api/sql/tables", s.handleGetSQLTables)
 	router.Get("/api/sql/table-columns", s.handleGetSQLTableColumns)
@@ -2290,6 +2390,230 @@ func (s *webServer) handleGetSQLPathSuggestions(w http.ResponseWriter, r *http.R
 	}
 
 	s.writeJSON(w, http.StatusOK, response)
+}
+
+func sqlParseContextRangeResponseFromParser(input sqlintelligence.ParseContextRange) sqlParseContextRangeResponse {
+	return sqlParseContextRangeResponse{
+		Start:   input.Start,
+		End:     input.End,
+		Line:    input.Line,
+		Col:     input.Col,
+		EndLine: input.EndLine,
+		EndCol:  input.EndCol,
+	}
+}
+
+func sqlParseContextPartResponsesFromParser(input []sqlintelligence.ParseContextPart) []sqlParseContextPartResponse {
+	result := make([]sqlParseContextPartResponse, 0, len(input))
+	for _, part := range input {
+		result = append(result, sqlParseContextPartResponse{
+			Name:  part.Name,
+			Kind:  part.Kind,
+			Range: sqlParseContextRangeResponseFromParser(part.Range),
+		})
+	}
+
+	return result
+}
+
+func sqlParseContextTableResponsesFromParser(input []sqlintelligence.ParseContextTable) []sqlParseContextTableResponse {
+	result := make([]sqlParseContextTableResponse, 0, len(input))
+	for _, table := range input {
+		item := sqlParseContextTableResponse{
+			Name:         table.Name,
+			SourceKind:   table.SourceKind,
+			ResolvedName: table.ResolvedName,
+			Alias:        table.Alias,
+			Parts:        sqlParseContextPartResponsesFromParser(table.Parts),
+		}
+		if table.AliasRange != nil {
+			aliasRange := sqlParseContextRangeResponseFromParser(*table.AliasRange)
+			item.AliasRange = &aliasRange
+		}
+		result = append(result, item)
+	}
+
+	return result
+}
+
+func sqlParseContextColumnResponsesFromParser(input []sqlintelligence.ParseContextColumn) []sqlParseContextColumnResponse {
+	result := make([]sqlParseContextColumnResponse, 0, len(input))
+	for _, column := range input {
+		result = append(result, sqlParseContextColumnResponse{
+			Name:          column.Name,
+			Qualifier:     column.Qualifier,
+			ResolvedTable: column.ResolvedTable,
+			Parts:         sqlParseContextPartResponsesFromParser(column.Parts),
+		})
+	}
+
+	return result
+}
+
+func buildSQLParseContextSchema(asset *pipeline.Asset, suggestionTables []struct {
+	Name    string `json:"name"`
+	Columns []struct {
+		Name string `json:"name"`
+		Type string `json:"type,omitempty"`
+	} `json:"columns"`
+}) sqlintelligence.Schema {
+	schema := sqlintelligence.Schema{}
+
+	for _, table := range suggestionTables {
+		if strings.TrimSpace(table.Name) == "" {
+			continue
+		}
+
+		columns := map[string]string{}
+		for _, column := range table.Columns {
+			if strings.TrimSpace(column.Name) == "" {
+				continue
+			}
+			columns[column.Name] = strings.TrimSpace(column.Type)
+		}
+
+		if len(columns) > 0 {
+			schema[table.Name] = columns
+		}
+	}
+
+	if asset != nil && strings.TrimSpace(asset.Name) != "" && len(asset.Columns) > 0 {
+		columns := map[string]string{}
+		for _, column := range asset.Columns {
+			if strings.TrimSpace(column.Name) == "" {
+				continue
+			}
+			columns[column.Name] = strings.TrimSpace(column.Type)
+		}
+		if len(columns) > 0 {
+			schema[asset.Name] = columns
+		}
+	}
+
+	return schema
+}
+
+func sqlParseContextDiagnosticResponsesFromParser(input []sqlintelligence.ParseContextDiagnostic) []sqlParseContextDiagnosticResponse {
+	result := make([]sqlParseContextDiagnosticResponse, 0, len(input))
+	for _, diagnostic := range input {
+		item := sqlParseContextDiagnosticResponse{
+			Message:  diagnostic.Message,
+			Severity: diagnostic.Severity,
+		}
+		if diagnostic.Range != nil {
+			rangeValue := sqlParseContextRangeResponseFromParser(*diagnostic.Range)
+			item.Range = &rangeValue
+		}
+		result = append(result, item)
+	}
+
+	return result
+}
+
+func (s *webServer) handleSQLParseContext(w http.ResponseWriter, r *http.Request) {
+	var req sqlParseContextRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
+		return
+	}
+
+	assetID := strings.TrimSpace(req.AssetID)
+	if assetID == "" {
+		webapi.WriteBadRequest(w, "asset_id_required", "asset_id is required")
+		return
+	}
+
+	_, _, asset, err := s.resolveAssetByID(r.Context(), assetID)
+	if err != nil {
+		webapi.WriteBadRequest(w, "asset_not_found", err.Error())
+		return
+	}
+
+	dialect, err := assetTypeToDialect(asset.Type)
+	if err != nil {
+		s.writeJSON(w, http.StatusOK, sqlParseContextResponse{
+			Status:  "ok",
+			AssetID: assetID,
+			Errors:  []string{"unsupported SQL dialect for parse context"},
+			Tables:  []sqlParseContextTableResponse{},
+			Columns: []sqlParseContextColumnResponse{},
+		})
+		return
+	}
+
+	content := req.Content
+	if strings.TrimSpace(content) == "" {
+		content = asset.ExecutableFile.Content
+	}
+	schema := buildSQLParseContextSchema(asset, req.Schema)
+
+	parseContext, err := sqlintelligence.ParseContextWithSchema(content, dialect, schema)
+	if err != nil {
+		s.writeJSON(w, http.StatusOK, sqlParseContextResponse{
+			Status:  "error",
+			AssetID: assetID,
+			Dialect: dialect,
+			Error:   err.Error(),
+			Tables:  []sqlParseContextTableResponse{},
+			Columns: []sqlParseContextColumnResponse{},
+		})
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, sqlParseContextResponse{
+		Status:         "ok",
+		AssetID:        assetID,
+		Dialect:        dialect,
+		QueryKind:      parseContext.QueryKind,
+		IsSingleSelect: parseContext.IsSingleSelect,
+		Tables:         sqlParseContextTableResponsesFromParser(parseContext.Tables),
+		Columns:        sqlParseContextColumnResponsesFromParser(parseContext.Columns),
+		Diagnostics:    sqlParseContextDiagnosticResponsesFromParser(parseContext.Diagnostics),
+		Errors:         parseContext.Errors,
+	})
+}
+
+func (s *webServer) handleSQLColumnValues(w http.ResponseWriter, r *http.Request) {
+	var req sqlColumnValuesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
+		return
+	}
+
+	connectionName := strings.TrimSpace(req.Connection)
+	if connectionName == "" {
+		webapi.WriteBadRequest(w, "connection_required", "connection is required")
+		return
+	}
+
+	query := strings.TrimSpace(req.Query)
+	if query == "" {
+		webapi.WriteBadRequest(w, "query_required", "query is required")
+		return
+	}
+
+	_, rows, err := s.runConnectionQueryForEnvironment(r.Context(), connectionName, req.Environment, query)
+	if err != nil {
+		s.writeJSON(w, http.StatusOK, sqlColumnValuesResponse{
+			Status: "error",
+			Values: []any{},
+			Error:  err.Error(),
+		})
+		return
+	}
+
+	values := make([]any, 0, len(rows))
+	for _, row := range rows {
+		for _, value := range row {
+			values = append(values, value)
+			break
+		}
+	}
+
+	s.writeJSON(w, http.StatusOK, sqlColumnValuesResponse{
+		Status: "ok",
+		Values: values,
+	})
 }
 
 func (s *webServer) handleGetSQLDatabases(w http.ResponseWriter, r *http.Request) {
@@ -4583,7 +4907,14 @@ func (s *webServer) fetchRowCountsForObjects(ctx context.Context, connectionName
 }
 
 func (s *webServer) runConnectionQuery(ctx context.Context, connectionName, query string) ([]string, []map[string]any, error) {
+	return s.runConnectionQueryForEnvironment(ctx, connectionName, "", query)
+}
+
+func (s *webServer) runConnectionQueryForEnvironment(ctx context.Context, connectionName, environment, query string) ([]string, []map[string]any, error) {
 	cmdArgs := []string{"query", "--connection", connectionName, "--query", query, "--output", "json"}
+	if strings.TrimSpace(environment) != "" {
+		cmdArgs = append(cmdArgs, "--environment", environment)
+	}
 	output, err := s.runner.Run(ctx, cmdArgs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("query failed for connection '%s': %w", connectionName, err)

@@ -180,6 +180,56 @@ export type SqlDiscoveryTableColumnsResponse = {
   error?: string;
 };
 
+export type SqlParseContextRange = {
+  start: number;
+  end: number;
+  line: number;
+  col: number;
+  end_line: number;
+  end_col: number;
+};
+
+export type SqlParseContextPart = {
+  name: string;
+  kind: "schema" | "table" | "column" | "alias";
+  range: SqlParseContextRange;
+};
+
+export type SqlParseContextTable = {
+  name: string;
+  source_kind?: "table" | "table_function" | string;
+  resolved_name?: string;
+  alias?: string;
+  parts: SqlParseContextPart[];
+  alias_range?: SqlParseContextRange;
+};
+
+export type SqlParseContextColumn = {
+  name: string;
+  qualifier?: string;
+  resolved_table?: string;
+  parts: SqlParseContextPart[];
+};
+
+export type SqlParseContextDiagnostic = {
+  message: string;
+  severity: "error" | "warning" | "info" | string;
+  range?: SqlParseContextRange;
+};
+
+export type SqlParseContextResponse = {
+  status: "ok" | "error";
+  asset_id: string;
+  dialect?: string;
+  query_kind?: string;
+  is_single_select: boolean;
+  tables: SqlParseContextTable[];
+  columns: SqlParseContextColumn[];
+  diagnostics?: SqlParseContextDiagnostic[];
+  errors?: string[];
+  error?: string;
+};
+
 export type AssetFreshnessEntry = {
   asset_name: string;
   materialized_at?: string;

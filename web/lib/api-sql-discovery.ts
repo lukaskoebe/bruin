@@ -1,6 +1,7 @@
 import { buildQueryString, fetchJSON } from "@/lib/api-core";
 import {
   SqlDiscoveryDatabasesResponse,
+  SqlParseContextResponse,
   SqlDiscoveryTableColumnsResponse,
   SqlDiscoveryTablesResponse,
   SqlPathSuggestionsResponse,
@@ -61,4 +62,28 @@ export async function getSQLTableColumns(options: {
     })}`,
     { cache: "no-store" }
   );
+}
+
+export async function getSQLParseContext(options: {
+  assetId: string;
+  content: string;
+  schema?: Array<{
+    name: string;
+    columns: Array<{ name: string; type?: string }>;
+  }>;
+  signal?: AbortSignal;
+}) {
+  return fetchJSON<SqlParseContextResponse>("/api/sql/parse-context", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+    signal: options.signal,
+    body: JSON.stringify({
+      asset_id: options.assetId,
+      content: options.content,
+      schema: options.schema ?? [],
+    }),
+  });
 }

@@ -5,6 +5,14 @@ import { SchemaTable, findTableByIdentifier } from "@/lib/sql-schema";
 type Monaco = typeof MonacoNS;
 
 type RemoteSQLResolver = {
+  getParseContext?: () => {
+    tables?: Array<{ name: string; source_kind?: string; resolved_name?: string; alias?: string }>;
+    columns?: Array<{
+      qualifier?: string;
+      resolved_table?: string;
+      parts: Array<{ name: string; kind: string }>;
+    }>;
+  } | null;
   provideTableContextSuggestions(args: {
     monaco: Monaco;
     prefix: string;
@@ -16,6 +24,14 @@ type RemoteSQLResolver = {
     columnPrefix: string;
     range: MonacoNS.IRange;
   }): Promise<MonacoNS.languages.CompletionItem[]>;
+  provideColumnValueSuggestions(args: {
+    monaco: Monaco;
+    tableIdentifier: string;
+    columnName: string;
+    prefix: string;
+    range: MonacoNS.IRange;
+    insideQuotes: boolean;
+  }): Promise<MonacoNS.languages.CompletionItem[]>;
   providePathSuggestions(args: {
     monaco: Monaco;
     prefix: string;
@@ -24,7 +40,7 @@ type RemoteSQLResolver = {
   formatter?: (sql: string) => string | null;
 };
 
-type SemanticTokenType = "schema" | "table" | "column";
+type SemanticTokenType = "schema" | "table" | "column" | "alias";
 
 type RawSemanticToken = {
   lineNumber: number;
@@ -33,7 +49,7 @@ type RawSemanticToken = {
   tokenType: SemanticTokenType;
 };
 
-const SEMANTIC_TOKEN_TYPES: SemanticTokenType[] = ["schema", "table", "column"];
+const SEMANTIC_TOKEN_TYPES: SemanticTokenType[] = ["schema", "table", "column", "alias"];
 
 const QUALIFIED_IDENTIFIER_PATTERN =
   /(?:(?:"[^"]+"|`[^`]+`|[a-zA-Z_][\w$]*)\.)+(?:"[^"]+"|`[^`]+`|[a-zA-Z_][\w$]*)/g;
@@ -76,6 +92,34 @@ function parseDotPrefix(
   }
 
   return { tablePart: match[1].replace(/"/g, ""), columnPrefix: match[2] };
+}
+
+function parseEqualityValueContext(
+  textBeforeCursor: string,
+): { tableIdentifier: string; columnName: string; prefix: string; insideQuotes: boolean } | null {
+  const normalized = textBeforeCursor.replace(/\s+/g, " ");
+  const patterns = [
+    /([\w."]+)\.([\w"]+)\s*(?:=|!=|<>|<|>|<=|>=|like|ilike|in)\s*'([^']*)$/i,
+    /([\w."]+)\.([\w"]+)\s*(?:=|!=|<>|<|>|<=|>=|like|ilike|in)\s*"([^"]*)$/i,
+    /([\w."]+)\.([\w"]+)\s*(?:=|!=|<>|<|>|<=|>=|like|ilike|in)\s*([^\s,'")\]]*)$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (!match) {
+      continue;
+    }
+
+    const insideQuotes = pattern !== patterns[2];
+    return {
+      tableIdentifier: match[1].replace(/"/g, ""),
+      columnName: match[2].replace(/"/g, ""),
+      prefix: match[3] ?? "",
+      insideQuotes,
+    };
+  }
+
+  return null;
 }
 
 function buildAliasMap(
@@ -177,6 +221,177 @@ function resolveTableReference(
   }
 
   return findTableByIdentifier(tables, normalized);
+}
+
+function buildParserAliasMap(
+  tables: SchemaTable[],
+  parseContext?: ReturnType<NonNullable<RemoteSQLResolver["getParseContext"]>>,
+): Map<string, SchemaTable> {
+  const aliasMap = new Map<string, SchemaTable>();
+
+  for (const tableEntry of parseContext?.tables ?? []) {
+    const alias = tableEntry.alias?.trim().toLowerCase();
+    if (!alias) {
+      continue;
+    }
+
+    const resolvedName = tableEntry.resolved_name ?? tableEntry.name;
+    const table = findTableByIdentifier(tables, resolvedName) ?? findTableByIdentifier(tables, tableEntry.name);
+    if (!table) {
+      continue;
+    }
+
+    aliasMap.set(alias, table);
+  }
+
+  return aliasMap;
+}
+
+function findParserResolvedTable(
+  tables: SchemaTable[],
+  parseContext: ReturnType<NonNullable<RemoteSQLResolver["getParseContext"]>>,
+  identifier: string,
+): SchemaTable | undefined {
+  if (!parseContext) {
+    return undefined;
+  }
+
+  const normalizedIdentifier = identifier.trim().toLowerCase();
+  const entry = (parseContext.tables ?? []).find(
+    (table) =>
+      table.alias?.trim().toLowerCase() === normalizedIdentifier ||
+      table.name.trim().toLowerCase() === normalizedIdentifier ||
+      table.resolved_name?.trim().toLowerCase() === normalizedIdentifier,
+  );
+  if (!entry) {
+    return undefined;
+  }
+
+  return (
+    findTableByIdentifier(tables, entry.resolved_name ?? entry.name) ??
+    findTableByIdentifier(tables, entry.name)
+  );
+}
+
+function findParserAliasEntry(
+  parseContext: ReturnType<NonNullable<RemoteSQLResolver["getParseContext"]>>,
+  identifier: string,
+) {
+  if (!parseContext) {
+    return null;
+  }
+
+  const normalizedIdentifier = identifier.trim().toLowerCase();
+  return (
+    (parseContext.tables ?? []).find(
+      (table) => table.alias?.trim().toLowerCase() === normalizedIdentifier,
+    ) ?? null
+  );
+}
+
+function aliasNameAtPosition(
+  model: MonacoNS.editor.ITextModel,
+  position: MonacoNS.Position,
+  parseContext: ReturnType<NonNullable<RemoteSQLResolver["getParseContext"]>>,
+): string | null {
+  if (!parseContext) {
+    return null;
+  }
+
+  for (const table of parseContext.tables ?? []) {
+    const aliasRange = table.alias_range;
+    if (!aliasRange) {
+      continue;
+    }
+
+    const isInside =
+      position.lineNumber >= aliasRange.line &&
+      position.lineNumber <= aliasRange.end_line &&
+      ((position.lineNumber !== aliasRange.line || position.column >= aliasRange.col) &&
+        (position.lineNumber !== aliasRange.end_line || position.column <= aliasRange.end_col));
+    if (!isInside) {
+      continue;
+    }
+
+    return table.alias ?? null;
+  }
+
+  const identifier = identifierAtPosition(model, position);
+  if (!identifier) {
+    return null;
+  }
+
+  const dotIndex = identifier.indexOf(".");
+  if (dotIndex > 0) {
+    return identifier.slice(0, dotIndex);
+  }
+
+  return identifier;
+}
+
+function resolveParserColumnTable(
+  tables: SchemaTable[],
+  parseContext: NonNullable<ReturnType<NonNullable<RemoteSQLResolver["getParseContext"]>>>,
+  tableIdentifier: string,
+  columnName: string,
+): SchemaTable | undefined {
+  const normalizedIdentifier = tableIdentifier.trim().toLowerCase();
+  const normalizedColumn = columnName.trim().toLowerCase();
+
+  const entry = (parseContext.columns ?? []).find((column) => {
+    if (!column.qualifier || !column.resolved_table) {
+      return false;
+    }
+
+    const columnPart = column.parts.findLast((part) => part.kind === "column");
+    return (
+      column.qualifier.trim().toLowerCase() === normalizedIdentifier &&
+      columnPart?.name.trim().toLowerCase() === normalizedColumn
+    );
+  });
+
+  if (!entry?.resolved_table) {
+    return undefined;
+  }
+
+  return findTableByIdentifier(tables, entry.resolved_table);
+}
+
+function resolveParserColumn(
+  tables: SchemaTable[],
+  parseContext: NonNullable<ReturnType<NonNullable<RemoteSQLResolver["getParseContext"]>>>,
+  identifier: string,
+) {
+  const normalizedIdentifier = identifier.trim().toLowerCase();
+  const directColumn = (parseContext.columns ?? []).find((column) =>
+    column.name.trim().toLowerCase() === normalizedIdentifier,
+  );
+
+  if (directColumn?.resolved_table) {
+    const table = findTableByIdentifier(tables, directColumn.resolved_table);
+    const columnPart = directColumn.parts.findLast((part) => part.kind === "column");
+    const column = table?.columns.find(
+      (candidate) => candidate.name.toLowerCase() === columnPart?.name.toLowerCase(),
+    );
+    if (table && column) {
+      return { table, column };
+    }
+  }
+
+  const dotIndex = normalizedIdentifier.lastIndexOf(".");
+  if (dotIndex < 0) {
+    return null;
+  }
+
+  const tableIdentifier = normalizedIdentifier.slice(0, dotIndex);
+  const columnName = normalizedIdentifier.slice(dotIndex + 1);
+  const table = resolveParserColumnTable(tables, parseContext, tableIdentifier, columnName);
+  const column = table?.columns.find((candidate) => candidate.name.toLowerCase() === columnName);
+  if (!table || !column) {
+    return null;
+  }
+
+  return { table, column };
 }
 
 function resolveReferencedTables(
@@ -784,11 +999,24 @@ export function registerSQLProviders(
           endLineNumber: position.lineNumber,
           endColumn: position.column,
         });
-        const aliasMap = buildAliasMap(sqlTextBeforeCursor, tables);
-        const referencedTables = resolveReferencedTables(
-          tables,
-          upstreamNames,
-          aliasMap,
+        const parseContext = remoteResolver?.getParseContext?.() ?? null;
+        const aliasMap = parseContext?.tables?.length
+          ? buildParserAliasMap(tables, parseContext)
+          : buildAliasMap(sqlTextBeforeCursor, tables);
+        const parserReferencedNames = new Set(
+          (parseContext?.tables ?? []).flatMap((table) => [
+            table.name.toLowerCase(),
+            (table.resolved_name ?? "").toLowerCase(),
+          ]),
+        );
+        const referencedTables = (
+          parserReferencedNames.size > 0
+            ? tables.filter(
+                (table) =>
+                  parserReferencedNames.has(table.name.toLowerCase()) ||
+                  parserReferencedNames.has(table.shortName.toLowerCase()),
+              )
+            : resolveReferencedTables(tables, upstreamNames, aliasMap)
         );
         const columnSuggestionTables =
           referencedTables.length > 0 ? referencedTables : tables;
@@ -797,6 +1025,27 @@ export function registerSQLProviders(
         );
 
         const suggestions: MonacoNS.languages.CompletionItem[] = [];
+        const equalityValueContext = parseEqualityValueContext(textBeforeCursor);
+
+        if (equalityValueContext && remoteResolver) {
+          const valueSuggestions = await remoteResolver.provideColumnValueSuggestions({
+            monaco,
+            tableIdentifier: equalityValueContext.tableIdentifier,
+            columnName: equalityValueContext.columnName,
+            prefix: equalityValueContext.prefix,
+            insideQuotes: equalityValueContext.insideQuotes,
+            range: {
+              startLineNumber: position.lineNumber,
+              endLineNumber: position.lineNumber,
+              startColumn: position.column - equalityValueContext.prefix.length,
+              endColumn: position.column,
+            },
+          });
+
+          if (valueSuggestions.length > 0) {
+            return { suggestions: valueSuggestions };
+          }
+        }
 
         const dotPrefix = parseDotPrefix(textBeforeCursor);
         if (dotPrefix) {
@@ -949,11 +1198,6 @@ export function registerSQLProviders(
         model: MonacoNS.editor.ITextModel,
         position: MonacoNS.Position,
       ) {
-        const table = resolveTableAtPosition(model, position, tables);
-        if (!table) {
-          return null;
-        }
-
         const wordInfo = model.getWordAtPosition(position);
         const range = wordInfo
           ? new monaco.Range(
@@ -968,6 +1212,31 @@ export function registerSQLProviders(
               position.lineNumber,
               position.column,
             );
+
+        const identifier = identifierAtPosition(model, position);
+        const parseContext = remoteResolver?.getParseContext?.() ?? null;
+        const aliasIdentifier = parseContext
+          ? aliasNameAtPosition(model, position, parseContext)
+          : null;
+        if (aliasIdentifier && parseContext) {
+          const aliasEntry = findParserAliasEntry(parseContext, aliasIdentifier);
+          if (aliasEntry?.alias_range) {
+            return {
+              uri: model.uri,
+              range: new monaco.Range(
+                aliasEntry.alias_range.line,
+                aliasEntry.alias_range.col,
+                aliasEntry.alias_range.end_line,
+                aliasEntry.alias_range.end_col,
+              ),
+            };
+          }
+        }
+
+        const table = resolveTableAtPosition(model, position, tables);
+        if (!table) {
+          return null;
+        }
 
         return {
           uri: model.uri,
@@ -985,7 +1254,57 @@ export function registerSQLProviders(
       ) {
         const identifier = identifierAtPosition(model, position);
         if (!identifier) {
-          return null;
+          const parseContext = remoteResolver?.getParseContext?.() ?? null;
+          const aliasIdentifier = parseContext
+            ? aliasNameAtPosition(model, position, parseContext)
+            : null;
+          if (!aliasIdentifier || !parseContext) {
+            return null;
+          }
+
+          const aliasEntry = findParserAliasEntry(parseContext, aliasIdentifier);
+          if (!aliasEntry) {
+            return null;
+          }
+
+          const aliasTable = findParserResolvedTable(
+            tables,
+            parseContext,
+            aliasEntry.resolved_name ?? aliasEntry.name,
+          );
+          const aliasColumns = aliasTable?.columns.length
+            ? aliasTable.columns
+                .slice(0, 8)
+                .map((column) => {
+                  const ty = column.type ? `: ${column.type}` : "";
+                  return `- \`${column.name}\`${ty}`;
+                })
+                .join("\n")
+            : "";
+
+          const wordInfo = model.getWordAtPosition(position);
+          const hoverRange = wordInfo
+            ? new monaco.Range(
+                position.lineNumber,
+                wordInfo.startColumn,
+                position.lineNumber,
+                wordInfo.endColumn,
+              )
+            : new monaco.Range(
+                position.lineNumber,
+                position.column,
+                position.lineNumber,
+                position.column,
+              );
+
+          return {
+            range: hoverRange,
+            contents: [{
+              value:
+                `**${aliasEntry.alias}**\n\nAlias for \`${aliasEntry.resolved_name ?? aliasEntry.name}\`` +
+                (aliasColumns ? `\n\n**Columns**\n${aliasColumns}` : ""),
+            }],
+          };
         }
 
         const sqlTextBeforeCursor = model.getValueInRange({
@@ -994,7 +1313,49 @@ export function registerSQLProviders(
           endLineNumber: position.lineNumber,
           endColumn: position.column,
         });
-        const aliasMap = buildAliasMap(sqlTextBeforeCursor, tables);
+        const parseContext = remoteResolver?.getParseContext?.() ?? null;
+        const aliasEntry = findParserAliasEntry(parseContext, identifier);
+        if (aliasEntry) {
+          const aliasTable = findParserResolvedTable(
+            tables,
+            parseContext,
+            aliasEntry.resolved_name ?? aliasEntry.name,
+          );
+          const aliasColumns = aliasTable?.columns.length
+            ? aliasTable.columns
+                .slice(0, 8)
+                .map((column) => {
+                  const ty = column.type ? `: ${column.type}` : "";
+                  return `- \`${column.name}\`${ty}`;
+                })
+                .join("\n")
+            : "";
+          const wordInfo = model.getWordAtPosition(position);
+          return {
+            range: wordInfo
+              ? new monaco.Range(
+                  position.lineNumber,
+                  wordInfo.startColumn,
+                  position.lineNumber,
+                  wordInfo.endColumn,
+                )
+              : new monaco.Range(
+                  position.lineNumber,
+                  position.column,
+                  position.lineNumber,
+                  position.column,
+                ),
+            contents: [{
+              value:
+                `**${aliasEntry.alias}**\n\nAlias for \`${aliasEntry.resolved_name ?? aliasEntry.name}\`` +
+                (aliasColumns ? `\n\n**Columns**\n${aliasColumns}` : ""),
+            }],
+          };
+        }
+
+        const aliasMap = parseContext?.tables?.length
+          ? buildParserAliasMap(tables, parseContext)
+          : buildAliasMap(sqlTextBeforeCursor, tables);
 
         const dotIndex = identifier.lastIndexOf(".");
         if (dotIndex > 0) {
@@ -1038,20 +1399,56 @@ export function registerSQLProviders(
           }
         }
 
+        if (parseContext) {
+          const resolvedColumn = resolveParserColumn(tables, parseContext, identifier);
+          if (resolvedColumn) {
+            const { table, column } = resolvedColumn;
+            const parts: string[] = [`**${table.name}.${column.name}**`];
+            if (column.type) {
+              parts.push(`Type: \`${column.type}\``);
+            }
+            if (column.primaryKey) {
+              parts.push("🔑 Primary Key");
+            }
+            if (column.description) {
+              parts.push(column.description);
+            }
+
+            const wordInfo = model.getWordAtPosition(position);
+            return {
+              range: wordInfo
+                ? new monaco.Range(
+                    position.lineNumber,
+                    wordInfo.startColumn,
+                    position.lineNumber,
+                    wordInfo.endColumn,
+                  )
+                : new monaco.Range(
+                    position.lineNumber,
+                    position.column,
+                    position.lineNumber,
+                    position.column,
+                  ),
+              contents: [{ value: parts.join("\n\n") }],
+            };
+          }
+        }
+
         const table = findTableByIdentifier(tables, identifier);
-        if (!table) {
+        const resolvedTable = table ?? findParserResolvedTable(tables, parseContext, identifier);
+        if (!resolvedTable) {
           return null;
         }
 
-        const parts: string[] = [`**${table.name}**`];
-        if (table.isBruinAsset) {
+        const parts: string[] = [`**${resolvedTable.name}**`];
+        if (resolvedTable.isBruinAsset) {
           parts.push("_Bruin Asset_ — Ctrl+Click to navigate");
         }
-        if (table.assetPath) {
-          parts.push(`Defined by: \`${table.assetPath}\``);
+        if (resolvedTable.assetPath) {
+          parts.push(`Defined by: \`${resolvedTable.assetPath}\``);
         }
-        if (table.columns.length > 0) {
-          const columnList = table.columns
+        if (resolvedTable.columns.length > 0) {
+          const columnList = resolvedTable.columns
             .map((c) => {
               const pk = c.primaryKey ? " 🔑" : "";
               const ty = c.type ? `: ${c.type}` : "";

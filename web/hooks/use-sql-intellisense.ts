@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type * as MonacoNS from "monaco-editor";
 
 import {
@@ -19,6 +19,49 @@ import { WebAsset } from "@/lib/types";
 import { useAtomValue } from "jotai";
 
 import { workspaceAtom } from "@/lib/atoms/domains/workspace";
+import { useSQLParseContext } from "@/hooks/use-sql-parse-context";
+import { useSQLSemanticDecorations } from "@/hooks/use-sql-semantic-decorations";
+import { fetchJSON } from "@/lib/api-core";
+
+function buildValueSuggestionQuery(
+  assetType: string | undefined,
+  quotedTable: string,
+  quotedColumn: string,
+  trimmedPrefix: string,
+) {
+  const escapedPrefix = trimmedPrefix.replaceAll("'", "''");
+  const normalizedAssetType = assetType?.toLowerCase() ?? "";
+
+  switch (normalizedAssetType) {
+    case "duckdb.sql":
+    case "pg.sql":
+    case "rs.sql":
+    case "bq.sql":
+    case "sf.sql":
+    case "athena.sql":
+    case "databricks.sql":
+    case "ms.sql":
+    case "synapse.sql":
+    case "my.sql":
+    default:
+      return trimmedPrefix
+        ? `select distinct ${quotedColumn} as value from ${quotedTable} where lower(cast(${quotedColumn} as varchar)) like lower('%${escapedPrefix}%') order by 1 limit 10`
+        : `select distinct ${quotedColumn} as value from ${quotedTable} order by 1 limit 10`;
+  }
+}
+
+function quoteSQLIdentifier(identifier: string) {
+  return identifier
+    .split(".")
+    .map(
+      (part) =>
+        `"${part
+          .trim()
+          .replace(/^[\[\]"'`]+|[\[\]"'`]+$/g, "")
+          .replaceAll('"', '""')}"`,
+    )
+    .join(".");
+}
 
 /**
  * React hook that registers Monaco SQL completion / definition / hover
@@ -31,16 +74,28 @@ export function useSQLIntellisense(
   monaco: typeof MonacoNS | null,
   editor: MonacoNS.editor.IStandaloneCodeEditor | null,
   asset: WebAsset | null,
+  sqlContent: string,
   tables: SchemaTable[],
   upstreamNames: string[],
   environment?: string,
   onGoToAsset?: (pipelineId: string, assetId: string) => void,
 ) {
   const workspace = useAtomValue(workspaceAtom);
+  const parseContext = useSQLParseContext(asset, sqlContent, tables);
+  const parseContextKey = useMemo(() => JSON.stringify(parseContext ?? null), [parseContext]);
+  useSQLSemanticDecorations(editor, parseContext);
+  const lastGoodParseContextRef = useRef<typeof parseContext>(null);
+  if (parseContext && (!parseContext.errors || parseContext.errors.length === 0)) {
+    lastGoodParseContextRef.current = parseContext;
+  }
   // Keep a stable ref to the latest callback so we don't re-register on
   // every render when the parent re-creates the function.
   const goToAssetRef = useRef(onGoToAsset);
   goToAssetRef.current = onGoToAsset;
+  const activeParseContext =
+    parseContext && (!parseContext.errors || parseContext.errors.length === 0)
+      ? parseContext
+      : lastGoodParseContextRef.current;
 
   useEffect(() => {
     if (!monaco) {
@@ -51,6 +106,13 @@ export function useSQLIntellisense(
       asset && workspace ? resolveConnection(asset, workspace.connections ?? {}) : null;
 
     const disposable = registerSQLProviders(monaco, tables, upstreamNames, {
+      getParseContext: () => {
+        if (parseContext && (!parseContext.errors || parseContext.errors.length === 0)) {
+          return parseContext;
+        }
+
+        return lastGoodParseContextRef.current;
+      },
       formatter: asset
         ? (sql) => formatAssetSQL(sql, asset.type)
         : undefined,
@@ -162,6 +224,75 @@ export function useSQLIntellisense(
             sortText: column.primary_key ? "0" : "1",
           }));
       },
+      async provideColumnValueSuggestions({
+        monaco: monacoInstance,
+        tableIdentifier,
+        columnName,
+        prefix,
+        range,
+        insideQuotes,
+      }) {
+        if (!connectionName || !activeParseContext) {
+          return [];
+        }
+
+        const matchingColumn = (activeParseContext.columns ?? []).find((column) => {
+          const columnPart = column.parts.findLast((part) => part.kind === "column");
+          return (
+            column.qualifier?.toLowerCase() === tableIdentifier.toLowerCase() &&
+            columnPart?.name.toLowerCase() === columnName.toLowerCase() &&
+            column.resolved_table
+          );
+        });
+
+        const resolvedTable = matchingColumn?.resolved_table;
+        if (!resolvedTable) {
+          return [];
+        }
+
+        const trimmedPrefix = prefix.trim();
+        const quotedTable = quoteSQLIdentifier(resolvedTable);
+        const quotedColumn = quoteSQLIdentifier(columnName);
+        const valueQuery = buildValueSuggestionQuery(
+          asset?.type,
+          quotedTable,
+          quotedColumn,
+          trimmedPrefix,
+        );
+
+        try {
+          const payload = await fetchJSON<{
+            values?: Array<string | number | boolean | null>;
+          }>(`/api/sql/column-values`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            cache: "no-store",
+            body: JSON.stringify({
+              connection: connectionName,
+              environment: environment ?? "",
+              query: valueQuery,
+            }),
+          });
+
+          return (payload.values ?? []).map((value, index) => ({
+            label: String(value ?? "NULL"),
+            kind: monacoInstance.languages.CompletionItemKind.Value,
+            detail: `${resolvedTable}.${columnName}`,
+            insertText:
+              typeof value === "string"
+                ? insideQuotes
+                  ? String(value).replaceAll("'", "''")
+                  : `'${String(value).replaceAll("'", "''")}'`
+                : String(value ?? "NULL"),
+            range,
+            sortText: `0${index}`,
+          }));
+        } catch {
+          return [];
+        }
+      },
       async providePathSuggestions({ monaco: monacoInstance, prefix, range }) {
         if (!asset?.id) {
           return [];
@@ -194,7 +325,7 @@ export function useSQLIntellisense(
     return () => {
       disposable.dispose();
     };
-  }, [asset, environment, monaco, tables, upstreamNames, workspace]);
+  }, [activeParseContext, asset, editor, environment, monaco, parseContextKey, tables, upstreamNames, workspace]);
 
   useEffect(() => {
     if (!editor || tables.length === 0) {
@@ -234,4 +365,37 @@ export function useSQLIntellisense(
       disposable.dispose();
     };
   }, [editor, tables]);
+
+  useEffect(() => {
+    if (!editor || !monaco) {
+      return;
+    }
+
+    const model = editor.getModel();
+    if (!model) {
+      return;
+    }
+
+    const diagnostics = (parseContext?.diagnostics ?? [])
+      .filter((diagnostic) => diagnostic.range)
+      .map((diagnostic) => ({
+        severity:
+          diagnostic.severity === "warning"
+            ? monaco.MarkerSeverity.Warning
+            : diagnostic.severity === "info"
+              ? monaco.MarkerSeverity.Info
+              : monaco.MarkerSeverity.Error,
+        message: diagnostic.message,
+        startLineNumber: diagnostic.range!.line,
+        startColumn: diagnostic.range!.col,
+        endLineNumber: diagnostic.range!.end_line,
+        endColumn: diagnostic.range!.end_col,
+      }));
+
+    monaco.editor.setModelMarkers(model, "bruin-sql-parse-context", diagnostics);
+
+    return () => {
+      monaco.editor.setModelMarkers(model, "bruin-sql-parse-context", []);
+    };
+  }, [editor, monaco, parseContextKey]);
 }

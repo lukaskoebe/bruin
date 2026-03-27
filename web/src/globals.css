@@ -116,6 +116,50 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+.monaco-editor .bruin-sql-token-schema {
+  color: #7c5a2a !important;
+  font-weight: 600;
+}
+
+.monaco-editor .bruin-sql-token-table {
+  color: #0f766e !important;
+  font-weight: 600;
+}
+
+.monaco-editor .bruin-sql-token-column {
+  color: #1d4ed8 !important;
+}
+
+.monaco-editor .bruin-sql-token-alias {
+  color: #7c3aed !important;
+  font-weight: 600;
+}
+
+.dark .monaco-editor .bruin-sql-token-schema {
+  color: #d6b36d !important;
+}
+
+.dark .monaco-editor .bruin-sql-token-table {
+  color: #74cfc5 !important;
+}
+
+.dark .monaco-editor .bruin-sql-token-column {
+  color: #93c5fd !important;
+}
+
+.dark .monaco-editor .bruin-sql-token-alias {
+  color: #c4b5fd !important;
+}
+
+body > .monaco-editor .monaco-hover,
+body > .monaco-editor .suggest-widget,
+body > .monaco-editor .parameter-hints-widget,
+body > .monaco-editor-hover,
+body > .suggest-widget,
+body > .parameter-hints-widget {
+  z-index: 80 !important;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

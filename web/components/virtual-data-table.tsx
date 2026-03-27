@@ -119,8 +119,7 @@ export function VirtualDataTable({
 
       <div
         ref={scrollContainerRef}
-        style={fillAvailableHeight ? undefined : { height }}
-        className={fillAvailableHeight ? "min-h-0 flex-1 overflow-auto" : "overflow-auto"}
+        className={fillAvailableHeight ? "min-h-0 flex-1 overflow-auto" : "overflow-auto max-h-56 h-fit"}
         onScroll={handleScroll}
       >
         <table className="min-w-full border-collapse text-xs">

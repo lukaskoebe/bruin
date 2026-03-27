@@ -86,6 +86,7 @@ export function AssetCodeEditor({
           options={{
             minimap: { enabled: false },
             fontSize: 13,
+            fixedOverflowWidgets: true,
             quickSuggestions: true,
             suggestOnTriggerCharacters: true,
           }}

@@ -63,7 +63,6 @@ export function useWorkspaceSelection(): {
           pipeline: pipelineId,
           asset: nextAsset,
         },
-        replace: true,
       });
     },
     [

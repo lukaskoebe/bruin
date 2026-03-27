@@ -119,6 +119,7 @@ export function WorkspaceEditorPane({
     monacoInstance,
     editorInstance,
     asset,
+    editorValue,
     schemaTables,
     asset?.upstreams ?? [],
     selectedEnvironment,

@@ -292,10 +292,35 @@ Draft for deeper parser-backed SQL intelligence:
   - return at least: referenced tables, aliases, query kind, single-select status, parser errors, and resolved column lineage where cheap enough
   - use that result to improve Monaco intelligence incrementally instead of trying to wire a full language server immediately
 - likely implementation phases:
-  - phase 1: expose parser-backed table/alias/query-shape metadata for the open asset
-  - phase 2: use parser-backed alias and qualified-column ranges for more accurate highlighting and completion scope
-  - phase 3: add parser-backed diagnostics/refactors such as unresolved references, rename assistance, and safer inspect-limit handling
+  - phase 1: expose parser-backed table/alias/query-shape metadata for the open asset (implemented draft: `/api/sql/parse-context`)
+  - phase 2: use parser-backed alias and qualified-column ranges for more accurate highlighting and completion scope (implemented draft in Monaco semantic tokens and scoped table selection)
+  - phase 3: add parser-backed diagnostics/refactors such as unresolved references, rename assistance, and safer inspect-limit handling (implemented draft pieces: unresolved reference diagnostics, parser alias-aware hover/completion, scoped value suggestions, alias go-to-definition)
   - phase 4: evaluate whether a long-lived language-server-style adapter is still needed after the above
+
+Implemented so far in Package G:
+
+- SQL formatting in Monaco via `sql-formatter`
+- floating in-editor format control with `⌘ + ⇧ + I` hint and shortcut handling
+- Monaco hover widgets allowed to escape editor bounds with `fixedOverflowWidgets`
+- parser-backed `POST /api/sql/parse-context` endpoint using Bruin's embedded `sqlglot` parser service
+- parser context now returns query kind, single-select state, tables, aliases, columns, source kinds, resolved names, diagnostics, and parser errors
+- Monaco now uses parser-backed context for:
+  - alias-aware hover
+  - alias-aware go-to-definition
+  - parser-scoped completion fallback
+  - parser-scoped distinct-value suggestions for comparison expressions
+  - parser-backed diagnostics via Monaco markers
+  - parser-backed syntax decorations for schema/table/column/alias tokens
+- parse-context handling now preserves the last good parse result during transient syntax errors so completions do not collapse immediately while typing
+- alias qualifiers such as `example` in `example.list` are highlighted as aliases instead of tables
+- alias hover now shows the aliased table plus a short column preview
+- navigation triggered from SQL table clicks now pushes browser history instead of replacing it, so back/forward navigation works better
+- false-positive diagnostics were reduced by:
+  - adding `source_kind` to relation sources
+  - treating table functions separately from real schema-backed tables
+  - skipping unresolved-table diagnostics for table functions
+  - only emitting unresolved-column diagnostics when there is at least one confidently resolved schema-backed source
+  - preserving sensible display names for non-table relation sources where possible
 
 Touches mostly:
 
