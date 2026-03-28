@@ -21,67 +21,32 @@ const renderedSegments = [];
 
 mkdirSync(outputDir, { recursive: true });
 
-for (const [index, segment] of segments.entries()) {
-  const segmentID = segment.id;
-  const segmentPath = resolve(outputDir, `${String(index + 1).padStart(2, "0")}-${segmentID}.wav`);
-  const segmentMetaPath = resolve(
+if (tutorial.intro?.text) {
+  const introAudio = await renderAudioUnit({
+    id: "intro",
+    text: tutorial.intro.text,
+    paddingMs: Number(tutorial.intro.paddingMs ?? 0),
     outputDir,
-    `${String(index + 1).padStart(2, "0")}-${segmentID}.json`
-  );
-  const paddingMs = Number(segment.paddingMs ?? 0);
-  const cacheKey = hashSegment({
-    text: segment.text,
     voice,
     ttsOptions,
-    paddingMs,
+    indexLabel: "00",
   });
 
-  const cachedMeta = readJSONIfExists(segmentMetaPath);
-  const canReuseSegment = existsSync(segmentPath) && cachedMeta?.cache_key === cacheKey;
+  writeFileSync(resolve(outputDir, "intro-timing.json"), JSON.stringify(introAudio, null, 2));
+}
 
-  if (!canReuseSegment) {
-    const response = await fetch(apiURL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        input: segment.text,
-        voice,
-        response_format: "wav",
-        ...ttsOptions,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Chatterbox TTS request failed with ${response.status}: ${await response.text()}`);
-    }
-
-    const audioBuffer = Buffer.from(await response.arrayBuffer());
-    writeFileSync(segmentPath, audioBuffer);
-    writeFileSync(segmentMetaPath, JSON.stringify({ cache_key: cacheKey }, null, 2));
-  }
-
-  const durationMs = await probeDurationMs(segmentPath);
-
-  renderedSegments.push({
-    id: segmentID,
-    text: segment.text,
-    audio_path: segmentPath,
-    duration_ms: durationMs,
-    padding_ms: paddingMs,
-  });
-
-  if (paddingMs > 0) {
-    const silencePath = resolve(
+for (const [index, segment] of segments.entries()) {
+  renderedSegments.push(
+    await renderAudioUnit({
+      id: segment.id,
+      text: segment.text,
+      paddingMs: Number(segment.paddingMs ?? 0),
       outputDir,
-      `${String(index + 1).padStart(2, "0")}-${segmentID}-padding.wav`
-    );
-    if (!existsSync(silencePath)) {
-      await createSilence(silencePath, paddingMs);
-    }
-    renderedSegments[renderedSegments.length - 1].padding_path = silencePath;
-  }
+      voice,
+      ttsOptions,
+      indexLabel: String(index + 1).padStart(2, "0"),
+    })
+  );
 }
 
 const concatManifestPath = resolve(outputDir, "segments.txt");
@@ -191,4 +156,55 @@ function readJSONIfExists(filePath) {
 
 function hashSegment(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+async function renderAudioUnit({ id, text, paddingMs, outputDir, voice, ttsOptions, indexLabel }) {
+  const segmentPath = resolve(outputDir, `${indexLabel}-${id}.wav`);
+  const segmentMetaPath = resolve(outputDir, `${indexLabel}-${id}.json`);
+  const cacheKey = hashSegment({ text, voice, ttsOptions, paddingMs });
+
+  const cachedMeta = readJSONIfExists(segmentMetaPath);
+  const canReuseSegment = existsSync(segmentPath) && cachedMeta?.cache_key === cacheKey;
+
+  if (!canReuseSegment) {
+    const response = await fetch(apiURL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        input: text,
+        voice,
+        response_format: "wav",
+        ...ttsOptions,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Chatterbox TTS request failed with ${response.status}: ${await response.text()}`);
+    }
+
+    const audioBuffer = Buffer.from(await response.arrayBuffer());
+    writeFileSync(segmentPath, audioBuffer);
+    writeFileSync(segmentMetaPath, JSON.stringify({ cache_key: cacheKey }, null, 2));
+  }
+
+  const durationMs = await probeDurationMs(segmentPath);
+  const rendered = {
+    id,
+    text,
+    audio_path: segmentPath,
+    duration_ms: durationMs,
+    padding_ms: paddingMs,
+  };
+
+  if (paddingMs > 0) {
+    const silencePath = resolve(outputDir, `${indexLabel}-${id}-padding.wav`);
+    if (!existsSync(silencePath)) {
+      await createSilence(silencePath, paddingMs);
+    }
+    rendered.padding_path = silencePath;
+  }
+
+  return rendered;
 }

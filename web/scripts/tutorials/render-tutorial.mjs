@@ -24,7 +24,6 @@ const fixtureRoot = resolve(webDir, "tests", "fixtures", tutorial.workspaceFixtu
 const outputRoot = resolve(webDir, ".tmp", "tutorials", tutorial.id);
 const audioRoot = resolve(outputRoot, "audio");
 const videoRoot = resolve(outputRoot, "video");
-const introDurationMs = tutorial.intro?.durationMs ?? 0;
 const thumbnailPath = resolve(outputRoot, `${tutorial.id}-thumbnail.png`);
 const defaultActionDelayMs = Number(tutorial.actionDelayMs ?? 600);
 
@@ -42,6 +41,10 @@ mkdirSync(videoRoot, { recursive: true });
   await generateAudio(tutorialPath, audioRoot);
 
   const timings = JSON.parse(readFileSync(resolve(audioRoot, "timings.json"), "utf8"));
+  const introTimingPath = resolve(audioRoot, "intro-timing.json");
+  const introTiming = existsSync(introTimingPath)
+    ? JSON.parse(readFileSync(introTimingPath, "utf8"))
+    : null;
 const workspaceDir = mkdtempSync(resolve(tmpdir(), "bruin-web-tutorial-"));
 cpSync(fixtureRoot, workspaceDir, { recursive: true });
 mkdirSync(join(workspaceDir, ".git"));
@@ -77,8 +80,22 @@ try {
     resolve(outputRoot, "video-segment-timings.json"),
     JSON.stringify(recording.segmentTimings, null, 2)
   );
-  const finalVideoPath = await buildVideoWithIntro(recording.videoPath, thumbnailPath, tutorial);
-  await muxVideoAndAudio(finalVideoPath, audioRoot, tutorial.id, timings, recording.segmentTimings);
+  const effectiveIntroDurationMs = getEffectiveIntroDurationMs(tutorial, introTiming);
+  const finalVideoPath = await buildVideoWithIntro(
+    recording.videoPath,
+    thumbnailPath,
+    tutorial,
+    effectiveIntroDurationMs
+  );
+  await muxVideoAndAudio(
+    finalVideoPath,
+    audioRoot,
+    tutorial.id,
+    timings,
+    recording.segmentTimings,
+    introTiming,
+    effectiveIntroDurationMs
+  );
 } finally {
   server.kill("SIGTERM");
   await waitForExit(server);
@@ -156,7 +173,7 @@ async function recordTutorial({ baseURL, tutorial, timings, videoRoot }) {
   };
 }
 
-async function buildVideoWithIntro(rawVideoPath, thumbnailPath, tutorial) {
+async function buildVideoWithIntro(rawVideoPath, thumbnailPath, tutorial, introDurationMs) {
   if (introDurationMs <= 0) {
     return rawVideoPath;
   }
@@ -307,13 +324,23 @@ async function runTutorialAction(page, action) {
   }
 }
 
-async function muxVideoAndAudio(rawVideo, audioRoot, tutorialId, audioTimings, videoTimings) {
-  const narrationPath = await buildAlignedNarration(audioRoot, audioTimings, videoTimings);
+async function muxVideoAndAudio(
+  rawVideo,
+  audioRoot,
+  tutorialId,
+  audioTimings,
+  videoTimings,
+  introTiming,
+  introDurationMs
+) {
+  const narrationPath = await buildAlignedNarration(
+    audioRoot,
+    audioTimings,
+    videoTimings,
+    introTiming,
+    introDurationMs
+  );
   const outputPath = resolve(outputRoot, `${tutorialId}.mp4`);
-  const delayedNarrationFilter =
-    introDurationMs > 0
-      ? `[1:a]adelay=${introDurationMs}:all=1,apad[a]`
-      : "[1:a]apad[a]";
 
   await runCommand("ffmpeg", [
     "-y",
@@ -321,12 +348,10 @@ async function muxVideoAndAudio(rawVideo, audioRoot, tutorialId, audioTimings, v
     rawVideo,
     "-i",
     narrationPath,
-    "-filter_complex",
-    delayedNarrationFilter,
     "-map",
     "0:v",
     "-map",
-    "[a]",
+    "1:a",
     "-c:v",
     "copy",
     "-c:a",
@@ -338,10 +363,33 @@ async function muxVideoAndAudio(rawVideo, audioRoot, tutorialId, audioTimings, v
   ]);
 }
 
-async function buildAlignedNarration(audioRoot, audioTimings, videoTimings) {
+async function buildAlignedNarration(audioRoot, audioTimings, videoTimings, introTiming, introDurationMs) {
   const concatManifestPath = resolve(audioRoot, "segments-aligned.txt");
   const outputPath = resolve(audioRoot, "narration-aligned.wav");
   const concatLines = [];
+
+  if (introTiming?.audio_path) {
+    concatLines.push(`file '${basename(introTiming.audio_path)}'`);
+    const introTargetDurationMs = Math.max(
+      Number(introTiming.duration_ms ?? 0) + Number(introTiming.padding_ms ?? 0),
+      Number(introDurationMs ?? 0)
+    );
+    const introSilenceDurationMs = Math.max(
+      0,
+      introTargetDurationMs - Number(introTiming.duration_ms ?? 0)
+    );
+
+    if (introSilenceDurationMs > 0) {
+      const introSilencePath = resolve(
+        audioRoot,
+        `00-intro-aligned-padding-${introSilenceDurationMs}.wav`
+      );
+      if (!existsSync(introSilencePath)) {
+        await createSilence(introSilencePath, introSilenceDurationMs);
+      }
+      concatLines.push(`file '${basename(introSilencePath)}'`);
+    }
+  }
 
   for (const [index, audioTiming] of audioTimings.entries()) {
     const videoTiming = videoTimings[index];
@@ -383,6 +431,13 @@ async function buildAlignedNarration(audioRoot, audioTimings, videoTimings) {
   ]);
 
   return outputPath;
+}
+
+function getEffectiveIntroDurationMs(tutorial, introTiming) {
+  return Math.max(
+    Number(tutorial.intro?.durationMs ?? 0),
+    Number(introTiming?.duration_ms ?? 0) + Number(introTiming?.padding_ms ?? 0)
+  );
 }
 
 async function createSilence(filePath, durationMs) {
