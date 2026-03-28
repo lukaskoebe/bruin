@@ -230,6 +230,13 @@ export type SqlParseContextResponse = {
   error?: string;
 };
 
+export type FormatSQLAssetResponse = {
+  status: "ok" | "error";
+  asset_id: string;
+  content: string;
+  error?: string;
+};
+
 export type AssetFreshnessEntry = {
   asset_name: string;
   materialized_at?: string;

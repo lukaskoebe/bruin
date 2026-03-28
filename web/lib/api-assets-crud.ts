@@ -1,4 +1,5 @@
 import { fetchJSON, fetchJSONWithBody } from "@/lib/api-core";
+import { FormatSQLAssetResponse } from "@/lib/types";
 
 export async function createAsset(
   pipelineId: string,
@@ -41,5 +42,13 @@ export async function deleteAsset(pipelineId: string, assetId: string) {
     {
       method: "DELETE",
     }
+  );
+}
+
+export async function formatSQLAsset(assetId: string, content: string) {
+  return fetchJSONWithBody<FormatSQLAssetResponse>(
+    `/api/assets/${assetId}/format-sql`,
+    "POST",
+    { content },
   );
 }

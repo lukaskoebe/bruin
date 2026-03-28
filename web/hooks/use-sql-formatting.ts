@@ -1,9 +1,12 @@
 "use client";
 
+import { useSetAtom } from "jotai";
 import { useCallback, useEffect, useMemo } from "react";
 import type * as MonacoNS from "monaco-editor";
 
+import { formatSQLAsset } from "@/lib/api";
 import { isSqlAssetType } from "@/lib/asset-types";
+import { editorDraftAtom } from "@/lib/atoms/domains/editor";
 import { WebAsset } from "@/lib/types";
 
 export function useSQLFormatting(
@@ -11,6 +14,7 @@ export function useSQLFormatting(
   editor: MonacoNS.editor.IStandaloneCodeEditor | null,
   monaco: typeof MonacoNS | null,
 ) {
+  const setEditorDraft = useSetAtom(editorDraftAtom);
   const isSqlAsset = useMemo(() => {
     if (!asset) {
       return false;
@@ -22,12 +26,25 @@ export function useSQLFormatting(
   const shortcutLabel = useMemo(() => "⌘ + ⇧ + I", []);
 
   const formatSQL = useCallback(() => {
-    if (!editor || !isSqlAsset) {
+    if (!editor || !isSqlAsset || !asset?.id) {
       return;
     }
 
-    void editor.getAction("editor.action.formatDocument")?.run();
-  }, [editor, isSqlAsset]);
+    const content = editor.getValue();
+
+    void formatSQLAsset(asset.id, content)
+      .then((response) => {
+        if (response.status !== "ok") {
+          return;
+        }
+
+        setEditorDraft((previous) => ({
+          ...previous,
+          [asset.id]: response.content,
+        }));
+      })
+      .catch(() => undefined);
+  }, [asset?.id, editor, isSqlAsset, setEditorDraft]);
 
   useEffect(() => {
     if (!editor || !monaco || !isSqlAsset) {

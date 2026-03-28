@@ -37,7 +37,6 @@ type RemoteSQLResolver = {
     prefix: string;
     range: MonacoNS.IRange;
   }): Promise<MonacoNS.languages.CompletionItem[]>;
-  formatter?: (sql: string) => string | null;
 };
 
 type SemanticTokenType = "schema" | "table" | "column" | "alias";
@@ -922,26 +921,6 @@ export function registerSQLProviders(
   remoteResolver?: RemoteSQLResolver,
 ): MonacoNS.IDisposable {
   const disposables: MonacoNS.IDisposable[] = [];
-
-  if (remoteResolver?.formatter) {
-    disposables.push(
-      monaco.languages.registerDocumentFormattingEditProvider("sql", {
-        provideDocumentFormattingEdits(model) {
-          const formatted = remoteResolver.formatter?.(model.getValue());
-          if (!formatted || formatted === model.getValue()) {
-            return [];
-          }
-
-          return [
-            {
-              range: model.getFullModelRange(),
-              text: formatted,
-            },
-          ];
-        },
-      }),
-    );
-  }
 
   disposables.push(
     monaco.languages.registerDocumentSemanticTokensProvider("sql", {

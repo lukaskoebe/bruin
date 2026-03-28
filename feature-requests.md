@@ -299,7 +299,7 @@ Draft for deeper parser-backed SQL intelligence:
 
 Implemented so far in Package G:
 
-- SQL formatting in Monaco via `sql-formatter`
+- SQL formatting in Monaco via `bruin format --sqlfluff`
 - floating in-editor format control with `⌘ + ⇧ + I` hint and shortcut handling
 - Monaco hover widgets allowed to escape editor bounds with `fixedOverflowWidgets`
 - parser-backed `POST /api/sql/parse-context` endpoint using Bruin's embedded `sqlglot` parser service

@@ -554,6 +554,7 @@ func (s *webServer) registerRoutes(router chi.Router) {
 	router.Put("/api/assets/{assetID}/columns", s.handleUpdateAssetColumns)
 	router.Delete("/api/pipelines/{pipelineID}/assets/{assetID}", s.handleDeleteAsset)
 	router.Get("/api/assets/{assetID}/inspect", s.handleInspectAsset)
+	router.Post("/api/assets/{assetID}/format-sql", s.handleFormatSQLAsset)
 	router.Post("/api/assets/{assetID}/materialize/stream", s.handleMaterializeAssetStream)
 	router.Get("/api/assets/freshness", s.handleGetAssetFreshness)
 	router.Post("/api/run", s.handleRun)
@@ -1426,6 +1427,17 @@ type updateAssetColumnsRequest struct {
 	Columns []webColumn `json:"columns"`
 }
 
+type formatSQLAssetRequest struct {
+	Content string `json:"content"`
+}
+
+type formatSQLAssetResponse struct {
+	Status  string `json:"status"`
+	AssetID string `json:"asset_id"`
+	Content string `json:"content"`
+	Error   string `json:"error,omitempty"`
+}
+
 func (s *webServer) handleUpdateAsset(w http.ResponseWriter, r *http.Request) {
 	assetID := chi.URLParam(r, "assetID")
 	relAssetPath, err := decodeID(assetID)
@@ -1558,6 +1570,69 @@ func (s *webServer) handleUpdateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	s.pushWorkspaceUpdateImmediateWithChangedIDs(r.Context(), "asset.updated", relAssetPath, changedAssetIDs)
 	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *webServer) handleFormatSQLAsset(w http.ResponseWriter, r *http.Request) {
+	assetID := chi.URLParam(r, "assetID")
+	relAssetPath, err := decodeID(assetID)
+	if err != nil {
+		webapi.WriteBadRequest(w, "invalid_asset_id", "invalid asset id")
+		return
+	}
+
+	if !strings.HasSuffix(strings.ToLower(relAssetPath), ".sql") {
+		webapi.WriteBadRequest(w, "invalid_asset_type", "only SQL assets can be formatted")
+		return
+	}
+
+	var req formatSQLAssetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
+		return
+	}
+
+	absAssetPath, err := safeJoin(s.workspaceRoot, relAssetPath)
+	if err != nil {
+		webapi.WriteBadRequest(w, "invalid_asset_path", err.Error())
+		return
+	}
+
+	originalBytes, err := os.ReadFile(absAssetPath)
+	if err != nil {
+		webapi.WriteInternalError(w, "asset_read_failed", err.Error())
+		return
+	}
+
+	mergedContent := mergeExecutableContent(string(originalBytes), req.Content)
+	if err := os.WriteFile(absAssetPath, []byte(mergedContent), 0o644); err != nil {
+		webapi.WriteInternalError(w, "asset_write_failed", err.Error())
+		return
+	}
+
+	output, err := s.runner.Run(r.Context(), []string{"format", relAssetPath, "--sqlfluff"})
+	if err != nil {
+		s.writeJSON(w, http.StatusOK, formatSQLAssetResponse{
+			Status:  "error",
+			AssetID: assetID,
+			Content: req.Content,
+			Error:   strings.TrimSpace(string(output)),
+		})
+		return
+	}
+
+	formattedBytes, err := os.ReadFile(absAssetPath)
+	if err != nil {
+		webapi.WriteInternalError(w, "asset_read_failed", err.Error())
+		return
+	}
+
+	s.suppressWatcherFor(relAssetPath)
+	s.pushWorkspaceUpdateImmediateWithChangedIDs(r.Context(), "asset.updated", relAssetPath, []string{assetID})
+	s.writeJSON(w, http.StatusOK, formatSQLAssetResponse{
+		Status:  "ok",
+		AssetID: assetID,
+		Content: extractExecutableContent(string(formattedBytes)),
+	})
 }
 
 func (s *webServer) refactorDirectAssetDependencies(ctx context.Context, parsedPipeline *pipeline.Pipeline, oldName, newName string) ([]string, []string, error) {
