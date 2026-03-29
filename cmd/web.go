@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -26,15 +25,12 @@ import (
 	"github.com/bruin-data/bruin/pkg/config"
 	"github.com/bruin-data/bruin/pkg/connection"
 	"github.com/bruin-data/bruin/pkg/git"
-	"github.com/bruin-data/bruin/pkg/jinja"
 	"github.com/bruin-data/bruin/pkg/pipeline"
-	"github.com/bruin-data/bruin/pkg/sqlparser"
 	"github.com/bruin-data/bruin/pkg/telemetry"
 	webui "github.com/bruin-data/bruin/web"
 	"github.com/go-chi/chi/v5"
 	"github.com/spf13/afero"
 	"github.com/urfave/cli/v3"
-	"gopkg.in/yaml.v3"
 )
 
 type webAsset struct {
@@ -76,30 +72,8 @@ type webColumn struct {
 	Checks        []webColumnCheck  `json:"checks,omitempty"`
 }
 
-type assetMaterializationState struct {
-	AssetID         string `json:"asset_id"`
-	IsMaterialized  bool   `json:"is_materialized"`
-	MaterializedAs  string `json:"materialized_as,omitempty"`
-	FreshnessStatus string `json:"freshness_status,omitempty"`
-	RowCount        *int64 `json:"row_count,omitempty"`
-	Connection      string `json:"connection,omitempty"`
-	DeclaredMatType string `json:"materialization_type,omitempty"`
-}
-
-type pipelineMaterializationResponse struct {
-	PipelineID string                      `json:"pipeline_id"`
-	Assets     []assetMaterializationState `json:"assets"`
-}
-
-type pipelineMaterializationInfo struct {
-	AssetName       string
-	Connection      string
-	IsMaterialized  bool
-	MaterializedAs  string
-	FreshnessStatus string
-	RowCount        *int64
-	DeclaredMatType string
-}
+type apiError = webhttpapi.APIError
+type formatSQLAssetResponse = webhttpapi.FormatSQLAssetResponse
 
 type ingestrSuggestionItem struct {
 	Value  string `json:"value"`
@@ -286,13 +260,14 @@ type webServer struct {
 	watchPoll     time.Duration
 	workspaceSvc  *service.WorkspaceService
 	configSvc     *service.ConfigService
+	pipelineSvc   *service.PipelineService
+	executionSvc  *service.ExecutionService
+	assetSvc      *service.AssetService
+	sqlSvc        *service.SQLService
 
 	stateMu  sync.RWMutex
 	state    workspaceState
 	revision atomic.Int64
-
-	patchMu     sync.Mutex
-	patchTimers map[string]*time.Timer
 
 	hub       *events.Hub
 	runner    service.Runner
@@ -376,13 +351,71 @@ func Web() *cli.Command {
 				watchPoll:          watchPoll,
 				workspaceSvc:       service.NewWorkspaceService(absRoot, resolveConfigFilePath(absRoot)),
 				configSvc:          service.NewConfigService(absRoot, resolveConfigFilePath(absRoot)),
-				patchTimers:        make(map[string]*time.Timer),
+				pipelineSvc:        service.NewPipelineService(absRoot),
 				hub:                events.NewDebouncedHub(150 * time.Millisecond),
 				runner:             service.NewRunner(absRoot),
 				freshness:          freshness.New(),
 				duckDBOps:          make(map[string]*sync.Mutex),
 				recentServerWrites: make(map[string]time.Time),
 			}
+
+			server.executionSvc = service.NewExecutionService(service.ExecutionDependencies{
+				WorkspaceRoot:         absRoot,
+				ConfigPath:            resolveConfigFilePath(absRoot),
+				Runner:                server.runner,
+				ResolveAssetByID:      server.resolveAssetByID,
+				ResolveAssetNameByID:  server.findAssetNameByID,
+				FindInspectIDs:        server.findMaterializationInspectIDs,
+				RecordMaterialization: server.freshness.RecordMaterialization,
+				CurrentPipelines: func() []service.PipelineView {
+					state := server.currentState()
+					pipelines := make([]service.PipelineView, 0, len(state.Pipelines))
+					for _, pipeline := range state.Pipelines {
+						assets := make([]service.AssetView, 0, len(pipeline.Assets))
+						for _, asset := range pipeline.Assets {
+							assets = append(assets, service.AssetView{ID: asset.ID, Name: asset.Name})
+						}
+						pipelines = append(pipelines, service.PipelineView{ID: pipeline.ID, Assets: assets})
+					}
+					return pipelines
+				},
+				DuckDBLock: func(lockKey string) *sync.Mutex {
+					return server.getDuckDBOperationMutex(lockKey)
+				},
+				ParseQueryOutput:   service.ParseQueryJSONOutput,
+				NewPipelineBuilder: server.newPipelineBuilder,
+				FreshnessSnapshot: func() map[string]service.AssetTimestamps {
+					items := server.freshness.GetAll()
+					result := make(map[string]service.AssetTimestamps, len(items))
+					for key, item := range items {
+						result[key] = service.AssetTimestamps{
+							MaterializedAt:   item.MaterializedAt,
+							ContentChangedAt: item.ContentChangedAt,
+							LastStatus:       item.MaterializedStatus,
+						}
+					}
+					return result
+				},
+			})
+
+			server.assetSvc = service.NewAssetService(service.AssetDependencies{
+				WorkspaceRoot:                absRoot,
+				Runner:                       server.runner,
+				ResolveAssetByID:             server.resolveAssetByID,
+				DefaultAssetContent:          defaultAssetContent,
+				DerivedAssetContent:          defaultDerivedSQLAssetContent,
+				EnsurePythonRequirements:     ensurePythonRequirementsFile,
+				SuppressWatcher:              server.suppressWatcherFor,
+				PushWorkspaceUpdate:          server.pushWorkspaceUpdate,
+				PushWorkspaceUpdateImmediate: server.pushWorkspaceUpdateImmediate,
+				PushWorkspaceUpdateImmediateWithChangedIDs: server.pushWorkspaceUpdateImmediateWithChangedIDs,
+			})
+
+			server.sqlSvc = service.NewSQLService(service.SQLDependencies{
+				Runner:               server.runner,
+				NewConnectionManager: server.newConnectionManager,
+				RunConnectionQuery:   server.executionSvc.RunConnectionQueryForEnvironment,
+			})
 
 			embeddedStaticFS, err := webui.DistFS()
 			if err != nil {
@@ -449,27 +482,15 @@ func Web() *cli.Command {
 func (s *webServer) registerRoutes(router chi.Router) {
 	webhttpapi.RegisterWorkspaceRoutes(router, &webhttpapi.WorkspaceHandlers{Reader: s})
 	webhttpapi.RegisterConfigRoutes(router, &webhttpapi.ConfigHandlers{Service: s.configSvc, Publisher: s})
+	webhttpapi.RegisterPipelineRoutes(router, &webhttpapi.PipelineHandlers{Service: s.pipelineSvc, Publisher: s})
+	webhttpapi.RegisterExecutionRoutes(router, &webhttpapi.ExecutionAPI{Service: s})
+	webhttpapi.RegisterAssetRoutes(router, &webhttpapi.AssetsAPI{Service: s})
+	webhttpapi.RegisterAssetColumnRoutes(router, &webhttpapi.AssetColumnsAPI{Service: s})
+	webhttpapi.RegisterPipelineExecutionRoutes(router, &webhttpapi.PipelineExecutionAPI{Service: s})
+	webhttpapi.RegisterSQLRoutes(router, &webhttpapi.SQLAPI{Service: s})
 	router.Get("/api/ingestr/suggestions", s.handleGetIngestrSuggestions)
 	router.Get("/api/assets/{assetID}/sql-path-suggestions", s.handleGetSQLPathSuggestions)
 	router.Post("/api/sql/parse-context", s.handleSQLParseContext)
-	router.Post("/api/sql/column-values", s.handleSQLColumnValues)
-	router.Get("/api/sql/databases", s.handleGetSQLDatabases)
-	router.Get("/api/sql/tables", s.handleGetSQLTables)
-	router.Get("/api/sql/table-columns", s.handleGetSQLTableColumns)
-	router.Post("/api/pipelines", s.handleCreatePipeline)
-	router.Put("/api/pipelines", s.handleUpdatePipeline)
-	router.Delete("/api/pipelines/{id}", s.handleDeletePipeline)
-	router.Get("/api/pipelines/{id}/materialization", s.handleGetPipelineMaterialization)
-	router.Post("/api/pipelines/{id}/materialize/stream", s.handleMaterializePipelineStream)
-	router.Post("/api/pipelines/{id}/assets", s.handleCreateAsset)
-	router.Put("/api/pipelines/{pipelineID}/assets/{assetID}", s.handleUpdateAsset)
-	router.Post("/api/assets/{assetID}/fill-columns-from-db", s.handleFillColumnsFromDB)
-	router.Get("/api/assets/{assetID}/columns/infer", s.handleInferAssetColumns)
-	router.Put("/api/assets/{assetID}/columns", s.handleUpdateAssetColumns)
-	router.Delete("/api/pipelines/{pipelineID}/assets/{assetID}", s.handleDeleteAsset)
-	router.Get("/api/assets/{assetID}/inspect", s.handleInspectAsset)
-	router.Post("/api/assets/{assetID}/format-sql", s.handleFormatSQLAsset)
-	router.Post("/api/assets/{assetID}/materialize/stream", s.handleMaterializeAssetStream)
 	router.Get("/api/assets/freshness", s.handleGetAssetFreshness)
 	router.Post("/api/run", s.handleRun)
 
@@ -596,6 +617,22 @@ func mapsClone(input map[string]string) map[string]string {
 	return result
 }
 
+func pipelineExecutionStatesToAPI(input []service.PipelineMaterializationState) []webhttpapi.PipelineMaterializationState {
+	result := make([]webhttpapi.PipelineMaterializationState, 0, len(input))
+	for _, item := range input {
+		result = append(result, webhttpapi.PipelineMaterializationState{
+			AssetID:         item.AssetID,
+			IsMaterialized:  item.IsMaterialized,
+			MaterializedAs:  item.MaterializedAs,
+			FreshnessStatus: item.FreshnessStatus,
+			RowCount:        item.RowCount,
+			Connection:      item.Connection,
+			DeclaredMatType: item.DeclaredMatType,
+		})
+	}
+	return result
+}
+
 func mapSliceClone(input map[string][]string) map[string][]string {
 	if len(input) == 0 {
 		return map[string][]string{}
@@ -637,6 +674,11 @@ func (s *webServer) ConfigChanged(ctx context.Context, relPath, eventType string
 	s.pushWorkspaceUpdateImmediate(ctx, eventType, relPath)
 }
 
+func (s *webServer) WorkspaceChanged(ctx context.Context, relPath, eventType string) {
+	s.suppressWatcherFor(relPath)
+	s.pushWorkspaceUpdateImmediate(ctx, eventType, relPath)
+}
+
 func (s *webServer) CurrentWorkspace() any {
 	return s.currentState()
 }
@@ -661,755 +703,89 @@ func (s *webServer) writeJSON(w http.ResponseWriter, status int, body any) {
 	webapi.WriteJSON(w, status, body)
 }
 
-func writeSSEJSON(w http.ResponseWriter, flusher http.Flusher, event string, body any) error {
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
+type executionInspectResult = webhttpapi.InspectExecutionResult
 
-	if event != "" {
-		if _, err := fmt.Fprintf(w, "event: %s\n", event); err != nil {
-			return err
-		}
-	}
+type executionMaterializeEvent = webhttpapi.MaterializeExecutionEvent
 
-	if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
-		return err
-	}
-
-	flusher.Flush()
-	return nil
+func (s *webServer) InspectAsset(ctx context.Context, assetID, limit, environment string) executionInspectResult {
+	return executionInspectResult(s.executionSvc.InspectAsset(ctx, assetID, limit, environment))
 }
 
-type createPipelineRequest struct {
-	Path    string `json:"path"`
-	Name    string `json:"name"`
-	Content string `json:"content"`
+func (s *webServer) MaterializeAssetStream(ctx context.Context, assetID string, onChunk func([]byte)) executionMaterializeEvent {
+	return executionMaterializeEvent(s.executionSvc.MaterializeAssetStream(ctx, assetID, onChunk))
 }
 
-func (s *webServer) handleCreatePipeline(w http.ResponseWriter, r *http.Request) {
-	var req createPipelineRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	if req.Path == "" {
-		webapi.WriteBadRequest(w, "pipeline_path_required", "path is required")
-		return
-	}
-
-	absPath, err := safeJoin(s.workspaceRoot, req.Path)
+func (s *webServer) GetPipelineMaterialization(ctx context.Context, pipelineID string) (webhttpapi.PipelineMaterializationResponse, *apiError) {
+	response, err := s.executionSvc.GetPipelineMaterialization(ctx, pipelineID)
 	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_pipeline_path", err.Error())
-		return
-	}
-
-	if err := os.MkdirAll(absPath, 0o755); err != nil {
-		webapi.WriteInternalError(w, "pipeline_create_failed", err.Error())
-		return
-	}
-
-	content := req.Content
-	if strings.TrimSpace(content) == "" {
-		name := req.Name
-		if name == "" {
-			name = filepath.Base(absPath)
+		message := err.Error()
+		switch {
+		case strings.Contains(message, "invalid pipeline id"):
+			return webhttpapi.PipelineMaterializationResponse{}, &apiError{Status: http.StatusBadRequest, Code: "invalid_pipeline_id", Message: "invalid pipeline id"}
+		case strings.Contains(message, "invalid path"):
+			return webhttpapi.PipelineMaterializationResponse{}, &apiError{Status: http.StatusBadRequest, Code: "invalid_pipeline_path", Message: message}
+		default:
+			return webhttpapi.PipelineMaterializationResponse{}, &apiError{Status: http.StatusBadRequest, Code: "pipeline_parse_failed", Message: message}
 		}
-		content = fmt.Sprintf("name: %s\n", name)
 	}
-
-	if err := os.WriteFile(filepath.Join(absPath, "pipeline.yml"), []byte(content), 0o644); err != nil {
-		webapi.WriteInternalError(w, "pipeline_write_failed", err.Error())
-		return
-	}
-
-	s.suppressWatcherFor(req.Path)
-	s.pushWorkspaceUpdateImmediate(r.Context(), "pipeline.created", req.Path)
-	s.writeJSON(w, http.StatusCreated, map[string]string{"status": "ok"})
+	return webhttpapi.PipelineMaterializationResponse{PipelineID: response.PipelineID, Assets: pipelineExecutionStatesToAPI(response.Assets)}, nil
 }
 
-type updatePipelineRequest struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Content string `json:"content"`
-}
-
-func (s *webServer) handleUpdatePipeline(w http.ResponseWriter, r *http.Request) {
-	var req updatePipelineRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	relPath, err := decodeID(req.ID)
+func (s *webServer) CreateAsset(ctx context.Context, pipelineID string, req webhttpapi.CreateAssetRequest) (map[string]string, *apiError) {
+	result, err := s.assetSvc.Create(ctx, pipelineID, service.CreateAssetParams(req))
 	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_pipeline_id", "invalid pipeline id")
-		return
+		return nil, &apiError{Status: err.Status, Code: err.Code, Message: err.Message}
 	}
-
-	absPath, err := safeJoin(s.workspaceRoot, relPath)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_pipeline_path", err.Error())
-		return
-	}
-
-	if strings.TrimSpace(req.Name) != "" && strings.TrimSpace(req.Content) == "" {
-		builder := s.newPipelineBuilder()
-		parsed, err := builder.CreatePipelineFromPath(r.Context(), absPath, pipeline.WithMutate(), pipeline.WithOnlyPipeline())
-		if err != nil {
-			webapi.WriteBadRequest(w, "pipeline_parse_failed", err.Error())
-			return
-		}
-
-		parsed.Name = strings.TrimSpace(req.Name)
-		parsed.DefinitionFile.Path = filepath.Join(absPath, "pipeline.yml")
-
-		if err := parsed.Persist(afero.NewOsFs()); err != nil {
-			webapi.WriteInternalError(w, "pipeline_write_failed", err.Error())
-			return
-		}
-
-		s.suppressWatcherFor(relPath)
-		s.pushWorkspaceUpdateImmediate(r.Context(), "pipeline.updated", relPath)
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-		return
-	}
-
-	if err := os.WriteFile(filepath.Join(absPath, "pipeline.yml"), []byte(req.Content), 0o644); err != nil {
-		webapi.WriteInternalError(w, "pipeline_write_failed", err.Error())
-		return
-	}
-
-	s.suppressWatcherFor(relPath)
-	s.pushWorkspaceUpdateImmediate(r.Context(), "pipeline.updated", relPath)
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func (s *webServer) handleDeletePipeline(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	relPath, err := decodeID(id)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_pipeline_id", "invalid pipeline id")
-		return
-	}
-
-	absPath, err := safeJoin(s.workspaceRoot, relPath)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_pipeline_path", err.Error())
-		return
-	}
-
-	if err := os.RemoveAll(absPath); err != nil {
-		webapi.WriteInternalError(w, "pipeline_delete_failed", err.Error())
-		return
-	}
-
-	s.suppressWatcherFor(relPath)
-	s.pushWorkspaceUpdateImmediate(r.Context(), "pipeline.deleted", relPath)
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func (s *webServer) handleGetPipelineMaterialization(w http.ResponseWriter, r *http.Request) {
-	pipelineID := chi.URLParam(r, "id")
-	relPipelinePath, err := decodeID(pipelineID)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_pipeline_id", "invalid pipeline id")
-		return
-	}
-
-	absPipelinePath, err := safeJoin(s.workspaceRoot, relPipelinePath)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_pipeline_path", err.Error())
-		return
-	}
-
-	builder := s.newPipelineBuilder()
-	parsed, err := builder.CreatePipelineFromPath(r.Context(), absPipelinePath, pipeline.WithMutate())
-	if err != nil {
-		webapi.WriteBadRequest(w, "pipeline_parse_failed", err.Error())
-		return
-	}
-
-	matInfo := s.inspectPipelineMaterializations(r.Context(), parsed)
-	freshnessByAssetName := computePipelineFreshness(parsed, matInfo, s.freshness.GetAll())
-	assets := make([]assetMaterializationState, 0, len(parsed.Assets))
-
-	for _, asset := range parsed.Assets {
-		assetPath := asset.ExecutableFile.Path
-		if assetPath == "" {
-			assetPath = asset.DefinitionFile.Path
-		}
-
-		relAssetPath, relErr := filepath.Rel(s.workspaceRoot, assetPath)
-		if relErr != nil {
-			relAssetPath = assetPath
-		}
-
-		connectionName := ""
-		if conn, connErr := parsed.GetConnectionNameForAsset(asset); connErr == nil {
-			connectionName = conn
-		}
-
-		key := materializationAssetKey(asset.Name, connectionName)
-		item := assetMaterializationState{
-			AssetID:         encodeID(filepath.ToSlash(relAssetPath)),
-			Connection:      connectionName,
-			DeclaredMatType: string(asset.Materialization.Type),
-		}
-
-		if info, ok := matInfo[key]; ok {
-			item.IsMaterialized = info.IsMaterialized
-			item.MaterializedAs = info.MaterializedAs
-			item.FreshnessStatus = info.FreshnessStatus
-			item.RowCount = info.RowCount
-			if info.DeclaredMatType != "" {
-				item.DeclaredMatType = info.DeclaredMatType
-			}
-		}
-
-		if status, ok := freshnessByAssetName[asset.Name]; ok {
-			item.FreshnessStatus = status
-		}
-
-		assets = append(assets, item)
-	}
-
-	s.writeJSON(w, http.StatusOK, pipelineMaterializationResponse{
-		PipelineID: pipelineID,
-		Assets:     assets,
-	})
-}
-
-type createAssetRequest struct {
-	Name          string `json:"name"`
-	Type          string `json:"type"`
-	Path          string `json:"path"`
-	Content       string `json:"content"`
-	SourceAssetID string `json:"source_asset_id"`
-}
-
-func (s *webServer) handleCreateAsset(w http.ResponseWriter, r *http.Request) {
-	pipelineID := chi.URLParam(r, "id")
-	relPipelinePath, err := decodeID(pipelineID)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_pipeline_id", "invalid pipeline id")
-		return
-	}
-
-	var req createAssetRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	if req.Name == "" && req.Path == "" && req.SourceAssetID == "" {
-		webapi.WriteBadRequest(w, "missing_name_or_path", "name or path is required")
-		return
-	}
-
-	pipelinePath, err := safeJoin(s.workspaceRoot, relPipelinePath)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_pipeline_path", err.Error())
-		return
-	}
-
-	var sourceAsset *pipeline.Asset
-	var sourcePipeline *pipeline.Pipeline
-	var sourceConnectionName string
-	var sourceRelAssetPath string
-
-	if strings.TrimSpace(req.SourceAssetID) != "" {
-		resolvedRelPath, resolvedPipeline, resolvedAsset, resolveErr := s.resolveAssetByID(r.Context(), req.SourceAssetID)
-		if resolveErr != nil {
-			webapi.WriteBadRequest(w, "invalid_source_asset_id", resolveErr.Error())
-			return
-		}
-
-		if !pipelinePathsReferToSameRoot(resolvedPipeline.DefinitionFile.Path, pipelinePath) {
-			webapi.WriteBadRequest(w, "invalid_source_asset", "source asset must belong to the selected pipeline")
-			return
-		}
-
-		sourceAsset = resolvedAsset
-		sourcePipeline = resolvedPipeline
-		sourceRelAssetPath = resolvedRelPath
-		if conn, connErr := sourcePipeline.GetConnectionNameForAsset(sourceAsset); connErr == nil {
-			sourceConnectionName = conn
-		}
-	}
-
-	assetName := strings.TrimSpace(req.Name)
-	if assetName == "" && sourceAsset != nil {
-		assetName = deriveDownstreamAssetName(sourceAsset.Name, sourcePipeline)
-	}
-
-	relAssetPath := req.Path
-	if relAssetPath == "" {
-		if sourceAsset != nil {
-			sourceAbsAssetPath, pathErr := safeJoin(s.workspaceRoot, sourceRelAssetPath)
-			if pathErr != nil {
-				webapi.WriteBadRequest(w, "invalid_source_asset_path", pathErr.Error())
-				return
-			}
-
-			sourcePipelineRelativeDir, relErr := filepath.Rel(pipelinePath, filepath.Dir(sourceAbsAssetPath))
-			if relErr != nil {
-				sourcePipelineRelativeDir = "assets"
-			}
-
-			assetTypeForPath := strings.TrimSpace(req.Type)
-			if assetTypeForPath == "" {
-				assetTypeForPath = deriveSQLAssetTypeForSource(sourceAsset, sourcePipeline, sourceConnectionName)
-			}
-
-			relAssetPath = filepath.ToSlash(filepath.Join(sourcePipelineRelativeDir, slug(assetName)+extensionForAssetType(assetTypeForPath)))
-		} else {
-			relAssetPath = filepath.ToSlash(filepath.Join("assets", slug(assetName)+extensionForAssetType(req.Type)))
-		}
-	}
-
-	absAssetPath, err := safeJoin(pipelinePath, relAssetPath)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_asset_path", err.Error())
-		return
-	}
-
-	if err := os.MkdirAll(filepath.Dir(absAssetPath), 0o755); err != nil {
-		webapi.WriteInternalError(w, "asset_dir_create_failed", err.Error())
-		return
-	}
-
-	assetType := strings.TrimSpace(req.Type)
-	if assetType == "" {
-		if sourceAsset != nil {
-			assetType = deriveSQLAssetTypeForSource(sourceAsset, sourcePipeline, sourceConnectionName)
-		} else {
-			assetType = inferAssetTypeFromPath(relAssetPath)
-		}
-	}
-
-	content := req.Content
-	if content == "" {
-		if assetName == "" {
-			assetName = strings.TrimSuffix(filepath.Base(relAssetPath), filepath.Ext(relAssetPath))
-		}
-
-		if sourceAsset != nil {
-			content = defaultDerivedSQLAssetContent(assetName, assetType, relAssetPath, sourceAsset.Name, sourceConnectionName)
-		} else {
-			content = defaultAssetContent(assetName, assetType, relAssetPath)
-		}
-	}
-
-	if err := os.WriteFile(absAssetPath, []byte(content), 0o644); err != nil {
-		webapi.WriteInternalError(w, "asset_write_failed", err.Error())
-		return
-	}
-
-	if err := ensurePythonRequirementsFile(absAssetPath, assetType, relAssetPath); err != nil {
-		webapi.WriteInternalError(w, "requirements_write_failed", err.Error())
-		return
-	}
-
-	relWorkspaceAssetPath, _ := filepath.Rel(s.workspaceRoot, absAssetPath)
-	assetPath := filepath.ToSlash(relWorkspaceAssetPath)
-	s.suppressWatcherFor(assetPath)
-	s.pushWorkspaceUpdateImmediate(r.Context(), "asset.created", assetPath)
-	s.writeJSON(w, http.StatusCreated, map[string]string{
-		"status":     "ok",
-		"asset_id":   encodeID(assetPath),
-		"asset_path": assetPath,
-	})
-}
-
-type updateAssetRequest struct {
-	Name                *string           `json:"name,omitempty"`
-	Type                *string           `json:"type,omitempty"`
-	Content             *string           `json:"content,omitempty"`
-	MaterializationType *string           `json:"materialization_type,omitempty"`
-	Meta                map[string]string `json:"meta,omitempty"`
+	return result, nil
 }
 
 type updateAssetColumnsRequest struct {
 	Columns []webColumn `json:"columns"`
 }
 
-type formatSQLAssetRequest struct {
-	Content string `json:"content"`
-}
-
-type formatSQLAssetResponse struct {
-	Status  string `json:"status"`
-	AssetID string `json:"asset_id"`
-	Content string `json:"content"`
-	Error   string `json:"error,omitempty"`
-}
-
-func (s *webServer) handleUpdateAsset(w http.ResponseWriter, r *http.Request) {
-	assetID := chi.URLParam(r, "assetID")
-	relAssetPath, err := decodeID(assetID)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_asset_id", "invalid asset id")
-		return
-	}
-
-	var req updateAssetRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	absAssetPath, err := safeJoin(s.workspaceRoot, relAssetPath)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_asset_path", err.Error())
-		return
-	}
-
-	originalBytes, err := os.ReadFile(absAssetPath)
-	if err != nil {
-		webapi.WriteInternalError(w, "asset_read_failed", err.Error())
-		return
-	}
-	originalContent := string(originalBytes)
-	desiredExecutable := extractExecutableContent(originalContent)
-	if req.Content != nil {
-		desiredExecutable = *req.Content
-	}
-
-	changedAssetIDs := []string{assetID}
-	changedAssetPaths := []string{filepath.ToSlash(relAssetPath)}
-
-	if req.Name != nil || req.Type != nil || req.MaterializationType != nil || req.Meta != nil {
-		_, parsedPipeline, asset, resolveErr := s.resolveAssetByID(r.Context(), assetID)
-		if resolveErr != nil {
-			webapi.WriteBadRequest(w, "asset_resolve_failed", resolveErr.Error())
-			return
-		}
-
-		originalAssetName := asset.Name
-		renamedAsset := false
-
-		if req.Name != nil {
-			nextName := strings.TrimSpace(*req.Name)
-			if nextName == "" {
-				webapi.WriteBadRequest(w, "invalid_asset_name", "asset name cannot be empty")
-				return
-			}
-
-			if existing := parsedPipeline.GetAssetByNameCaseInsensitive(nextName); existing != nil && existing.DefinitionFile.Path != asset.DefinitionFile.Path {
-				webapi.WriteBadRequest(w, "duplicate_asset_name", fmt.Sprintf("an asset named %q already exists", nextName))
-				return
-			}
-
-			if nextName != asset.Name {
-				asset.Name = nextName
-				renamedAsset = true
-			}
-		}
-
-		if req.Type != nil {
-			nextType := strings.TrimSpace(*req.Type)
-			if nextType == "" {
-				webapi.WriteBadRequest(w, "invalid_asset_type", "asset type cannot be empty")
-				return
-			}
-
-			asset.Type = pipeline.AssetType(nextType)
-		}
-
-		if req.MaterializationType != nil {
-			asset.Materialization.Type = pipeline.MaterializationType(strings.ToLower(strings.TrimSpace(*req.MaterializationType)))
-		}
-
-		if req.Meta != nil {
-			nextMeta := make(map[string]string)
-			for rawKey, rawValue := range req.Meta {
-				key := strings.TrimSpace(rawKey)
-				if key == "" {
-					continue
-				}
-
-				nextMeta[key] = rawValue
-			}
-
-			if len(nextMeta) == 0 {
-				asset.Meta = nil
-			} else {
-				asset.Meta = nextMeta
-			}
-		}
-
-		if err := asset.Persist(afero.NewOsFs(), parsedPipeline); err != nil {
-			webapi.WriteInternalError(w, "asset_persist_failed", err.Error())
-			return
-		}
-
-		if renamedAsset {
-			affectedIDs, affectedPaths, refactorErr := s.refactorDirectAssetDependencies(r.Context(), parsedPipeline, originalAssetName, asset.Name)
-			if refactorErr != nil {
-				webapi.WriteInternalError(w, "asset_rename_refactor_failed", refactorErr.Error())
-				return
-			}
-
-			changedAssetIDs = appendUniqueStrings(changedAssetIDs, affectedIDs...)
-			changedAssetPaths = appendUniqueStrings(changedAssetPaths, affectedPaths...)
-		}
-	}
-
-	currentBytes, err := os.ReadFile(absAssetPath)
-	if err != nil {
-		webapi.WriteInternalError(w, "asset_read_failed", err.Error())
-		return
-	}
-
-	mergedContent := mergeExecutableContent(string(currentBytes), desiredExecutable)
-	if err := os.WriteFile(absAssetPath, []byte(mergedContent), 0o644); err != nil {
-		webapi.WriteInternalError(w, "asset_write_failed", err.Error())
-		return
-	}
-
-	if req.Content != nil && strings.HasSuffix(strings.ToLower(relAssetPath), ".sql") {
-		s.scheduleSQLAssetPatches(relAssetPath)
-	}
-
-	for _, changedPath := range changedAssetPaths {
-		s.suppressWatcherFor(changedPath)
-	}
-	s.pushWorkspaceUpdateImmediateWithChangedIDs(r.Context(), "asset.updated", relAssetPath, changedAssetIDs)
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func (s *webServer) handleFormatSQLAsset(w http.ResponseWriter, r *http.Request) {
-	assetID := chi.URLParam(r, "assetID")
-	relAssetPath, err := decodeID(assetID)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_asset_id", "invalid asset id")
-		return
-	}
-
-	if !strings.HasSuffix(strings.ToLower(relAssetPath), ".sql") {
-		webapi.WriteBadRequest(w, "invalid_asset_type", "only SQL assets can be formatted")
-		return
-	}
-
-	var req formatSQLAssetRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	absAssetPath, err := safeJoin(s.workspaceRoot, relAssetPath)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_asset_path", err.Error())
-		return
-	}
-
-	originalBytes, err := os.ReadFile(absAssetPath)
-	if err != nil {
-		webapi.WriteInternalError(w, "asset_read_failed", err.Error())
-		return
-	}
-
-	mergedContent := mergeExecutableContent(string(originalBytes), req.Content)
-	if err := os.WriteFile(absAssetPath, []byte(mergedContent), 0o644); err != nil {
-		webapi.WriteInternalError(w, "asset_write_failed", err.Error())
-		return
-	}
-
-	output, err := s.runner.Run(r.Context(), []string{"format", relAssetPath, "--sqlfluff"})
-	if err != nil {
-		s.writeJSON(w, http.StatusOK, formatSQLAssetResponse{
-			Status:  "error",
-			AssetID: assetID,
-			Content: req.Content,
-			Error:   strings.TrimSpace(string(output)),
-		})
-		return
-	}
-
-	formattedBytes, err := os.ReadFile(absAssetPath)
-	if err != nil {
-		webapi.WriteInternalError(w, "asset_read_failed", err.Error())
-		return
-	}
-
-	s.suppressWatcherFor(relAssetPath)
-	s.pushWorkspaceUpdateImmediateWithChangedIDs(r.Context(), "asset.updated", relAssetPath, []string{assetID})
-	s.writeJSON(w, http.StatusOK, formatSQLAssetResponse{
-		Status:  "ok",
-		AssetID: assetID,
-		Content: extractExecutableContent(string(formattedBytes)),
+func (s *webServer) UpdateAsset(ctx context.Context, assetID string, req webhttpapi.UpdateAssetRequest) (map[string]string, *apiError) {
+	result, err := s.assetSvc.Update(ctx, assetID, service.AssetUpdateRequest{
+		Name:                req.Name,
+		Type:                req.Type,
+		Content:             req.Content,
+		MaterializationType: req.MaterializationType,
+		Meta:                req.Meta,
 	})
-}
-
-func (s *webServer) refactorDirectAssetDependencies(ctx context.Context, parsedPipeline *pipeline.Pipeline, oldName, newName string) ([]string, []string, error) {
-	if parsedPipeline == nil || strings.TrimSpace(oldName) == strings.TrimSpace(newName) {
-		return nil, nil, nil
-	}
-
-	sqlParserInstance, err := sqlparser.NewSQLParser(false)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create sql parser: %w", err)
+		return nil, &apiError{Status: err.Status, Code: err.Code, Message: err.Message}
 	}
-	defer sqlParserInstance.Close()
-
-	renderer := jinja.NewRendererWithYesterday(parsedPipeline.Name, "web-rename")
-	fs := afero.NewOsFs()
-	changedIDs := make([]string, 0)
-	changedPaths := make([]string, 0)
-
-	for _, current := range parsedPipeline.Assets {
-		if strings.EqualFold(current.Name, newName) || strings.EqualFold(current.Name, oldName) {
-			continue
-		}
-
-		updated := false
-		for index, upstream := range current.Upstreams {
-			if !strings.EqualFold(upstream.Value, oldName) {
-				continue
-			}
-
-			current.Upstreams[index].Value = newName
-			updated = true
-		}
-
-		isSQLAsset := isSQLAssetFile(current)
-		if isSQLAsset {
-			nextContent := replaceAssetNameReferences(current.ExecutableFile.Content, oldName, newName)
-			if nextContent != current.ExecutableFile.Content {
-				current.ExecutableFile.Content = nextContent
-				updated = true
-			}
-		}
-
-		if !updated {
-			continue
-		}
-
-		if err := current.Persist(fs, parsedPipeline); err != nil {
-			return nil, nil, fmt.Errorf("failed to persist renamed dependency updates for asset '%s': %w", current.Name, err)
-		}
-
-		if isSQLAsset {
-			if err := updateAssetDependencies(ctx, current, parsedPipeline, sqlParserInstance, renderer); err != nil {
-				return nil, nil, fmt.Errorf("failed to refresh dependencies for asset '%s': %w", current.Name, err)
-			}
-		}
-
-		assetPath := current.ExecutableFile.Path
-		if assetPath == "" {
-			assetPath = current.DefinitionFile.Path
-		}
-
-		relAssetPath, relErr := filepath.Rel(s.workspaceRoot, assetPath)
-		if relErr != nil {
-			relAssetPath = assetPath
-		}
-
-		normalizedPath := filepath.ToSlash(relAssetPath)
-		changedIDs = append(changedIDs, encodeID(normalizedPath))
-		changedPaths = append(changedPaths, normalizedPath)
-	}
-
-	return changedIDs, changedPaths, nil
+	return result, nil
 }
 
-func isSQLAssetFile(asset *pipeline.Asset) bool {
-	if asset == nil {
-		return false
+func (s *webServer) FormatSQLAsset(ctx context.Context, assetID string, req webhttpapi.FormatSQLAssetRequest) (formatSQLAssetResponse, *apiError) {
+	result, err := s.assetSvc.FormatSQL(ctx, assetID, service.FormatSQLAssetRequest{Content: req.Content})
+	if err != nil {
+		return formatSQLAssetResponse{}, &apiError{Status: err.Status, Code: err.Code, Message: err.Message}
 	}
-
-	assetPath := asset.ExecutableFile.Path
-	if assetPath == "" {
-		assetPath = asset.DefinitionFile.Path
-	}
-	assetPath = strings.ToLower(assetPath)
-	assetType := strings.ToLower(string(asset.Type))
-	return strings.HasSuffix(assetPath, ".sql") || strings.Contains(assetType, "sql")
+	return formatSQLAssetResponse(result), nil
 }
 
 func replaceAssetNameReferences(content, oldName, newName string) string {
-	trimmedOld := strings.TrimSpace(oldName)
-	trimmedNew := strings.TrimSpace(newName)
-	if trimmedOld == "" || trimmedNew == "" || trimmedOld == trimmedNew {
-		return content
-	}
-
-	pattern := fmt.Sprintf(`(?i)(^|[^A-Za-z0-9_.])(%s)([^A-Za-z0-9_.]|$)`, regexp.QuoteMeta(trimmedOld))
-	re := regexp.MustCompile(pattern)
-	return re.ReplaceAllString(content, `${1}`+trimmedNew+`${3}`)
+	return service.ReplaceAssetNameReferences(content, oldName, newName)
 }
 
-func appendUniqueStrings(values []string, extras ...string) []string {
-	seen := make(map[string]struct{}, len(values)+len(extras))
-	for _, value := range values {
-		seen[value] = struct{}{}
-	}
-
-	for _, extra := range extras {
-		if extra == "" {
-			continue
-		}
-		if _, ok := seen[extra]; ok {
-			continue
-		}
-		seen[extra] = struct{}{}
-		values = append(values, extra)
-	}
-
-	return values
+func quoteQualifiedIdentifier(value string) string {
+	return service.QuoteQualifiedIdentifier(value)
 }
 
-func (s *webServer) scheduleSQLAssetPatches(relAssetPath string) {
-	assetPath := filepath.ToSlash(relAssetPath)
-
-	s.patchMu.Lock()
-	if existing, ok := s.patchTimers[assetPath]; ok {
-		existing.Stop()
-	}
-
-	s.patchTimers[assetPath] = time.AfterFunc(1500*time.Millisecond, func() {
-		s.runSQLAssetPatches(assetPath)
-
-		s.patchMu.Lock()
-		delete(s.patchTimers, assetPath)
-		s.patchMu.Unlock()
-	})
-	s.patchMu.Unlock()
+func readStringField(row map[string]any, keys ...string) string {
+	return service.ReadStringField(row, keys...)
 }
 
-func (s *webServer) runSQLAssetPatches(relAssetPath string) {
-	prefixedPath := relAssetPath
-	if !strings.HasPrefix(prefixedPath, ".") {
-		prefixedPath = "." + prefixedPath
-	}
-
-	commands := [][]string{
-		{"patch", "fill-columns-from-db", prefixedPath},
-		{"patch", "fill-asset-dependencies", relAssetPath},
-	}
-
-	for _, args := range commands {
-		_, _ = s.runner.Run(context.Background(), args)
-	}
-
-	s.suppressWatcherFor(relAssetPath)
-	s.pushWorkspaceUpdate(context.Background(), "asset.patched", relAssetPath)
-}
-
-func (s *webServer) handleFillColumnsFromDB(w http.ResponseWriter, r *http.Request) {
-	assetID := chi.URLParam(r, "assetID")
-	relAssetPath, _, asset, err := s.resolveAssetByID(r.Context(), assetID)
+func (s *webServer) FillColumnsFromDB(ctx context.Context, assetID string) (int, map[string]any, *apiError) {
+	relAssetPath, _, asset, err := s.resolveAssetByID(ctx, assetID)
 	if err != nil {
-		webapi.WriteBadRequest(w, "asset_resolve_failed", err.Error())
-		return
+		return 0, nil, &apiError{Status: http.StatusBadRequest, Code: "asset_resolve_failed", Message: err.Error()}
 	}
 
 	assetType := strings.ToLower(string(asset.Type))
 	if !strings.Contains(assetType, "sql") && !strings.HasSuffix(strings.ToLower(relAssetPath), ".sql") {
-		webapi.WriteBadRequest(w, "unsupported_asset_type", "fill-columns-from-db is supported for sql assets only")
-		return
+		return 0, nil, &apiError{Status: http.StatusBadRequest, Code: "unsupported_asset_type", Message: "fill-columns-from-db is supported for sql assets only"}
 	}
 
 	normalizedPath := filepath.ToSlash(relAssetPath)
@@ -1432,7 +808,7 @@ func (s *webServer) handleFillColumnsFromDB(w http.ResponseWriter, r *http.Reque
 	allSucceeded := true
 
 	for _, args := range commands {
-		out, runErr := s.runner.Run(r.Context(), args)
+		out, runErr := s.runner.Run(ctx, args)
 
 		result := cmdResult{
 			Command:  args,
@@ -1450,7 +826,7 @@ func (s *webServer) handleFillColumnsFromDB(w http.ResponseWriter, r *http.Reque
 	}
 
 	s.suppressWatcherFor(relAssetPath)
-	s.pushWorkspaceUpdateImmediate(r.Context(), "asset.updated", relAssetPath)
+	s.pushWorkspaceUpdateImmediate(ctx, "asset.updated", relAssetPath)
 
 	status := http.StatusOK
 	responseStatus := "ok"
@@ -1459,147 +835,92 @@ func (s *webServer) handleFillColumnsFromDB(w http.ResponseWriter, r *http.Reque
 		responseStatus = "error"
 	}
 
-	s.writeJSON(w, status, map[string]any{
+	return status, map[string]any{
 		"status":  responseStatus,
 		"results": results,
-	})
+	}, nil
 }
 
-func (s *webServer) handleInferAssetColumns(w http.ResponseWriter, r *http.Request) {
-	assetID := chi.URLParam(r, "assetID")
-	_, parsedPipeline, asset, err := s.resolveAssetByID(r.Context(), assetID)
+func (s *webServer) InferAssetColumns(ctx context.Context, assetID string) (int, map[string]any, *apiError) {
+	_, parsedPipeline, asset, err := s.resolveAssetByID(ctx, assetID)
 	if err != nil {
-		webapi.WriteBadRequest(w, "asset_resolve_failed", err.Error())
-		return
+		return 0, nil, &apiError{Status: http.StatusBadRequest, Code: "asset_resolve_failed", Message: err.Error()}
 	}
 
 	cmdArgs, err := buildInferAssetColumnsCommand(parsedPipeline, asset)
 	if err != nil {
-		webapi.WriteBadRequest(w, "infer_columns_command_build_failed", err.Error())
-		return
+		return 0, nil, &apiError{Status: http.StatusBadRequest, Code: "infer_columns_command_build_failed", Message: err.Error()}
 	}
 
-	output, err := s.runner.Run(r.Context(), cmdArgs)
+	output, err := s.runner.Run(ctx, cmdArgs)
 	if err != nil {
-		s.writeJSON(w, http.StatusBadRequest, map[string]any{
+		return http.StatusBadRequest, map[string]any{
 			"status":     "error",
 			"columns":    []webColumn{},
 			"raw_output": string(output),
 			"command":    cmdArgs,
 			"error":      err.Error(),
-		})
-		return
+		}, nil
 	}
 
 	inferred := inferWebColumnsFromQueryOutput(output)
-	s.writeJSON(w, http.StatusOK, map[string]any{
+	return http.StatusOK, map[string]any{
 		"status":     "ok",
 		"columns":    inferred,
 		"raw_output": string(output),
 		"command":    cmdArgs,
-	})
+	}, nil
 }
 
 func buildInferAssetColumnsCommand(parsedPipeline *pipeline.Pipeline, asset *pipeline.Asset) ([]string, error) {
-	if parsedPipeline == nil || asset == nil {
-		return nil, fmt.Errorf("asset context is required")
-	}
-
-	connectionName, err := parsedPipeline.GetConnectionNameForAsset(asset)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve asset connection: %w", err)
-	}
-
-	targetTableName := strings.TrimSpace(asset.Name)
-	if targetTableName == "" {
-		return nil, fmt.Errorf("asset name is required to infer columns")
-	}
-
-	query := fmt.Sprintf("select * from %s limit 1", quoteQualifiedIdentifier(targetTableName))
-
-	return buildRemoteTableColumnsCommand(connectionName, query, ""), nil
+	return service.BuildInferAssetColumnsCommand(parsedPipeline, asset)
 }
 
 func buildRemoteTableColumnsCommand(connectionName, query, environment string) []string {
-	args := []string{
-		"query",
-		"--connection",
-		connectionName,
-		"--query",
-		query,
-		"--output",
-		"json",
-	}
-
-	if strings.TrimSpace(environment) != "" {
-		args = append(args, "--environment", environment)
-	}
-
-	return args
+	return service.BuildRemoteTableColumnsCommand(connectionName, query, environment)
 }
 
-func (s *webServer) handleUpdateAssetColumns(w http.ResponseWriter, r *http.Request) {
-	assetID := chi.URLParam(r, "assetID")
-	_, parsedPipeline, asset, err := s.resolveAssetByID(r.Context(), assetID)
+func (s *webServer) UpdateAssetColumns(ctx context.Context, assetID string, columns []any) (map[string]string, *apiError) {
+	_, parsedPipeline, asset, err := s.resolveAssetByID(ctx, assetID)
 	if err != nil {
-		webapi.WriteBadRequest(w, "asset_resolve_failed", err.Error())
-		return
+		return nil, &apiError{Status: http.StatusBadRequest, Code: "asset_resolve_failed", Message: err.Error()}
+	}
+
+	columnBytes, err := json.Marshal(columns)
+	if err != nil {
+		return nil, &apiError{Status: http.StatusBadRequest, Code: "invalid_request_body", Message: err.Error()}
 	}
 
 	var req updateAssetColumnsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
+	if err := json.Unmarshal(columnBytes, &req.Columns); err != nil {
+		return nil, &apiError{Status: http.StatusBadRequest, Code: "invalid_request_body", Message: err.Error()}
 	}
 
 	asset.Columns = webColumnsToPipelineColumns(req.Columns)
 	err = asset.Persist(afero.NewOsFs(), parsedPipeline)
 	if err != nil {
-		webapi.WriteInternalError(w, "asset_persist_failed", err.Error())
-		return
+		return nil, &apiError{Status: http.StatusInternalServerError, Code: "asset_persist_failed", Message: err.Error()}
 	}
 
 	relAssetPath, decodeErr := decodeID(assetID)
 	if decodeErr == nil {
 		s.suppressWatcherFor(relAssetPath)
-		s.pushWorkspaceUpdateImmediate(r.Context(), "asset.columns.updated", relAssetPath)
+		s.pushWorkspaceUpdateImmediate(ctx, "asset.columns.updated", relAssetPath)
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	return map[string]string{"status": "ok"}, nil
 }
 
-func (s *webServer) handleDeleteAsset(w http.ResponseWriter, r *http.Request) {
-	assetID := chi.URLParam(r, "assetID")
-	relAssetPath, err := decodeID(assetID)
+func (s *webServer) DeleteAsset(ctx context.Context, assetID string) (map[string]string, *apiError) {
+	result, err := s.assetSvc.Delete(ctx, assetID)
 	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_asset_id", "invalid asset id")
-		return
+		return nil, &apiError{Status: err.Status, Code: err.Code, Message: err.Message}
 	}
-
-	absAssetPath, err := safeJoin(s.workspaceRoot, relAssetPath)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_asset_path", err.Error())
-		return
-	}
-
-	if err := os.Remove(absAssetPath); err != nil {
-		webapi.WriteInternalError(w, "asset_delete_failed", err.Error())
-		return
-	}
-
-	s.suppressWatcherFor(relAssetPath)
-	s.pushWorkspaceUpdateImmediate(r.Context(), "asset.deleted", relAssetPath)
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	return result, nil
 }
 
 func (s *webServer) resolveAssetByID(ctx context.Context, assetID string) (string, *pipeline.Pipeline, *pipeline.Asset, error) {
 	return s.workspaceSvc.ResolveAssetByID(ctx, assetID)
-}
-
-type duckDBExecutionInfo struct {
-	ConnectionName string
-	DatabasePath   string
-	LockKey        string
 }
 
 func (s *webServer) getDuckDBOperationMutex(lockKey string) *sync.Mutex {
@@ -1613,288 +934,6 @@ func (s *webServer) getDuckDBOperationMutex(lockKey string) *sync.Mutex {
 	mu := &sync.Mutex{}
 	s.duckDBOps[lockKey] = mu
 	return mu
-}
-
-func (s *webServer) findDuckDBExecutionInfoByAsset(ctx context.Context, assetID string) (*duckDBExecutionInfo, error) {
-	_, parsed, asset, err := s.resolveAssetByID(ctx, assetID)
-	if err != nil {
-		return nil, err
-	}
-
-	connectionName, err := parsed.GetConnectionNameForAsset(asset)
-	if err != nil || connectionName == "" {
-		return nil, nil
-	}
-
-	configPath := s.resolveConfigFilePath()
-	if _, statErr := os.Stat(configPath); statErr != nil {
-		return nil, nil
-	}
-
-	cfg, cfgErr := config.LoadOrCreate(afero.NewOsFs(), configPath)
-	if cfgErr != nil || cfg.SelectedEnvironment == nil || cfg.SelectedEnvironment.Connections == nil {
-		return nil, nil
-	}
-
-	for _, conn := range cfg.SelectedEnvironment.Connections.DuckDB {
-		if conn.Name != connectionName {
-			continue
-		}
-
-		databasePath := strings.TrimSpace(conn.Path)
-		if databasePath == "" {
-			databasePath = connectionName
-		} else {
-			databasePath = filepath.Clean(databasePath)
-		}
-
-		return &duckDBExecutionInfo{
-			ConnectionName: connectionName,
-			DatabasePath:   databasePath,
-			LockKey:        "duckdb:" + databasePath,
-		}, nil
-	}
-
-	return nil, nil
-}
-
-func (s *webServer) buildReadOnlyConfigFile(
-	duckDBInfo *duckDBExecutionInfo,
-) (string, func(), error) {
-	if duckDBInfo == nil || duckDBInfo.ConnectionName == "" {
-		return "", nil, fmt.Errorf("duckdb read-only config requires connection info")
-	}
-
-	configPath := s.resolveConfigFilePath()
-	cfg, err := config.LoadOrCreate(afero.NewOsFs(), configPath)
-	if err != nil {
-		return "", nil, err
-	}
-
-	if cfg.SelectedEnvironment == nil || cfg.SelectedEnvironment.Connections == nil {
-		return "", nil, fmt.Errorf("selected environment has no connections")
-	}
-
-	envName := cfg.SelectedEnvironmentName
-	if envName == "" {
-		envName = cfg.DefaultEnvironmentName
-	}
-
-	env, ok := cfg.Environments[envName]
-	if !ok || env.Connections == nil {
-		return "", nil, fmt.Errorf("environment '%s' not found", envName)
-	}
-
-	found := false
-	for i := range env.Connections.DuckDB {
-		if env.Connections.DuckDB[i].Name != duckDBInfo.ConnectionName {
-			continue
-		}
-
-		env.Connections.DuckDB[i].Path = service.AppendDuckDBReadOnlyMode(env.Connections.DuckDB[i].Path)
-		found = true
-		break
-	}
-
-	if !found {
-		return "", nil, fmt.Errorf("duckdb connection '%s' not found", duckDBInfo.ConnectionName)
-	}
-
-	cfg.Environments[envName] = env
-
-	tempFile, err := os.CreateTemp("", "bruin-web-readonly-*.yml")
-	if err != nil {
-		return "", nil, err
-	}
-
-	cleanup := func() {
-		_ = os.Remove(tempFile.Name())
-	}
-
-	if err := tempFile.Close(); err != nil {
-		cleanup()
-		return "", nil, err
-	}
-
-	content, err := yaml.Marshal(cfg)
-	if err != nil {
-		cleanup()
-		return "", nil, err
-	}
-
-	if err := os.WriteFile(tempFile.Name(), content, 0o600); err != nil {
-		cleanup()
-		return "", nil, err
-	}
-
-	return tempFile.Name(), cleanup, nil
-}
-
-func (s *webServer) handleMaterializeAssetStream(w http.ResponseWriter, r *http.Request) {
-	assetID := chi.URLParam(r, "assetID")
-	relAssetPath, err := decodeID(assetID)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_asset_id", "invalid asset id")
-		return
-	}
-
-	duckDBInfo, infoErr := s.findDuckDBExecutionInfoByAsset(r.Context(), assetID)
-	if infoErr != nil {
-		webapi.WriteBadRequest(w, "duckdb_info_failed", infoErr.Error())
-		return
-	}
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		webapi.WriteInternalError(w, "streaming_unsupported", "streaming unsupported")
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-
-	cmdArgs := []string{"run", relAssetPath}
-	_ = writeSSEJSON(w, flusher, "start", map[string]any{
-		"command": cmdArgs,
-	})
-
-	var output []byte
-	run := func() error {
-		var runErr error
-		output, runErr = s.runner.Stream(r.Context(), cmdArgs, func(chunk []byte) {
-			_ = writeSSEJSON(w, flusher, "output", map[string]any{
-				"chunk": string(chunk),
-			})
-		})
-		return runErr
-	}
-
-	var runErr error
-	if duckDBInfo != nil {
-		mu := s.getDuckDBOperationMutex(duckDBInfo.LockKey)
-		mu.Lock()
-		runErr = run()
-		mu.Unlock()
-	} else {
-		runErr = run()
-	}
-
-	changedAssetIDs := make([]string, 0)
-	var materializedAt *time.Time
-	if runErr == nil {
-		now := time.Now().UTC()
-		materializedAt = &now
-		if assetName := s.findAssetNameByID(assetID); assetName != "" {
-			s.freshness.RecordMaterialization(assetName, now, "succeeded")
-		}
-		changedAssetIDs = s.findMaterializationInspectIDs(assetID)
-	}
-
-	status := "ok"
-	errorMessage := ""
-	exitCode := 0
-	if runErr != nil {
-		status = "error"
-		exitCode = 1
-		errorMessage = runErr.Error()
-		if service.IsDuckDBLockError(runErr, output) {
-			errorMessage = "duckdb database is busy (lock held by another process), please retry"
-		}
-	}
-
-	_ = writeSSEJSON(w, flusher, "done", map[string]any{
-		"status":            status,
-		"command":           cmdArgs,
-		"output":            string(output),
-		"error":             errorMessage,
-		"exit_code":         exitCode,
-		"changed_asset_ids": changedAssetIDs,
-		"materialized_at":   materializedAt,
-	})
-}
-
-func (s *webServer) handleInspectAsset(w http.ResponseWriter, r *http.Request) {
-	assetID := chi.URLParam(r, "assetID")
-	relAssetPath, err := decodeID(assetID)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_asset_id", "invalid asset id")
-		return
-	}
-
-	limit := r.URL.Query().Get("limit")
-	if limit == "" {
-		limit = "200"
-	}
-
-	environment := r.URL.Query().Get("environment")
-	duckDBInfo, infoErr := s.findDuckDBExecutionInfoByAsset(r.Context(), assetID)
-	if infoErr != nil {
-		webapi.WriteBadRequest(w, "duckdb_info_failed", infoErr.Error())
-		return
-	}
-
-	cmdArgs := []string{"query", "--asset", relAssetPath, "--output", "json", "--limit", limit}
-	if environment != "" {
-		cmdArgs = append(cmdArgs, "--environment", environment)
-	}
-
-	var output []byte
-	var attempts int
-	run := func(args []string) {
-		output, err, attempts = s.runner.RunWithRetry(r.Context(), args, 4, 150*time.Millisecond)
-	}
-
-	if duckDBInfo != nil {
-		mu := s.getDuckDBOperationMutex(duckDBInfo.LockKey)
-		mu.Lock()
-		run(cmdArgs)
-
-		if err != nil && service.IsDuckDBLockError(err, output) {
-			if readOnlyConfigPath, cleanup, cfgErr := s.buildReadOnlyConfigFile(duckDBInfo); cfgErr == nil {
-				defer cleanup()
-				readOnlyArgs := append([]string{}, cmdArgs...)
-				readOnlyArgs = append(readOnlyArgs, "--config-file", readOnlyConfigPath)
-				run(readOnlyArgs)
-				cmdArgs = readOnlyArgs
-			}
-		}
-		mu.Unlock()
-	} else {
-		run(cmdArgs)
-	}
-
-	if err != nil {
-		statusCode := http.StatusBadRequest
-		errorMessage := err.Error()
-		if service.IsDuckDBLockError(err, output) {
-			statusCode = http.StatusConflict
-			errorMessage = "duckdb database is busy (lock held by another process), please retry"
-		}
-
-		s.writeJSON(w, statusCode, map[string]any{
-			"status":     "error",
-			"columns":    []string{},
-			"rows":       []map[string]any{},
-			"raw_output": string(output),
-			"command":    cmdArgs,
-			"error":      errorMessage,
-			"attempts":   attempts,
-			"retryable":  statusCode == http.StatusConflict,
-		})
-		return
-	}
-
-	columns, rows := parseQueryJSONOutput(output)
-	s.writeJSON(w, http.StatusOK, map[string]any{
-		"status":     "ok",
-		"columns":    columns,
-		"rows":       rows,
-		"raw_output": string(output),
-		"command":    cmdArgs,
-		"attempts":   attempts,
-	})
 }
 
 func (s *webServer) handleGetIngestrSuggestions(w http.ResponseWriter, r *http.Request) {
@@ -2218,196 +1257,6 @@ func (s *webServer) handleSQLParseContext(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func (s *webServer) handleSQLColumnValues(w http.ResponseWriter, r *http.Request) {
-	var req sqlColumnValuesRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	connectionName := strings.TrimSpace(req.Connection)
-	if connectionName == "" {
-		webapi.WriteBadRequest(w, "connection_required", "connection is required")
-		return
-	}
-
-	query := strings.TrimSpace(req.Query)
-	if query == "" {
-		webapi.WriteBadRequest(w, "query_required", "query is required")
-		return
-	}
-
-	_, rows, err := s.runConnectionQueryForEnvironment(r.Context(), connectionName, req.Environment, query)
-	if err != nil {
-		s.writeJSON(w, http.StatusOK, sqlColumnValuesResponse{
-			Status: "error",
-			Values: []any{},
-			Error:  err.Error(),
-		})
-		return
-	}
-
-	values := make([]any, 0, len(rows))
-	for _, row := range rows {
-		for _, value := range row {
-			values = append(values, value)
-			break
-		}
-	}
-
-	s.writeJSON(w, http.StatusOK, sqlColumnValuesResponse{
-		Status: "ok",
-		Values: values,
-	})
-}
-
-func (s *webServer) handleGetSQLDatabases(w http.ResponseWriter, r *http.Request) {
-	connectionName := strings.TrimSpace(r.URL.Query().Get("connection"))
-	if connectionName == "" {
-		webapi.WriteBadRequest(w, "connection_required", "connection query parameter is required")
-		return
-	}
-
-	environment := strings.TrimSpace(r.URL.Query().Get("environment"))
-	manager, err := s.newConnectionManager(r.Context(), environment)
-	if err != nil {
-		webapi.WriteInternalError(w, "connection_manager_failed", err.Error())
-		return
-	}
-
-	conn := manager.GetConnection(connectionName)
-	if conn == nil {
-		webapi.WriteBadRequest(w, "connection_not_found", fmt.Sprintf("connection '%s' not found", connectionName))
-		return
-	}
-
-	connType := strings.TrimSpace(manager.GetConnectionType(connectionName))
-	fetcher, ok := conn.(interface {
-		GetDatabases(ctx context.Context) ([]string, error)
-	})
-	if !ok {
-		webapi.WriteBadRequest(w, "connection_type_not_supported", fmt.Sprintf("connection '%s' does not support database discovery", connectionName))
-		return
-	}
-
-	databases, err := fetcher.GetDatabases(r.Context())
-	if err != nil {
-		webapi.WriteBadRequest(w, "sql_database_discovery_failed", err.Error())
-		return
-	}
-
-	sort.Strings(databases)
-	s.writeJSON(w, http.StatusOK, sqlDiscoveryDatabaseResponse{
-		Status:         "ok",
-		ConnectionName: connectionName,
-		ConnectionType: connType,
-		Databases:      databases,
-	})
-}
-
-func (s *webServer) handleGetSQLTables(w http.ResponseWriter, r *http.Request) {
-	connectionName := strings.TrimSpace(r.URL.Query().Get("connection"))
-	if connectionName == "" {
-		webapi.WriteBadRequest(w, "connection_required", "connection query parameter is required")
-		return
-	}
-
-	databaseName := strings.TrimSpace(r.URL.Query().Get("database"))
-	if databaseName == "" {
-		webapi.WriteBadRequest(w, "database_required", "database query parameter is required")
-		return
-	}
-
-	environment := strings.TrimSpace(r.URL.Query().Get("environment"))
-	manager, err := s.newConnectionManager(r.Context(), environment)
-	if err != nil {
-		webapi.WriteInternalError(w, "connection_manager_failed", err.Error())
-		return
-	}
-
-	conn := manager.GetConnection(connectionName)
-	if conn == nil {
-		webapi.WriteBadRequest(w, "connection_not_found", fmt.Sprintf("connection '%s' not found", connectionName))
-		return
-	}
-
-	connType := strings.TrimSpace(manager.GetConnectionType(connectionName))
-	tables := make([]sqlDiscoveryTableItem, 0)
-
-	if fetcherWithSchemas, ok := conn.(interface {
-		GetTablesWithSchemas(ctx context.Context, databaseName string) (map[string][]string, error)
-	}); ok {
-		items, err := fetcherWithSchemas.GetTablesWithSchemas(r.Context(), databaseName)
-		if err != nil {
-			webapi.WriteBadRequest(w, "sql_table_discovery_failed", err.Error())
-			return
-		}
-
-		tables = buildSQLDiscoveryTableItems(databaseName, items)
-	} else if fetcher, ok := conn.(interface {
-		GetTables(ctx context.Context, databaseName string) ([]string, error)
-	}); ok {
-		items, err := fetcher.GetTables(r.Context(), databaseName)
-		if err != nil {
-			webapi.WriteBadRequest(w, "sql_table_discovery_failed", err.Error())
-			return
-		}
-
-		tables = buildSQLDiscoveryTableItemsWithoutSchemas(databaseName, items)
-	} else {
-		webapi.WriteBadRequest(w, "connection_type_not_supported", fmt.Sprintf("connection '%s' does not support table discovery", connectionName))
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, sqlDiscoveryTablesResponse{
-		Status:         "ok",
-		ConnectionName: connectionName,
-		ConnectionType: connType,
-		Database:       databaseName,
-		Tables:         tables,
-	})
-}
-
-func (s *webServer) handleGetSQLTableColumns(w http.ResponseWriter, r *http.Request) {
-	connectionName := strings.TrimSpace(r.URL.Query().Get("connection"))
-	if connectionName == "" {
-		webapi.WriteBadRequest(w, "connection_required", "connection query parameter is required")
-		return
-	}
-
-	tableName := strings.TrimSpace(r.URL.Query().Get("table"))
-	if tableName == "" {
-		webapi.WriteBadRequest(w, "table_required", "table query parameter is required")
-		return
-	}
-
-	environment := strings.TrimSpace(r.URL.Query().Get("environment"))
-	query := fmt.Sprintf("select * from %s limit 1", quoteQualifiedIdentifier(tableName))
-	cmdArgs := buildRemoteTableColumnsCommand(connectionName, query, environment)
-	output, err := s.runner.Run(r.Context(), cmdArgs)
-	if err != nil {
-		s.writeJSON(w, http.StatusBadRequest, sqlDiscoveryTableColumnsResponse{
-			Status:         "error",
-			ConnectionName: connectionName,
-			Table:          tableName,
-			Columns:        []webColumn{},
-			RawOutput:      string(output),
-			Command:        cmdArgs,
-			Error:          err.Error(),
-		})
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, sqlDiscoveryTableColumnsResponse{
-		Status:         "ok",
-		ConnectionName: connectionName,
-		Table:          tableName,
-		Columns:        inferWebColumnsFromQueryOutput(output),
-		RawOutput:      string(output),
-		Command:        cmdArgs,
-	})
-}
-
 type runRequest struct {
 	Command    string   `json:"command"`
 	PipelineID string   `json:"pipeline_id"`
@@ -2432,6 +1281,11 @@ func resolvePipelineRunTarget(pipelineID string) (string, error) {
 	}
 
 	return filepath.ToSlash(cleaned), nil
+}
+
+func (s *webServer) ResolvePipelineRunTarget(pipelineID string) error {
+	_, err := resolvePipelineRunTarget(pipelineID)
+	return err
 }
 
 func (s *webServer) newConnectionManager(ctx context.Context, environment string) (config.ConnectionAndDetailsGetter, error) {
@@ -2508,58 +1362,21 @@ func buildSchemaTableSuggestionItems(tables map[string][]string, prefix string) 
 }
 
 func buildSQLDiscoveryTableItems(databaseName string, tables map[string][]string) []sqlDiscoveryTableItem {
-	items := make([]sqlDiscoveryTableItem, 0)
-	schemas := make([]string, 0, len(tables))
-	for schema := range tables {
-		schemas = append(schemas, schema)
+	items := service.BuildSQLDiscoveryTableItems(databaseName, tables)
+	result := make([]sqlDiscoveryTableItem, 0, len(items))
+	for _, item := range items {
+		result = append(result, sqlDiscoveryTableItem(item))
 	}
-	sort.Strings(schemas)
-
-	for _, schema := range schemas {
-		schemaTables := append([]string{}, tables[schema]...)
-		sort.Strings(schemaTables)
-		for _, table := range schemaTables {
-			items = append(items, sqlDiscoveryTableItem{
-				Name:         fmt.Sprintf("%s.%s.%s", databaseName, schema, table),
-				ShortName:    table,
-				SchemaName:   schema,
-				DatabaseName: databaseName,
-			})
-		}
-	}
-
-	return items
+	return result
 }
 
 func buildSQLDiscoveryTableItemsWithoutSchemas(databaseName string, tables []string) []sqlDiscoveryTableItem {
-	items := make([]sqlDiscoveryTableItem, 0, len(tables))
-	sortedTables := append([]string{}, tables...)
-	sort.Strings(sortedTables)
-
-	for _, table := range sortedTables {
-		trimmed := strings.TrimSpace(table)
-		if trimmed == "" {
-			continue
-		}
-
-		shortName := trimmed
-		if dotIndex := strings.LastIndex(trimmed, "."); dotIndex >= 0 && dotIndex < len(trimmed)-1 {
-			shortName = trimmed[dotIndex+1:]
-		}
-
-		name := trimmed
-		if !strings.Contains(trimmed, ".") {
-			name = fmt.Sprintf("%s.%s", databaseName, trimmed)
-		}
-
-		items = append(items, sqlDiscoveryTableItem{
-			Name:         name,
-			ShortName:    shortName,
-			DatabaseName: databaseName,
-		})
+	items := service.BuildSQLDiscoveryTableItemsWithoutSchemas(databaseName, tables)
+	result := make([]sqlDiscoveryTableItem, 0, len(items))
+	for _, item := range items {
+		result = append(result, sqlDiscoveryTableItem(item))
 	}
-
-	return items
+	return result
 }
 
 func buildDuckDBSuggestionItems(
@@ -2942,80 +1759,8 @@ func limitSuggestionItems(items []ingestrSuggestionItem, max int) []ingestrSugge
 	return items[:max]
 }
 
-func (s *webServer) handleMaterializePipelineStream(w http.ResponseWriter, r *http.Request) {
-	pipelineID := chi.URLParam(r, "id")
-	if strings.TrimSpace(pipelineID) == "" {
-		webapi.WriteBadRequest(w, "invalid_pipeline_id", "invalid pipeline id")
-		return
-	}
-
-	target, err := resolvePipelineRunTarget(pipelineID)
-	if err != nil {
-		webapi.WriteBadRequest(w, "invalid_pipeline_id", "invalid pipeline id")
-		return
-	}
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		webapi.WriteInternalError(w, "streaming_unsupported", "streaming unsupported")
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-
-	cmdArgs := []string{"run", target}
-	_ = writeSSEJSON(w, flusher, "start", map[string]any{
-		"command": cmdArgs,
-	})
-
-	output, runErr := s.runner.Stream(r.Context(), cmdArgs, func(chunk []byte) {
-		_ = writeSSEJSON(w, flusher, "output", map[string]any{
-			"chunk": string(chunk),
-		})
-	})
-
-	changedAssetIDs := make([]string, 0)
-	var materializedAt *time.Time
-	if runErr == nil {
-		now := time.Now().UTC()
-		materializedAt = &now
-		state := s.currentState()
-		for _, currentPipeline := range state.Pipelines {
-			if currentPipeline.ID != pipelineID {
-				continue
-			}
-
-			for _, asset := range currentPipeline.Assets {
-				changedAssetIDs = append(changedAssetIDs, asset.ID)
-				if strings.TrimSpace(asset.Name) != "" {
-					s.freshness.RecordMaterialization(asset.Name, now, "succeeded")
-				}
-			}
-			break
-		}
-	}
-
-	status := "ok"
-	errorMessage := ""
-	exitCode := 0
-	if runErr != nil {
-		status = "error"
-		errorMessage = runErr.Error()
-		exitCode = 1
-	}
-
-	_ = writeSSEJSON(w, flusher, "done", map[string]any{
-		"status":            status,
-		"command":           cmdArgs,
-		"output":            string(output),
-		"error":             errorMessage,
-		"exit_code":         exitCode,
-		"changed_asset_ids": changedAssetIDs,
-		"materialized_at":   materializedAt,
-	})
+func (s *webServer) MaterializePipelineStream(ctx context.Context, pipelineID string, onChunk func([]byte)) executionMaterializeEvent {
+	return executionMaterializeEvent(s.executionSvc.MaterializePipelineStream(ctx, pipelineID, onChunk))
 }
 
 func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
@@ -3650,40 +2395,11 @@ func defaultAssetContent(assetName, assetType, assetPath string) string {
 }
 
 func defaultDerivedSQLAssetContent(assetName, assetType, assetPath, sourceAssetName, connectionName string) string {
-	if !strings.HasSuffix(strings.ToLower(assetPath), ".sql") {
-		return defaultAssetContent(assetName, assetType, assetPath)
-	}
-
-	connectionSection := ""
-	if strings.TrimSpace(connectionName) != "" {
-		connectionSection = fmt.Sprintf("connection: %s\n", connectionName)
-	}
-
-	return fmt.Sprintf(
-		"/* @bruin\n\nname: %s\ntype: %s\n%sdepends:\n  - %s\nmaterialization:\n  type: view\n\n@bruin */\n\nselect *\nfrom %s\n",
-		assetName,
-		assetType,
-		connectionSection,
-		sourceAssetName,
-		quoteQualifiedIdentifier(sourceAssetName),
-	)
+	return service.DefaultDerivedSQLAssetContent(assetName, assetType, assetPath, sourceAssetName, connectionName)
 }
 
 func ensurePythonRequirementsFile(absAssetPath, assetType, relAssetPath string) error {
-	lowerType := strings.ToLower(strings.TrimSpace(assetType))
-	lowerPath := strings.ToLower(strings.TrimSpace(relAssetPath))
-	if !strings.Contains(lowerType, "python") && !strings.HasSuffix(lowerPath, ".py") {
-		return nil
-	}
-
-	requirementsPath := filepath.Join(filepath.Dir(absAssetPath), "requirements.txt")
-	if _, err := os.Stat(requirementsPath); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	return os.WriteFile(requirementsPath, []byte("pandas===3.0.1\n"), 0o644)
+	return service.EnsurePythonRequirementsFile(absAssetPath, assetType, relAssetPath)
 }
 
 func splitBruinHeader(content string) (header string, separator string, body string, found bool) {
@@ -3706,468 +2422,24 @@ func decodeID(value string) (string, error) {
 	return service.DecodeID(value)
 }
 
-func parseQueryJSONOutput(output []byte) ([]string, []map[string]any) {
-	rows := make([]map[string]any, 0)
-
-	var asRows []map[string]any
-	if err := json.Unmarshal(output, &asRows); err == nil {
-		rows = asRows
-		return inferColumns(rows), rows
-	}
-
-	var asEnvelope map[string]any
-	if err := json.Unmarshal(output, &asEnvelope); err == nil {
-		columns := extractColumnNames(asEnvelope["columns"])
-
-		if v, ok := asEnvelope["rows"]; ok {
-			if parsedRows := castRows(v); len(parsedRows) > 0 {
-				rows = parsedRows
-			} else if parsedRowsByColumns := castRowsByColumns(v, columns); len(parsedRowsByColumns) > 0 {
-				rows = parsedRowsByColumns
-			}
-		}
-		if len(rows) == 0 {
-			if v, ok := asEnvelope["data"]; ok {
-				if parsedRows := castRows(v); len(parsedRows) > 0 {
-					rows = parsedRows
-				} else {
-					rows = castRowsByColumns(v, columns)
-				}
-			}
-		}
-
-		if len(columns) == 0 {
-			columns = inferColumns(rows)
-		}
-
-		return columns, rows
-	}
-
-	return []string{}, rows
-}
-
-func (s *webServer) inspectPipelineMaterializations(ctx context.Context, parsed *pipeline.Pipeline) map[string]pipelineMaterializationInfo {
-	result := make(map[string]pipelineMaterializationInfo)
-
-	assetsByConnection := make(map[string][]*pipeline.Asset)
-	for _, asset := range parsed.Assets {
-		conn, err := parsed.GetConnectionNameForAsset(asset)
-		if err != nil || conn == "" {
-			continue
-		}
-		assetsByConnection[conn] = append(assetsByConnection[conn], asset)
-	}
-
-	for connName, assets := range assetsByConnection {
-		objects, err := s.fetchObjectsForConnection(ctx, connName)
-		if err != nil || len(objects) == 0 {
-			for _, asset := range assets {
-				key := materializationAssetKey(asset.Name, connName)
-				result[key] = pipelineMaterializationInfo{
-					AssetName:       asset.Name,
-					Connection:      connName,
-					DeclaredMatType: string(asset.Materialization.Type),
-				}
-			}
-			continue
-		}
-
-		wanted := make(map[string]struct{})
-		for _, asset := range assets {
-			wanted[normalizeIdentifier(asset.Name)] = struct{}{}
-			parts := strings.Split(normalizeIdentifier(asset.Name), ".")
-			if len(parts) > 1 {
-				wanted[parts[len(parts)-1]] = struct{}{}
-			}
-		}
-
-		candidateObjects := make([]dbObjectInfo, 0)
-		for _, object := range objects {
-			if _, ok := wanted[normalizeIdentifier(object.QualifiedName)]; ok {
-				candidateObjects = append(candidateObjects, object)
-				continue
-			}
-			if _, ok := wanted[normalizeIdentifier(object.Name)]; ok {
-				candidateObjects = append(candidateObjects, object)
-			}
-		}
-
-		tableObjects := make([]dbObjectInfo, 0, len(candidateObjects))
-		for _, object := range candidateObjects {
-			if object.Kind == "table" {
-				tableObjects = append(tableObjects, object)
-			}
-		}
-
-		rowCounts := s.fetchRowCountsForObjects(ctx, connName, tableObjects)
-
-		objectsByName := make(map[string]dbObjectInfo)
-		for _, object := range objects {
-			objectsByName[normalizeIdentifier(object.QualifiedName)] = object
-			objectsByName[normalizeIdentifier(object.Name)] = object
-		}
-
-		for _, asset := range assets {
-			normalized := normalizeIdentifier(asset.Name)
-			object, ok := objectsByName[normalized]
-			if !ok {
-				parts := strings.Split(normalized, ".")
-				if len(parts) > 1 {
-					object, ok = objectsByName[parts[len(parts)-1]]
-				}
-			}
-
-			key := materializationAssetKey(asset.Name, connName)
-			item := pipelineMaterializationInfo{
-				AssetName:       asset.Name,
-				Connection:      connName,
-				DeclaredMatType: string(asset.Materialization.Type),
-			}
-
-			if ok {
-				item.IsMaterialized = true
-				item.MaterializedAs = object.Kind
-
-				if count, hasCount := rowCounts[normalizeIdentifier(object.QualifiedName)]; hasCount {
-					c := count
-					item.RowCount = &c
-				} else if count, hasCount := rowCounts[normalizeIdentifier(object.Name)]; hasCount {
-					c := count
-					item.RowCount = &c
-				}
-			}
-
-			result[key] = item
-		}
-	}
-
-	return result
-}
-
-func computePipelineFreshness(
-	parsed *pipeline.Pipeline,
-	matInfo map[string]pipelineMaterializationInfo,
-	tracker map[string]freshness.AssetTimestamps,
-) map[string]string {
-	result := make(map[string]string, len(parsed.Assets))
-	assetsByName := make(map[string]*pipeline.Asset, len(parsed.Assets))
-	for _, asset := range parsed.Assets {
-		assetsByName[asset.Name] = asset
-	}
-
-	type visitState int
-	const (
-		visitUnknown visitState = iota
-		visitActive
-		visitDone
-	)
-
-	type freshnessEval struct {
-		Fresh           bool
-		EffectiveUpdate *time.Time
-	}
-
-	state := make(map[string]visitState, len(parsed.Assets))
-	evals := make(map[string]freshnessEval, len(parsed.Assets))
-
-	var evalAsset func(assetName string) freshnessEval
-	evalAsset = func(assetName string) freshnessEval {
-		if state[assetName] == visitDone {
-			return evals[assetName]
-		}
-		if state[assetName] == visitActive {
-			return freshnessEval{Fresh: false}
-		}
-
-		asset, ok := assetsByName[assetName]
-		if !ok {
-			return freshnessEval{Fresh: false}
-		}
-
-		state[assetName] = visitActive
-		defer func() {
-			state[assetName] = visitDone
-		}()
-
-		kind := "table"
-		connectionName := ""
-		if conn, err := parsed.GetConnectionNameForAsset(asset); err == nil {
-			connectionName = conn
-		}
-		if info, ok := matInfo[materializationAssetKey(asset.Name, connectionName)]; ok {
-			if strings.EqualFold(strings.TrimSpace(info.MaterializedAs), "view") {
-				kind = "view"
-			}
-		}
-		if strings.EqualFold(strings.TrimSpace(string(asset.Materialization.Type)), "view") {
-			kind = "view"
-		}
-
-		trackerEntry, hasTracker := tracker[assetName]
-		var materializedAt *time.Time
-		if hasTracker && trackerEntry.MaterializedAt != nil {
-			ts := trackerEntry.MaterializedAt.UTC()
-			materializedAt = &ts
-		}
-
-		upstreamEvals := make([]freshnessEval, 0, len(asset.Upstreams))
-		for _, up := range asset.Upstreams {
-			upstreamEvals = append(upstreamEvals, evalAsset(up.Value))
-		}
-
-		if kind == "view" {
-			if len(upstreamEvals) == 0 {
-				fresh := materializedAt != nil
-				e := freshnessEval{Fresh: fresh, EffectiveUpdate: materializedAt}
-				evals[assetName] = e
-				return e
-			}
-
-			fresh := true
-			var latest *time.Time
-			for _, up := range upstreamEvals {
-				if !up.Fresh {
-					fresh = false
-				}
-				latest = maxTimePtr(latest, up.EffectiveUpdate)
-			}
-
-			e := freshnessEval{Fresh: fresh, EffectiveUpdate: latest}
-			evals[assetName] = e
-			return e
-		}
-
-		if materializedAt == nil {
-			e := freshnessEval{Fresh: false, EffectiveUpdate: nil}
-			evals[assetName] = e
-			return e
-		}
-
-		fresh := true
-		for _, up := range upstreamEvals {
-			if !up.Fresh {
-				fresh = false
-				continue
-			}
-			if up.EffectiveUpdate != nil && up.EffectiveUpdate.After(*materializedAt) {
-				fresh = false
-			}
-		}
-
-		e := freshnessEval{Fresh: fresh, EffectiveUpdate: materializedAt}
-		evals[assetName] = e
-		return e
-	}
-
-	for _, asset := range parsed.Assets {
-		e := evalAsset(asset.Name)
-		if e.Fresh {
-			result[asset.Name] = "fresh"
-		} else {
-			result[asset.Name] = "stale"
-		}
-	}
-
-	return result
-}
-
-func maxTimePtr(a, b *time.Time) *time.Time {
-	if a == nil {
-		return b
-	}
-	if b == nil {
-		return a
-	}
-	if b.After(*a) {
-		return b
-	}
-	return a
-}
-
-type dbObjectInfo struct {
-	Schema        string
-	Name          string
-	QualifiedName string
-	Kind          string
-}
-
-func (s *webServer) fetchObjectsForConnection(ctx context.Context, connectionName string) ([]dbObjectInfo, error) {
-	queries := []string{
-		`SELECT table_schema, table_name, table_type FROM information_schema.tables`,
-		`SHOW TABLES`,
-	}
-
-	var rows []map[string]any
-	var lastErr error
-	for _, query := range queries {
-		_, qRows, err := s.runConnectionQuery(ctx, connectionName, query)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		rows = qRows
-		break
-	}
-
-	if len(rows) == 0 {
-		return []dbObjectInfo{}, lastErr
-	}
-
-	objects := make([]dbObjectInfo, 0, len(rows))
-	for _, row := range rows {
-		name := readStringField(row, "table_name", "name", "table")
-		if name == "" {
-			continue
-		}
-
-		schema := readStringField(row, "table_schema", "schema", "database")
-		qualifiedName := name
-		if schema != "" {
-			qualifiedName = schema + "." + name
-		}
-
-		kind := strings.ToLower(readStringField(row, "table_type", "type"))
-		if strings.Contains(kind, "view") {
-			kind = "view"
-		} else if kind != "" {
-			kind = "table"
-		} else {
-			kind = "table"
-		}
-
-		objects = append(objects, dbObjectInfo{
-			Schema:        schema,
-			Name:          name,
-			QualifiedName: qualifiedName,
-			Kind:          kind,
-		})
-	}
-
-	return objects, nil
-}
-
-func (s *webServer) fetchRowCountsForObjects(ctx context.Context, connectionName string, objects []dbObjectInfo) map[string]int64 {
-	result := make(map[string]int64)
-	if len(objects) == 0 {
-		return result
-	}
-
-	queries := make([]string, 0, len(objects))
-	for _, object := range objects {
-		queries = append(queries, fmt.Sprintf(
-			"SELECT '%s' AS object_name, COUNT(*) AS row_count FROM %s",
-			escapeSQLLiteral(object.QualifiedName),
-			quoteQualifiedIdentifier(object.QualifiedName),
-		))
-	}
-
-	countQuery := strings.Join(queries, " UNION ALL ")
-	_, rows, err := s.runConnectionQuery(ctx, connectionName, countQuery)
-	if err != nil {
-		return result
-	}
-
-	for _, row := range rows {
-		objName := readStringField(row, "object_name")
-		if objName == "" {
-			continue
-		}
-
-		if count, ok := readInt64Field(row, "row_count"); ok {
-			result[normalizeIdentifier(objName)] = count
-			parts := strings.Split(normalizeIdentifier(objName), ".")
-			if len(parts) > 1 {
-				result[parts[len(parts)-1]] = count
-			}
-		}
-	}
-
-	return result
-}
-
-func (s *webServer) runConnectionQuery(ctx context.Context, connectionName, query string) ([]string, []map[string]any, error) {
-	return s.runConnectionQueryForEnvironment(ctx, connectionName, "", query)
-}
-
 func (s *webServer) runConnectionQueryForEnvironment(ctx context.Context, connectionName, environment, query string) ([]string, []map[string]any, error) {
-	cmdArgs := []string{"query", "--connection", connectionName, "--query", query, "--output", "json"}
-	if strings.TrimSpace(environment) != "" {
-		cmdArgs = append(cmdArgs, "--environment", environment)
-	}
-	output, err := s.runner.Run(ctx, cmdArgs)
-	if err != nil {
-		return nil, nil, fmt.Errorf("query failed for connection '%s': %w", connectionName, err)
-	}
-
-	columns, rows := parseQueryJSONOutput(output)
-	return columns, rows, nil
+	return s.executionSvc.RunConnectionQueryForEnvironment(ctx, connectionName, environment, query)
 }
 
-func materializationAssetKey(assetName, connectionName string) string {
-	return normalizeIdentifier(assetName) + "|" + normalizeIdentifier(connectionName)
+func (s *webServer) ColumnValues(ctx context.Context, connectionName, environment, query string) service.SQLColumnValuesResult {
+	return s.sqlSvc.ColumnValues(ctx, connectionName, environment, query)
 }
 
-func normalizeIdentifier(value string) string {
-	replacer := strings.NewReplacer("`", "", `"`, "", "[", "", "]", "")
-	clean := replacer.Replace(strings.TrimSpace(value))
-	return strings.ToLower(clean)
+func (s *webServer) Databases(ctx context.Context, connectionName, environment string) (service.SQLDatabaseDiscoveryResult, *service.SQLAPIError) {
+	return s.sqlSvc.Databases(ctx, connectionName, environment)
 }
 
-func quoteQualifiedIdentifier(value string) string {
-	parts := strings.Split(value, ".")
-	quoted := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(strings.Trim(part, "`\"[]"))
-		quoted = append(quoted, `"`+strings.ReplaceAll(trimmed, `"`, `""`)+`"`)
-	}
-	return strings.Join(quoted, ".")
+func (s *webServer) Tables(ctx context.Context, connectionName, databaseName, environment string) (service.SQLTableDiscoveryResult, *service.SQLAPIError) {
+	return s.sqlSvc.Tables(ctx, connectionName, databaseName, environment)
 }
 
-func escapeSQLLiteral(value string) string {
-	return strings.ReplaceAll(value, "'", "''")
-}
-
-func readStringField(row map[string]any, keys ...string) string {
-	for _, key := range keys {
-		for rowKey, value := range row {
-			if strings.EqualFold(rowKey, key) {
-				s, ok := value.(string)
-				if ok {
-					return s
-				}
-			}
-		}
-	}
-	return ""
-}
-
-func readInt64Field(row map[string]any, key string) (int64, bool) {
-	for rowKey, value := range row {
-		if !strings.EqualFold(rowKey, key) {
-			continue
-		}
-
-		switch v := value.(type) {
-		case int:
-			return int64(v), true
-		case int64:
-			return v, true
-		case float64:
-			return int64(v), true
-		case string:
-			trimmed := strings.TrimSpace(v)
-			if trimmed == "" {
-				return 0, false
-			}
-			var parsed int64
-			_, err := fmt.Sscan(trimmed, &parsed)
-			if err == nil {
-				return parsed, true
-			}
-		}
-	}
-
-	return 0, false
+func (s *webServer) TableColumns(ctx context.Context, connectionName, tableName, environment string) (service.SQLTableColumnsResult, int) {
+	return s.sqlSvc.TableColumns(ctx, connectionName, tableName, environment)
 }
 
 func extractColumnNames(value any) []string {
@@ -4264,39 +2536,11 @@ func inferColumns(rows []map[string]any) []string {
 }
 
 func inferWebColumnsFromQueryOutput(output []byte) []webColumn {
-	var envelope map[string]any
-	if err := json.Unmarshal(output, &envelope); err != nil {
-		return []webColumn{}
+	columns := service.InferSQLColumnsFromQueryOutput(output)
+	result := make([]webColumn, 0, len(columns))
+	for _, column := range columns {
+		result = append(result, webColumn{Name: column.Name, Type: column.Type})
 	}
-
-	rawColumns, ok := envelope["columns"].([]any)
-	if !ok {
-		return []webColumn{}
-	}
-
-	result := make([]webColumn, 0, len(rawColumns))
-	for _, raw := range rawColumns {
-		if name, ok := raw.(string); ok {
-			result = append(result, webColumn{Name: name})
-			continue
-		}
-
-		mapped, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		name := readStringField(mapped, "name")
-		if name == "" {
-			continue
-		}
-
-		result = append(result, webColumn{
-			Name: name,
-			Type: readStringField(mapped, "type"),
-		})
-	}
-
 	return result
 }
 

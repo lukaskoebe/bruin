@@ -2,7 +2,49 @@
 
 ## Purpose
 
-This document analyzes the current Go backend architecture for Bruin Web, focused on `cmd/web.go` and `internal/web`, and proposes an idiomatic, state-of-the-art refactoring direction. It is intentionally a design and architecture report only. It does not propose code changes in this document beyond package and responsibility boundaries, migration steps, and engineering priorities.
+This document started as an architecture analysis for `cmd/web.go` and `internal/web`, and now also tracks the concrete refactor progress. It still describes the target architecture and migration priorities, but it additionally records what has already been moved out of `cmd/web.go` and what remains.
+
+## Progress Snapshot
+
+The refactor is active and materially underway. `cmd/web.go` is still the composition root and still contains some transport DTOs and Bruin Web-specific HTTP handlers, but a substantial amount of backend behavior has already moved into canonical `internal/web` packages.
+
+Completed extractions so far:
+
+- workspace refresh and asset resolution now go through `internal/web/service/workspace.go`
+- config and settings endpoints now use `internal/web/service/config.go` and `internal/web/httpapi/config.go`
+- workspace and event endpoints now use `internal/web/httpapi/workspace.go`
+- pipeline CRUD now uses `internal/web/service/pipeline.go` and `internal/web/httpapi/pipeline.go`
+- execution transport now uses `internal/web/httpapi/execution.go`
+- asset CRUD and SQL format flows now use `internal/web/service/asset.go` and `internal/web/httpapi/assets.go`
+- pipeline execution and materialization endpoints now use `internal/web/httpapi/pipeline_execution.go`
+- asset column management now uses `internal/web/service/asset_columns.go` and `internal/web/httpapi/asset_columns.go`
+- execution business logic now lives in `internal/web/service/execution.go`
+- asset rename dependency refactor and deferred SQL patch scheduling now live in `internal/web/service/asset.go`
+- materialization inspection, freshness evaluation, query JSON parsing, and connection-query helpers now live in `internal/web/service/execution.go`
+- SQL database discovery, table discovery, table-column introspection, and column-values execution now use `internal/web/service/sql.go` and `internal/web/httpapi/sql.go`
+
+Current canonical ownership:
+
+- HTTP transport: `internal/web/httpapi`
+- workspace/config/pipeline/asset/execution services: `internal/web/service`
+- SSE hub: `internal/web/events`
+- freshness tracking: `internal/web/freshness`
+- static asset serving: `internal/web/static`
+- file watching: `internal/web/watch`
+
+What still remains in `cmd/web.go`:
+
+- process bootstrap and dependency wiring
+- route registration and adapter methods used by `internal/web/httpapi`
+- several Bruin Web request/response DTOs that have not yet been made canonical elsewhere
+- SQL suggestions, SQL parse-context, and run endpoints
+- workspace snapshot storage and publish/suppression coordination owned by `webServer`
+
+Verification status for the refactor batches to date:
+
+- targeted backend tests have been kept green
+- `go test ./internal/web/...` has been kept green
+- live Playwright E2E has been used as the main regression check after each substantial batch
 
 ## Executive Summary
 

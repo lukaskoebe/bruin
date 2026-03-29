@@ -194,6 +194,11 @@ func EscapeSQLLiteral(value string) string {
 	return strings.ReplaceAll(value, "'", "''")
 }
 
+// SlugUnderscore creates a filesystem-friendly underscore slug.
+func SlugUnderscore(input string) string {
+	return strings.ReplaceAll(Slug(strings.ReplaceAll(input, ".", " ")), "-", "_")
+}
+
 // MaterializationAssetKey creates a unique key for materialization lookup.
 func MaterializationAssetKey(assetName, connectionName string) string {
 	return NormalizeIdentifier(assetName) + "|" + NormalizeIdentifier(connectionName)

@@ -1,0 +1,282 @@
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sort"
+	"strings"
+
+	"github.com/bruin-data/bruin/pkg/config"
+)
+
+type SQLAPIError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+type SQLColumnValuesResult struct {
+	Status string
+	Values []any
+	Error  string
+}
+
+type SQLDatabaseDiscoveryResult struct {
+	Status         string
+	ConnectionName string
+	ConnectionType string
+	Databases      []string
+	Error          string
+}
+
+type SQLDiscoveryTableItem struct {
+	Name         string `json:"name"`
+	ShortName    string `json:"short_name"`
+	SchemaName   string `json:"schema_name,omitempty"`
+	DatabaseName string `json:"database_name,omitempty"`
+}
+
+type SQLTableDiscoveryResult struct {
+	Status         string
+	ConnectionName string
+	ConnectionType string
+	Database       string
+	Tables         []SQLDiscoveryTableItem
+	Error          string
+}
+
+type SQLColumn struct {
+	Name string `json:"name"`
+	Type string `json:"type,omitempty"`
+}
+
+type SQLTableColumnsResult struct {
+	Status         string
+	ConnectionName string
+	Table          string
+	Columns        []SQLColumn
+	RawOutput      string
+	Command        []string
+	Error          string
+}
+
+type SQLDependencies struct {
+	Runner               Runner
+	NewConnectionManager func(context.Context, string) (config.ConnectionAndDetailsGetter, error)
+	RunConnectionQuery   func(context.Context, string, string, string) ([]string, []map[string]any, error)
+}
+
+type SQLService struct {
+	deps SQLDependencies
+}
+
+func NewSQLService(deps SQLDependencies) *SQLService {
+	return &SQLService{deps: deps}
+}
+
+func (s *SQLService) ColumnValues(ctx context.Context, connectionName, environment, query string) SQLColumnValuesResult {
+	_, rows, err := s.deps.RunConnectionQuery(ctx, connectionName, environment, query)
+	if err != nil {
+		return SQLColumnValuesResult{Status: "error", Values: []any{}, Error: err.Error()}
+	}
+
+	values := make([]any, 0, len(rows))
+	for _, row := range rows {
+		for _, value := range row {
+			values = append(values, value)
+			break
+		}
+	}
+
+	return SQLColumnValuesResult{Status: "ok", Values: values}
+}
+
+func (s *SQLService) Databases(ctx context.Context, connectionName, environment string) (SQLDatabaseDiscoveryResult, *SQLAPIError) {
+	manager, err := s.deps.NewConnectionManager(ctx, environment)
+	if err != nil {
+		return SQLDatabaseDiscoveryResult{}, &SQLAPIError{Status: http.StatusInternalServerError, Code: "connection_manager_failed", Message: err.Error()}
+	}
+
+	conn := manager.GetConnection(connectionName)
+	if conn == nil {
+		return SQLDatabaseDiscoveryResult{}, &SQLAPIError{Status: http.StatusBadRequest, Code: "connection_not_found", Message: fmt.Sprintf("connection '%s' not found", connectionName)}
+	}
+
+	fetcher, ok := conn.(interface {
+		GetDatabases(ctx context.Context) ([]string, error)
+	})
+	if !ok {
+		return SQLDatabaseDiscoveryResult{}, &SQLAPIError{Status: http.StatusBadRequest, Code: "connection_type_not_supported", Message: fmt.Sprintf("connection '%s' does not support database discovery", connectionName)}
+	}
+
+	databases, err := fetcher.GetDatabases(ctx)
+	if err != nil {
+		return SQLDatabaseDiscoveryResult{}, &SQLAPIError{Status: http.StatusBadRequest, Code: "sql_database_discovery_failed", Message: err.Error()}
+	}
+
+	sort.Strings(databases)
+	return SQLDatabaseDiscoveryResult{
+		Status:         "ok",
+		ConnectionName: connectionName,
+		ConnectionType: strings.TrimSpace(manager.GetConnectionType(connectionName)),
+		Databases:      databases,
+	}, nil
+}
+
+func (s *SQLService) Tables(ctx context.Context, connectionName, databaseName, environment string) (SQLTableDiscoveryResult, *SQLAPIError) {
+	manager, err := s.deps.NewConnectionManager(ctx, environment)
+	if err != nil {
+		return SQLTableDiscoveryResult{}, &SQLAPIError{Status: http.StatusInternalServerError, Code: "connection_manager_failed", Message: err.Error()}
+	}
+
+	conn := manager.GetConnection(connectionName)
+	if conn == nil {
+		return SQLTableDiscoveryResult{}, &SQLAPIError{Status: http.StatusBadRequest, Code: "connection_not_found", Message: fmt.Sprintf("connection '%s' not found", connectionName)}
+	}
+
+	tables := make([]SQLDiscoveryTableItem, 0)
+	if fetcherWithSchemas, ok := conn.(interface {
+		GetTablesWithSchemas(ctx context.Context, databaseName string) (map[string][]string, error)
+	}); ok {
+		items, err := fetcherWithSchemas.GetTablesWithSchemas(ctx, databaseName)
+		if err != nil {
+			return SQLTableDiscoveryResult{}, &SQLAPIError{Status: http.StatusBadRequest, Code: "sql_table_discovery_failed", Message: err.Error()}
+		}
+		tables = BuildSQLDiscoveryTableItems(databaseName, items)
+	} else if fetcher, ok := conn.(interface {
+		GetTables(ctx context.Context, databaseName string) ([]string, error)
+	}); ok {
+		items, err := fetcher.GetTables(ctx, databaseName)
+		if err != nil {
+			return SQLTableDiscoveryResult{}, &SQLAPIError{Status: http.StatusBadRequest, Code: "sql_table_discovery_failed", Message: err.Error()}
+		}
+		tables = BuildSQLDiscoveryTableItemsWithoutSchemas(databaseName, items)
+	} else {
+		return SQLTableDiscoveryResult{}, &SQLAPIError{Status: http.StatusBadRequest, Code: "connection_type_not_supported", Message: fmt.Sprintf("connection '%s' does not support table discovery", connectionName)}
+	}
+
+	return SQLTableDiscoveryResult{
+		Status:         "ok",
+		ConnectionName: connectionName,
+		ConnectionType: strings.TrimSpace(manager.GetConnectionType(connectionName)),
+		Database:       databaseName,
+		Tables:         tables,
+	}, nil
+}
+
+func (s *SQLService) TableColumns(ctx context.Context, connectionName, tableName, environment string) (SQLTableColumnsResult, int) {
+	query := fmt.Sprintf("select * from %s limit 1", QuoteQualifiedIdentifier(tableName))
+	cmdArgs := BuildRemoteTableColumnsCommand(connectionName, query, environment)
+	output, err := s.deps.Runner.Run(ctx, cmdArgs)
+	if err != nil {
+		return SQLTableColumnsResult{
+			Status:         "error",
+			ConnectionName: connectionName,
+			Table:          tableName,
+			Columns:        []SQLColumn{},
+			RawOutput:      string(output),
+			Command:        cmdArgs,
+			Error:          err.Error(),
+		}, http.StatusBadRequest
+	}
+
+	return SQLTableColumnsResult{
+		Status:         "ok",
+		ConnectionName: connectionName,
+		Table:          tableName,
+		Columns:        InferSQLColumnsFromQueryOutput(output),
+		RawOutput:      string(output),
+		Command:        cmdArgs,
+	}, http.StatusOK
+}
+
+func BuildSQLDiscoveryTableItems(databaseName string, tables map[string][]string) []SQLDiscoveryTableItem {
+	items := make([]SQLDiscoveryTableItem, 0)
+	schemas := make([]string, 0, len(tables))
+	for schema := range tables {
+		schemas = append(schemas, schema)
+	}
+	sort.Strings(schemas)
+
+	for _, schema := range schemas {
+		schemaTables := append([]string{}, tables[schema]...)
+		sort.Strings(schemaTables)
+		for _, table := range schemaTables {
+			items = append(items, SQLDiscoveryTableItem{
+				Name:         fmt.Sprintf("%s.%s.%s", databaseName, schema, table),
+				ShortName:    table,
+				SchemaName:   schema,
+				DatabaseName: databaseName,
+			})
+		}
+	}
+
+	return items
+}
+
+func BuildSQLDiscoveryTableItemsWithoutSchemas(databaseName string, tables []string) []SQLDiscoveryTableItem {
+	items := make([]SQLDiscoveryTableItem, 0, len(tables))
+	sortedTables := append([]string{}, tables...)
+	sort.Strings(sortedTables)
+
+	for _, table := range sortedTables {
+		trimmed := strings.TrimSpace(table)
+		if trimmed == "" {
+			continue
+		}
+
+		shortName := trimmed
+		if dotIndex := strings.LastIndex(trimmed, "."); dotIndex >= 0 && dotIndex < len(trimmed)-1 {
+			shortName = trimmed[dotIndex+1:]
+		}
+
+		name := trimmed
+		if !strings.Contains(trimmed, ".") {
+			name = fmt.Sprintf("%s.%s", databaseName, trimmed)
+		}
+
+		items = append(items, SQLDiscoveryTableItem{
+			Name:         name,
+			ShortName:    shortName,
+			DatabaseName: databaseName,
+		})
+	}
+
+	return items
+}
+
+func InferSQLColumnsFromQueryOutput(output []byte) []SQLColumn {
+	var envelope map[string]any
+	if err := json.Unmarshal(output, &envelope); err != nil {
+		return []SQLColumn{}
+	}
+
+	rawColumns, ok := envelope["columns"].([]any)
+	if !ok {
+		return []SQLColumn{}
+	}
+
+	result := make([]SQLColumn, 0, len(rawColumns))
+	for _, raw := range rawColumns {
+		if name, ok := raw.(string); ok {
+			result = append(result, SQLColumn{Name: name})
+			continue
+		}
+
+		mapped, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		name := ReadStringField(mapped, "name")
+		if name == "" {
+			continue
+		}
+
+		result = append(result, SQLColumn{Name: name, Type: ReadStringField(mapped, "type")})
+	}
+
+	return result
+}
