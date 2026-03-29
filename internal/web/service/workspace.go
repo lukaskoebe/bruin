@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,7 +28,7 @@ var AssetsDirectoryNames = []string{"assets", "tasks"}
 var BuilderConfig = pipeline.BuilderConfig{
 	PipelineFileName:    PipelineDefinitionFiles,
 	TasksDirectoryNames: AssetsDirectoryNames,
-	TasksFileSuffixes:   []string{".sql", ".py", ".yml", ".asset.yaml", ".asset.yml", ".r"},
+	TasksFileSuffixes:   []string{"task.yml", "task.yaml", "asset.yml", "asset.yaml"},
 }
 
 // DefaultGlossaryReader is the default glossary reader.
@@ -39,14 +40,20 @@ var DefaultGlossaryReader = &glossary.GlossaryReader{
 // WorkspaceService manages workspace state and operations.
 type WorkspaceService struct {
 	workspaceRoot string
+	configPath    string
 	stateMu       sync.RWMutex
 	state         model.WorkspaceState
 }
 
 // NewWorkspaceService creates a new workspace service.
-func NewWorkspaceService(workspaceRoot string) *WorkspaceService {
+func NewWorkspaceService(workspaceRoot, configPath string) *WorkspaceService {
+	if strings.TrimSpace(configPath) == "" {
+		configPath = filepath.Join(workspaceRoot, ".bruin.yml")
+	}
+
 	return &WorkspaceService{
 		workspaceRoot: workspaceRoot,
+		configPath:    configPath,
 	}
 }
 
@@ -101,9 +108,8 @@ func (s *WorkspaceService) ComputeState(ctx context.Context) (model.WorkspaceSta
 		Metadata:    map[string][]string{},
 	}
 
-	configPath := filepath.Join(s.workspaceRoot, ".bruin.yml")
-	if _, err := os.Stat(configPath); err == nil {
-		cfg, cfgErr := config.LoadOrCreate(afero.NewOsFs(), configPath)
+	if _, err := os.Stat(s.configPath); err == nil {
+		cfg, cfgErr := config.LoadOrCreate(afero.NewOsFs(), s.configPath)
 		if cfgErr == nil {
 			state.SelectedEnvironment = cfg.SelectedEnvironmentName
 			if cfg.SelectedEnvironment != nil && cfg.SelectedEnvironment.Connections != nil {

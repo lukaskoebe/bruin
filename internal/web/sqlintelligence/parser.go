@@ -3,7 +3,6 @@ package sqlintelligence
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -138,7 +137,7 @@ func ParseContextWithSchema(query, dialect string, schema Schema) (*ParseContext
 		return nil, errors.Wrap(err, "failed to unmarshal parse-context response")
 	}
 	if resp.Error != "" {
-		return nil, fmt.Errorf(resp.Error)
+		return nil, errors.New(resp.Error)
 	}
 
 	return &resp.ParseContext, nil

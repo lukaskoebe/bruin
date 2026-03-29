@@ -2,16 +2,13 @@ package cmd
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +17,8 @@ import (
 	webapi "github.com/bruin-data/bruin/internal/web/api"
 	"github.com/bruin-data/bruin/internal/web/events"
 	"github.com/bruin-data/bruin/internal/web/freshness"
+	webhttpapi "github.com/bruin-data/bruin/internal/web/httpapi"
+	webmodel "github.com/bruin-data/bruin/internal/web/model"
 	"github.com/bruin-data/bruin/internal/web/service"
 	"github.com/bruin-data/bruin/internal/web/sqlintelligence"
 	webstatic "github.com/bruin-data/bruin/internal/web/static"
@@ -28,14 +27,13 @@ import (
 	"github.com/bruin-data/bruin/pkg/connection"
 	"github.com/bruin-data/bruin/pkg/git"
 	"github.com/bruin-data/bruin/pkg/jinja"
-	bruinpath "github.com/bruin-data/bruin/pkg/path"
 	"github.com/bruin-data/bruin/pkg/pipeline"
 	"github.com/bruin-data/bruin/pkg/sqlparser"
 	"github.com/bruin-data/bruin/pkg/telemetry"
+	webui "github.com/bruin-data/bruin/web"
 	"github.com/go-chi/chi/v5"
 	"github.com/spf13/afero"
 	"github.com/urfave/cli/v3"
-	webui "github.com/bruin-data/bruin/web"
 	"gopkg.in/yaml.v3"
 )
 
@@ -206,16 +204,16 @@ type sqlParseContextColumnResponse struct {
 }
 
 type sqlParseContextResponse struct {
-	Status         string                          `json:"status"`
-	AssetID        string                          `json:"asset_id"`
-	Dialect        string                          `json:"dialect,omitempty"`
-	QueryKind      string                          `json:"query_kind,omitempty"`
-	IsSingleSelect bool                            `json:"is_single_select"`
-	Tables         []sqlParseContextTableResponse  `json:"tables"`
-	Columns        []sqlParseContextColumnResponse `json:"columns"`
+	Status         string                              `json:"status"`
+	AssetID        string                              `json:"asset_id"`
+	Dialect        string                              `json:"dialect,omitempty"`
+	QueryKind      string                              `json:"query_kind,omitempty"`
+	IsSingleSelect bool                                `json:"is_single_select"`
+	Tables         []sqlParseContextTableResponse      `json:"tables"`
+	Columns        []sqlParseContextColumnResponse     `json:"columns"`
 	Diagnostics    []sqlParseContextDiagnosticResponse `json:"diagnostics,omitempty"`
-	Errors         []string                        `json:"errors,omitempty"`
-	Error          string                          `json:"error,omitempty"`
+	Errors         []string                            `json:"errors,omitempty"`
+	Error          string                              `json:"error,omitempty"`
 }
 
 type sqlColumnValuesRequest struct {
@@ -253,82 +251,6 @@ func assetTypeToDialect(assetType pipeline.AssetType) (string, error) {
 	return dialect, nil
 }
 
-type workspaceConfigFieldDef struct {
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	DefaultValue string `json:"default_value,omitempty"`
-	IsRequired   bool   `json:"is_required"`
-}
-
-type workspaceConfigConnectionType struct {
-	TypeName string                    `json:"type_name"`
-	Fields   []workspaceConfigFieldDef `json:"fields"`
-}
-
-type workspaceConfigConnection struct {
-	Name   string         `json:"name"`
-	Type   string         `json:"type"`
-	Values map[string]any `json:"values"`
-}
-
-type workspaceConfigEnvironment struct {
-	Name         string                      `json:"name"`
-	SchemaPrefix string                      `json:"schema_prefix,omitempty"`
-	Connections  []workspaceConfigConnection `json:"connections"`
-}
-
-type workspaceConfigResponse struct {
-	Status              string                          `json:"status"`
-	Path                string                          `json:"path"`
-	DefaultEnvironment  string                          `json:"default_environment,omitempty"`
-	SelectedEnvironment string                          `json:"selected_environment,omitempty"`
-	Environments        []workspaceConfigEnvironment    `json:"environments"`
-	ConnectionTypes     []workspaceConfigConnectionType `json:"connection_types"`
-	ParseError          string                          `json:"parse_error,omitempty"`
-}
-
-type createWorkspaceEnvironmentRequest struct {
-	Name         string `json:"name"`
-	SchemaPrefix string `json:"schema_prefix"`
-	SetAsDefault bool   `json:"set_as_default"`
-}
-
-type updateWorkspaceEnvironmentRequest struct {
-	Name         string `json:"name"`
-	NewName      string `json:"new_name"`
-	SchemaPrefix string `json:"schema_prefix"`
-	SetAsDefault bool   `json:"set_as_default"`
-}
-
-type cloneWorkspaceEnvironmentRequest struct {
-	SourceName   string `json:"source_name"`
-	TargetName   string `json:"target_name"`
-	SchemaPrefix string `json:"schema_prefix"`
-	SetAsDefault bool   `json:"set_as_default"`
-}
-
-type deleteWorkspaceEnvironmentRequest struct {
-	Name string `json:"name"`
-}
-
-type upsertWorkspaceConnectionRequest struct {
-	EnvironmentName string         `json:"environment_name"`
-	CurrentName     string         `json:"current_name,omitempty"`
-	Name            string         `json:"name"`
-	Type            string         `json:"type"`
-	Values          map[string]any `json:"values"`
-}
-
-type deleteWorkspaceConnectionRequest struct {
-	EnvironmentName string `json:"environment_name"`
-	Name            string `json:"name"`
-}
-
-type testWorkspaceConnectionRequest struct {
-	EnvironmentName string `json:"environment_name"`
-	Name            string `json:"name"`
-}
-
 type webPipeline struct {
 	ID     string     `json:"id"`
 	Name   string     `json:"name"`
@@ -354,12 +276,16 @@ type workspaceEvent struct {
 	ChangedAssetIDs []string       `json:"changed_asset_ids,omitempty"`
 }
 
+type workspaceConfigFieldDef = service.WorkspaceConfigFieldDef
+
 type webServer struct {
 	workspaceRoot string
 	staticDir     string
 	staticHandler http.Handler
 	watchMode     string
 	watchPoll     time.Duration
+	workspaceSvc  *service.WorkspaceService
+	configSvc     *service.ConfigService
 
 	stateMu  sync.RWMutex
 	state    workspaceState
@@ -381,11 +307,6 @@ type webServer struct {
 	recentServerWritesMu sync.Mutex
 	recentServerWrites   map[string]time.Time
 }
-
-var (
-	sqlBruinHeaderPattern    = regexp.MustCompile(`(?s)\A(\s*/\*\s*@bruin.*?@bruin\s*\*/)(\s*)`)
-	pythonBruinHeaderPattern = regexp.MustCompile(`(?s)\A(\s*(?:"""\s*@bruin.*?@bruin\s*"""|'''\s*@bruin.*?@bruin\s*'''|#\s*@bruin\s*\n.*?\n\s*#\s*@bruin\s*))(\s*)`)
-)
 
 func Web() *cli.Command {
 	return &cli.Command{
@@ -453,6 +374,8 @@ func Web() *cli.Command {
 				staticDir:          staticDir,
 				watchMode:          watchMode,
 				watchPoll:          watchPoll,
+				workspaceSvc:       service.NewWorkspaceService(absRoot, resolveConfigFilePath(absRoot)),
+				configSvc:          service.NewConfigService(absRoot, resolveConfigFilePath(absRoot)),
 				patchTimers:        make(map[string]*time.Timer),
 				hub:                events.NewDebouncedHub(150 * time.Millisecond),
 				runner:             service.NewRunner(absRoot),
@@ -524,17 +447,8 @@ func Web() *cli.Command {
 }
 
 func (s *webServer) registerRoutes(router chi.Router) {
-	router.Get("/api/events", s.handleEvents)
-	router.Get("/api/workspace", s.handleGetWorkspace)
-	router.Get("/api/config", s.handleGetWorkspaceConfig)
-	router.Post("/api/config/environments", s.handleCreateWorkspaceEnvironment)
-	router.Put("/api/config/environments", s.handleUpdateWorkspaceEnvironment)
-	router.Post("/api/config/environments/clone", s.handleCloneWorkspaceEnvironment)
-	router.Delete("/api/config/environments", s.handleDeleteWorkspaceEnvironment)
-	router.Post("/api/config/connections", s.handleCreateWorkspaceConnection)
-	router.Put("/api/config/connections", s.handleUpdateWorkspaceConnection)
-	router.Delete("/api/config/connections", s.handleDeleteWorkspaceConnection)
-	router.Post("/api/config/connections/test", s.handleTestWorkspaceConnection)
+	webhttpapi.RegisterWorkspaceRoutes(router, &webhttpapi.WorkspaceHandlers{Reader: s})
+	webhttpapi.RegisterConfigRoutes(router, &webhttpapi.ConfigHandlers{Service: s.configSvc, Publisher: s})
 	router.Get("/api/ingestr/suggestions", s.handleGetIngestrSuggestions)
 	router.Get("/api/assets/{assetID}/sql-path-suggestions", s.handleGetSQLPathSuggestions)
 	router.Post("/api/sql/parse-context", s.handleSQLParseContext)
@@ -575,14 +489,123 @@ func (s *webServer) setState(state workspaceState) {
 }
 
 func (s *webServer) refreshWorkspace(ctx context.Context) error {
-	state, err := s.computeWorkspaceState(ctx)
-	if err != nil {
+	if err := s.workspaceSvc.Refresh(ctx); err != nil {
 		return err
 	}
 
+	state := workspaceStateFromModel(s.workspaceSvc.GetState())
 	state.Revision = s.revision.Add(1)
 	s.setState(state)
 	return nil
+}
+
+func workspaceStateFromModel(state webmodel.WorkspaceState) workspaceState {
+	result := workspaceState{
+		Pipelines:           make([]webPipeline, 0, len(state.Pipelines)),
+		Connections:         mapsClone(state.Connections),
+		SelectedEnvironment: state.SelectedEnvironment,
+		Errors:              append([]string(nil), state.Errors...),
+		UpdatedAt:           state.UpdatedAt,
+		Metadata:            mapSliceClone(state.Metadata),
+	}
+
+	for _, pipeline := range state.Pipelines {
+		result.Pipelines = append(result.Pipelines, webPipelineFromModel(pipeline))
+	}
+
+	return result
+}
+
+func webPipelineFromModel(pipeline webmodel.Pipeline) webPipeline {
+	result := webPipeline{
+		ID:     pipeline.ID,
+		Name:   pipeline.Name,
+		Path:   pipeline.Path,
+		Assets: make([]webAsset, 0, len(pipeline.Assets)),
+	}
+
+	for _, asset := range pipeline.Assets {
+		result.Assets = append(result.Assets, webAssetFromModel(asset))
+	}
+
+	return result
+}
+
+func webAssetFromModel(asset webmodel.Asset) webAsset {
+	result := webAsset{
+		ID:                  asset.ID,
+		Name:                asset.Name,
+		Type:                asset.Type,
+		Path:                asset.Path,
+		Content:             asset.Content,
+		Upstreams:           append([]string(nil), asset.Upstreams...),
+		Parameters:          mapsClone(asset.Parameters),
+		Meta:                mapsClone(asset.Meta),
+		Columns:             make([]webColumn, 0, len(asset.Columns)),
+		Connection:          asset.Connection,
+		MaterializationType: asset.MaterializationType,
+		IsMaterialized:      asset.IsMaterialized,
+		MaterializedAs:      asset.MaterializedAs,
+		RowCount:            asset.RowCount,
+	}
+
+	for _, column := range asset.Columns {
+		result.Columns = append(result.Columns, webColumnFromModel(column))
+	}
+
+	return result
+}
+
+func webColumnFromModel(column webmodel.Column) webColumn {
+	result := webColumn{
+		Name:          column.Name,
+		Type:          column.Type,
+		Description:   column.Description,
+		Tags:          append([]string(nil), column.Tags...),
+		PrimaryKey:    column.PrimaryKey,
+		UpdateOnMerge: column.UpdateOnMerge,
+		MergeSQL:      column.MergeSQL,
+		Nullable:      column.Nullable,
+		Owner:         column.Owner,
+		Domains:       append([]string(nil), column.Domains...),
+		Meta:          mapsClone(column.Meta),
+		Checks:        make([]webColumnCheck, 0, len(column.Checks)),
+	}
+
+	for _, check := range column.Checks {
+		result.Checks = append(result.Checks, webColumnCheck{
+			Name:        check.Name,
+			Value:       check.Value,
+			Blocking:    check.Blocking,
+			Description: check.Description,
+		})
+	}
+
+	return result
+}
+
+func mapsClone(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return map[string]string{}
+	}
+
+	result := make(map[string]string, len(input))
+	for key, value := range input {
+		result[key] = value
+	}
+	return result
+}
+
+func mapSliceClone(input map[string][]string) map[string][]string {
+	if len(input) == 0 {
+		return map[string][]string{}
+	}
+
+	result := make(map[string][]string, len(input))
+	for key, values := range input {
+		result[key] = append([]string(nil), values...)
+	}
+	return result
 }
 
 func (s *webServer) newPipelineBuilder() *pipeline.Builder {
@@ -596,134 +619,46 @@ func (s *webServer) newPipelineBuilder() *pipeline.Builder {
 	)
 }
 
-func (s *webServer) computeWorkspaceState(ctx context.Context) (workspaceState, error) {
-	state := workspaceState{
-		Pipelines:   make([]webPipeline, 0),
-		Connections: map[string]string{},
-		Errors:      make([]string, 0),
-		UpdatedAt:   time.Now().UTC(),
-		Metadata:    map[string][]string{},
-	}
-
-	configPath := s.resolveConfigFilePath()
-	if _, err := os.Stat(configPath); err == nil {
-		cfg, cfgErr := config.LoadOrCreate(afero.NewOsFs(), configPath)
-		if cfgErr == nil {
-			state.SelectedEnvironment = cfg.SelectedEnvironmentName
-			if cfg.SelectedEnvironment != nil && cfg.SelectedEnvironment.Connections != nil {
-				state.Connections = cfg.SelectedEnvironment.Connections.ConnectionsSummaryList()
-			}
-		} else {
-			state.Errors = append(state.Errors, fmt.Sprintf("config parse error: %v", cfgErr))
-		}
-	}
-
-	pipelinePaths, err := bruinpath.GetPipelinePaths(s.workspaceRoot, PipelineDefinitionFiles)
-	if err != nil {
-		return state, err
-	}
-
-	builder := s.newPipelineBuilder()
-
-	sort.Strings(pipelinePaths)
-	for _, pPath := range pipelinePaths {
-		parsed, parseErr := builder.CreatePipelineFromPath(ctx, pPath, pipeline.WithMutate())
-		if parseErr != nil {
-			state.Errors = append(state.Errors, fmt.Sprintf("%s: %v", pPath, parseErr))
-			continue
-		}
-
-		relPipelinePath, relErr := filepath.Rel(s.workspaceRoot, pPath)
-		if relErr != nil {
-			relPipelinePath = pPath
-		}
-
-		pSummary := webPipeline{
-			ID:     encodeID(relPipelinePath),
-			Name:   parsed.Name,
-			Path:   filepath.ToSlash(relPipelinePath),
-			Assets: make([]webAsset, 0, len(parsed.Assets)),
-		}
-
-		if pSummary.Name == "" {
-			pSummary.Name = filepath.Base(pPath)
-		}
-
-		for _, asset := range parsed.Assets {
-			assetPath := asset.ExecutableFile.Path
-			if assetPath == "" {
-				assetPath = asset.DefinitionFile.Path
-			}
-
-			relAssetPath, relErr := filepath.Rel(s.workspaceRoot, assetPath)
-			if relErr != nil {
-				relAssetPath = assetPath
-			}
-
-			upstreams := make([]string, 0, len(asset.Upstreams))
-			for _, up := range asset.Upstreams {
-				upstreams = append(upstreams, up.Value)
-			}
-
-			connectionName := ""
-			if conn, connErr := parsed.GetConnectionNameForAsset(asset); connErr == nil {
-				connectionName = conn
-			}
-
-			declaredMatType := string(asset.Materialization.Type)
-
-			pSummary.Assets = append(pSummary.Assets, webAsset{
-				ID:                  encodeID(filepath.ToSlash(relAssetPath)),
-				Name:                asset.Name,
-				Type:                string(asset.Type),
-				Path:                filepath.ToSlash(relAssetPath),
-				Content:             asset.ExecutableFile.Content,
-				Upstreams:           upstreams,
-				Parameters:          asset.Parameters,
-				Meta:                asset.Meta,
-				Columns:             pipelineColumnsToWebColumns(asset.Columns),
-				Connection:          connectionName,
-				MaterializationType: declaredMatType,
-				IsMaterialized:      false,
-			})
-		}
-
-		state.Pipelines = append(state.Pipelines, pSummary)
-	}
-
-	state.Metadata["pipeline_definition_files"] = PipelineDefinitionFiles
-	state.Metadata["asset_directories"] = assetsDirectoryNames
-
-	return state, nil
-}
-
-func (s *webServer) resolveConfigFilePath() string {
-	repoRoot, err := git.FindRepoFromPath(s.workspaceRoot)
+func resolveConfigFilePath(workspaceRoot string) string {
+	repoRoot, err := git.FindRepoFromPath(workspaceRoot)
 	if err == nil && repoRoot != nil && strings.TrimSpace(repoRoot.Path) != "" {
 		return filepath.Join(repoRoot.Path, ".bruin.yml")
 	}
 
-	return filepath.Join(s.workspaceRoot, ".bruin.yml")
+	return filepath.Join(workspaceRoot, ".bruin.yml")
+}
+
+func (s *webServer) resolveConfigFilePath() string {
+	return resolveConfigFilePath(s.workspaceRoot)
+}
+
+func (s *webServer) ConfigChanged(ctx context.Context, relPath, eventType string) {
+	s.suppressWatcherFor(relPath)
+	s.pushWorkspaceUpdateImmediate(ctx, eventType, relPath)
+}
+
+func (s *webServer) CurrentWorkspace() any {
+	return s.currentState()
+}
+
+func (s *webServer) CurrentWorkspaceLite() any {
+	return webhttpapi.WorkspaceUpdatedEvent{
+		Type:      "workspace.updated",
+		Workspace: stripAssetContent(s.currentState()),
+		Lite:      true,
+	}
+}
+
+func (s *webServer) SubscribeWorkspaceEvents() chan []byte {
+	return s.hub.Subscribe()
+}
+
+func (s *webServer) UnsubscribeWorkspaceEvents(ch chan []byte) {
+	s.hub.Unsubscribe(ch)
 }
 
 func (s *webServer) writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
-}
-
-func (s *webServer) writeAPIError(w http.ResponseWriter, status int, code, message string) {
-	if strings.TrimSpace(message) == "" {
-		message = http.StatusText(status)
-	}
-
-	s.writeJSON(w, status, map[string]any{
-		"status": "error",
-		"error": map[string]string{
-			"code":    code,
-			"message": message,
-		},
-	})
+	webapi.WriteJSON(w, status, body)
 }
 
 func writeSSEJSON(w http.ResponseWriter, flusher http.Flusher, event string, body any) error {
@@ -746,333 +681,6 @@ func writeSSEJSON(w http.ResponseWriter, flusher http.Flusher, event string, bod
 	return nil
 }
 
-func (s *webServer) handleGetWorkspace(w http.ResponseWriter, _ *http.Request) {
-	s.writeJSON(w, http.StatusOK, s.currentState())
-}
-
-func (s *webServer) handleGetWorkspaceConfig(w http.ResponseWriter, _ *http.Request) {
-	configPath := s.resolveConfigFilePath()
-	cfg, err := loadWorkspaceConfigForEditing(configPath)
-	if err != nil {
-		response := workspaceConfigResponse{
-			Status:          "ok",
-			Path:            filepath.Base(configPath),
-			Environments:    []workspaceConfigEnvironment{},
-			ConnectionTypes: buildWorkspaceConfigConnectionTypes(),
-			ParseError:      err.Error(),
-		}
-		s.writeJSON(w, http.StatusOK, response)
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
-}
-
-func (s *webServer) handleCreateWorkspaceEnvironment(w http.ResponseWriter, r *http.Request) {
-	var req createWorkspaceEnvironmentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	cfg, configPath, err := loadWorkspaceConfigFromServer()
-	if err != nil {
-		webapi.WriteInternalError(w, "config_load_failed", err.Error())
-		return
-	}
-
-	if err := cfg.AddEnvironment(strings.TrimSpace(req.Name), strings.TrimSpace(req.SchemaPrefix)); err != nil {
-		webapi.WriteBadRequest(w, "environment_create_failed", err.Error())
-		return
-	}
-
-	if req.SetAsDefault {
-		cfg.DefaultEnvironmentName = strings.TrimSpace(req.Name)
-	}
-
-	if err := persistWorkspaceConfigFromServer(r.Context(), s, cfg, configPath, "config.updated"); err != nil {
-		webapi.WriteInternalError(w, "config_persist_failed", err.Error())
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
-}
-
-func (s *webServer) handleUpdateWorkspaceEnvironment(w http.ResponseWriter, r *http.Request) {
-	var req updateWorkspaceEnvironmentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	cfg, configPath, err := loadWorkspaceConfigFromServer()
-	if err != nil {
-		webapi.WriteInternalError(w, "config_load_failed", err.Error())
-		return
-	}
-
-	currentName := strings.TrimSpace(req.Name)
-	nextName := strings.TrimSpace(req.NewName)
-	if nextName == "" {
-		nextName = currentName
-	}
-
-	if err := cfg.UpdateEnvironment(currentName, nextName, strings.TrimSpace(req.SchemaPrefix)); err != nil {
-		webapi.WriteBadRequest(w, "environment_update_failed", err.Error())
-		return
-	}
-
-	if req.SetAsDefault {
-		cfg.DefaultEnvironmentName = nextName
-	}
-
-	if err := persistWorkspaceConfigFromServer(r.Context(), s, cfg, configPath, "config.updated"); err != nil {
-		webapi.WriteInternalError(w, "config_persist_failed", err.Error())
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
-}
-
-func (s *webServer) handleCloneWorkspaceEnvironment(w http.ResponseWriter, r *http.Request) {
-	var req cloneWorkspaceEnvironmentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	cfg, configPath, err := loadWorkspaceConfigFromServer()
-	if err != nil {
-		webapi.WriteInternalError(w, "config_load_failed", err.Error())
-		return
-	}
-
-	if err := cfg.CloneEnvironment(strings.TrimSpace(req.SourceName), strings.TrimSpace(req.TargetName), strings.TrimSpace(req.SchemaPrefix)); err != nil {
-		webapi.WriteBadRequest(w, "environment_clone_failed", err.Error())
-		return
-	}
-
-	if req.SetAsDefault {
-		cfg.DefaultEnvironmentName = strings.TrimSpace(req.TargetName)
-	}
-
-	if err := persistWorkspaceConfigFromServer(r.Context(), s, cfg, configPath, "config.updated"); err != nil {
-		webapi.WriteInternalError(w, "config_persist_failed", err.Error())
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
-}
-
-func (s *webServer) handleDeleteWorkspaceEnvironment(w http.ResponseWriter, r *http.Request) {
-	var req deleteWorkspaceEnvironmentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	cfg, configPath, err := loadWorkspaceConfigFromServer()
-	if err != nil {
-		webapi.WriteInternalError(w, "config_load_failed", err.Error())
-		return
-	}
-
-	if err := cfg.DeleteEnvironment(strings.TrimSpace(req.Name)); err != nil {
-		webapi.WriteBadRequest(w, "environment_delete_failed", err.Error())
-		return
-	}
-
-	if err := persistWorkspaceConfigFromServer(r.Context(), s, cfg, configPath, "config.updated"); err != nil {
-		webapi.WriteInternalError(w, "config_persist_failed", err.Error())
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
-}
-
-func (s *webServer) handleCreateWorkspaceConnection(w http.ResponseWriter, r *http.Request) {
-	var req upsertWorkspaceConnectionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	cfg, configPath, err := loadWorkspaceConfigFromServer()
-	if err != nil {
-		webapi.WriteInternalError(w, "config_load_failed", err.Error())
-		return
-	}
-
-	if err := addWorkspaceConnection(cfg, req); err != nil {
-		webapi.WriteBadRequest(w, "connection_create_failed", err.Error())
-		return
-	}
-
-	if err := persistWorkspaceConfigFromServer(r.Context(), s, cfg, configPath, "config.updated"); err != nil {
-		webapi.WriteInternalError(w, "config_persist_failed", err.Error())
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
-}
-
-func (s *webServer) handleUpdateWorkspaceConnection(w http.ResponseWriter, r *http.Request) {
-	var req upsertWorkspaceConnectionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	cfg, configPath, err := loadWorkspaceConfigFromServer()
-	if err != nil {
-		webapi.WriteInternalError(w, "config_load_failed", err.Error())
-		return
-	}
-
-	if err := updateWorkspaceConnection(cfg, req); err != nil {
-		webapi.WriteBadRequest(w, "connection_update_failed", err.Error())
-		return
-	}
-
-	if err := persistWorkspaceConfigFromServer(r.Context(), s, cfg, configPath, "config.updated"); err != nil {
-		webapi.WriteInternalError(w, "config_persist_failed", err.Error())
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
-}
-
-func (s *webServer) handleDeleteWorkspaceConnection(w http.ResponseWriter, r *http.Request) {
-	var req deleteWorkspaceConnectionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	cfg, configPath, err := loadWorkspaceConfigFromServer()
-	if err != nil {
-		webapi.WriteInternalError(w, "config_load_failed", err.Error())
-		return
-	}
-
-	if err := cfg.DeleteConnection(strings.TrimSpace(req.EnvironmentName), strings.TrimSpace(req.Name)); err != nil {
-		webapi.WriteBadRequest(w, "connection_delete_failed", err.Error())
-		return
-	}
-
-	if err := persistWorkspaceConfigFromServer(r.Context(), s, cfg, configPath, "config.updated"); err != nil {
-		webapi.WriteInternalError(w, "config_persist_failed", err.Error())
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, buildWorkspaceConfigResponse(configPath, cfg))
-}
-
-func (s *webServer) handleTestWorkspaceConnection(w http.ResponseWriter, r *http.Request) {
-	var req testWorkspaceConnectionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	configPath := s.resolveConfigFilePath()
-	cfg, err := config.LoadOrCreate(afero.NewOsFs(), configPath)
-	if err != nil {
-		webapi.WriteInternalError(w, "config_load_failed", err.Error())
-		return
-	}
-
-	environmentName := strings.TrimSpace(req.EnvironmentName)
-	if environmentName == "" {
-		environmentName = cfg.SelectedEnvironmentName
-	}
-	if environmentName == "" {
-		environmentName = cfg.DefaultEnvironmentName
-	}
-	if environmentName == "" {
-		webapi.WriteBadRequest(w, "missing_environment", "no environment selected")
-		return
-	}
-
-	if err := cfg.SelectEnvironment(environmentName); err != nil {
-		webapi.WriteBadRequest(w, "environment_select_failed", err.Error())
-		return
-	}
-
-	manager, errs := connection.NewManagerFromConfigWithContext(r.Context(), cfg)
-	if len(errs) > 0 {
-		webapi.WriteInternalError(w, "connection_manager_failed", errs[0].Error())
-		return
-	}
-
-	connectionName := strings.TrimSpace(req.Name)
-	if connectionName == "" {
-		webapi.WriteBadRequest(w, "missing_connection_name", "connection name is required")
-		return
-	}
-
-	conn := manager.GetConnection(connectionName)
-	if conn == nil {
-		webapi.WriteBadRequest(w, "missing_connection", fmt.Sprintf("connection %q not found", connectionName))
-		return
-	}
-
-	tester, ok := conn.(interface{ Ping(ctx context.Context) error })
-	if !ok {
-		s.writeJSON(w, http.StatusOK, map[string]any{
-			"status":  "ok",
-			"message": fmt.Sprintf("Connection '%s' does not support validation yet.", connectionName),
-		})
-		return
-	}
-
-	if err := tester.Ping(r.Context()); err != nil {
-		webapi.WriteBadRequest(w, "connection_test_failed", fmt.Sprintf("failed to test connection '%s': %s", connectionName, err.Error()))
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, map[string]any{
-		"status":  "ok",
-		"message": fmt.Sprintf("Successfully validated connection '%s' in environment %s.", connectionName, environmentName),
-	})
-}
-
-func (s *webServer) handleEvents(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		webapi.WriteInternalError(w, "streaming_unsupported", "streaming unsupported")
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	ch := s.hub.Subscribe()
-	defer s.hub.Unsubscribe(ch)
-
-	initial := workspaceEvent{
-		Type:      "workspace.updated",
-		Workspace: stripAssetContent(s.currentState()),
-		Lite:      true,
-	}
-	if payload, err := json.Marshal(initial); err == nil {
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
-		flusher.Flush()
-	}
-
-	ctx := r.Context()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg := <-ch:
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", msg)
-			flusher.Flush()
-		}
-	}
-}
-
 type createPipelineRequest struct {
 	Path    string `json:"path"`
 	Name    string `json:"name"`
@@ -1082,23 +690,23 @@ type createPipelineRequest struct {
 func (s *webServer) handleCreatePipeline(w http.ResponseWriter, r *http.Request) {
 	var req createPipelineRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeAPIError(w, http.StatusBadRequest, "invalid_request_body", err.Error())
+		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
 		return
 	}
 
 	if req.Path == "" {
-		s.writeAPIError(w, http.StatusBadRequest, "pipeline_path_required", "path is required")
+		webapi.WriteBadRequest(w, "pipeline_path_required", "path is required")
 		return
 	}
 
 	absPath, err := safeJoin(s.workspaceRoot, req.Path)
 	if err != nil {
-		s.writeAPIError(w, http.StatusBadRequest, "invalid_pipeline_path", err.Error())
+		webapi.WriteBadRequest(w, "invalid_pipeline_path", err.Error())
 		return
 	}
 
 	if err := os.MkdirAll(absPath, 0o755); err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, "pipeline_create_failed", err.Error())
+		webapi.WriteInternalError(w, "pipeline_create_failed", err.Error())
 		return
 	}
 
@@ -1112,7 +720,7 @@ func (s *webServer) handleCreatePipeline(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := os.WriteFile(filepath.Join(absPath, "pipeline.yml"), []byte(content), 0o644); err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, "pipeline_write_failed", err.Error())
+		webapi.WriteInternalError(w, "pipeline_write_failed", err.Error())
 		return
 	}
 
@@ -1985,45 +1593,7 @@ func (s *webServer) handleDeleteAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *webServer) resolveAssetByID(ctx context.Context, assetID string) (string, *pipeline.Pipeline, *pipeline.Asset, error) {
-	relAssetPath, err := decodeID(assetID)
-	if err != nil {
-		return "", nil, nil, fmt.Errorf("invalid asset id")
-	}
-
-	absAssetPath, err := safeJoin(s.workspaceRoot, relAssetPath)
-	if err != nil {
-		return "", nil, nil, err
-	}
-
-	pipelinePath, err := bruinpath.GetPipelineRootFromTask(absAssetPath, PipelineDefinitionFiles)
-	if err != nil {
-		return "", nil, nil, err
-	}
-
-	builder := s.newPipelineBuilder()
-	parsed, err := builder.CreatePipelineFromPath(ctx, pipelinePath, pipeline.WithMutate())
-	if err != nil {
-		return "", nil, nil, err
-	}
-
-	normalizedTarget := filepath.ToSlash(relAssetPath)
-	for _, current := range parsed.Assets {
-		assetPath := current.ExecutableFile.Path
-		if assetPath == "" {
-			assetPath = current.DefinitionFile.Path
-		}
-
-		relCurrent, relErr := filepath.Rel(s.workspaceRoot, assetPath)
-		if relErr != nil {
-			continue
-		}
-
-		if filepath.ToSlash(relCurrent) == normalizedTarget {
-			return normalizedTarget, parsed, current, nil
-		}
-	}
-
-	return "", nil, nil, fmt.Errorf("asset not found in pipeline")
+	return s.workspaceSvc.ResolveAssetByID(ctx, assetID)
 }
 
 type duckDBExecutionInfo struct {
@@ -2883,387 +2453,6 @@ func (s *webServer) newConnectionManager(ctx context.Context, environment string
 	}
 
 	return manager, nil
-}
-
-func loadWorkspaceConfigForEditing(configPath string) (*config.Config, error) {
-	return config.LoadOrCreateWithoutPathAbsolutization(afero.NewOsFs(), configPath)
-}
-
-func loadWorkspaceConfigFromServer() (*config.Config, string, error) {
-	configPath := resolveWorkspaceConfigPath()
-	cfg, err := loadWorkspaceConfigForEditing(configPath)
-	if err != nil {
-		return nil, configPath, err
-	}
-
-	return cfg, configPath, nil
-}
-
-func resolveWorkspaceConfigPath() string {
-	repoRoot, err := git.FindRepoFromPath(".")
-	if err == nil && repoRoot != nil && strings.TrimSpace(repoRoot.Path) != "" {
-		return filepath.Join(repoRoot.Path, ".bruin.yml")
-	}
-
-	workingDir, wdErr := os.Getwd()
-	if wdErr == nil {
-		return filepath.Join(workingDir, ".bruin.yml")
-	}
-
-	return ".bruin.yml"
-}
-
-func persistWorkspaceConfigFromServer(ctx context.Context, s *webServer, cfg *config.Config, configPath, eventType string) error {
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return err
-	}
-
-	if err := cfg.Persist(); err != nil {
-		return err
-	}
-
-	relPath, relErr := filepath.Rel(s.workspaceRoot, configPath)
-	if relErr != nil {
-		relPath = filepath.Base(configPath)
-	}
-	relPath = filepath.ToSlash(relPath)
-
-	s.suppressWatcherFor(relPath)
-	s.pushWorkspaceUpdateImmediate(ctx, eventType, relPath)
-	return nil
-}
-
-func buildWorkspaceConfigConnectionTypes() []workspaceConfigConnectionType {
-	connectionsType := reflect.TypeFor[config.Connections]()
-	items := make([]workspaceConfigConnectionType, 0, connectionsType.NumField())
-	for index := 0; index < connectionsType.NumField(); index++ {
-		structField := connectionsType.Field(index)
-		if !structField.IsExported() || structField.Type.Kind() != reflect.Slice {
-			continue
-		}
-
-		typeName := structField.Tag.Get("yaml")
-		if separator := strings.Index(typeName, ","); separator >= 0 {
-			typeName = typeName[:separator]
-		}
-		if typeName == "" {
-			continue
-		}
-
-		elementType := structField.Type.Elem()
-		if elementType.Kind() == reflect.Pointer {
-			elementType = elementType.Elem()
-		}
-		if elementType.Kind() != reflect.Struct {
-			continue
-		}
-
-		items = append(items, workspaceConfigConnectionType{
-			TypeName: typeName,
-			Fields:   buildWorkspaceConfigFieldDefs(elementType),
-		})
-	}
-
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].TypeName < items[j].TypeName
-	})
-
-	return items
-}
-
-func buildWorkspaceConfigFieldDefs(connectionType reflect.Type) []workspaceConfigFieldDef {
-	fields := make([]workspaceConfigFieldDef, 0, connectionType.NumField())
-	for index := 0; index < connectionType.NumField(); index++ {
-		structField := connectionType.Field(index)
-		if !structField.IsExported() {
-			continue
-		}
-
-		mapstructureTag := structField.Tag.Get("mapstructure")
-		if separator := strings.Index(mapstructureTag, ","); separator >= 0 {
-			mapstructureTag = mapstructureTag[:separator]
-		}
-		if mapstructureTag == "" || mapstructureTag == "name" {
-			continue
-		}
-
-		fieldType := buildWorkspaceConfigFieldType(structField.Type.Kind())
-		if fieldType == "" {
-			continue
-		}
-
-		defaultValue := ""
-		if jsonschemaTag := structField.Tag.Get("jsonschema"); jsonschemaTag != "" {
-			for part := range strings.SplitSeq(jsonschemaTag, ",") {
-				part = strings.TrimSpace(part)
-				if value, ok := strings.CutPrefix(part, "default="); ok {
-					defaultValue = value
-				}
-			}
-		}
-		if defaultValue == "" {
-			defaultValue = structField.Tag.Get("default")
-		}
-
-		yamlTag := structField.Tag.Get("yaml")
-		fields = append(fields, workspaceConfigFieldDef{
-			Name:         mapstructureTag,
-			Type:         fieldType,
-			DefaultValue: defaultValue,
-			IsRequired:   !strings.Contains(yamlTag, "omitempty"),
-		})
-	}
-
-	return fields
-}
-
-func buildWorkspaceConfigFieldType(kind reflect.Kind) string {
-	switch kind { //nolint:exhaustive
-	case reflect.String:
-		return "string"
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return "int"
-	case reflect.Bool:
-		return "bool"
-	default:
-		return ""
-	}
-}
-
-func buildWorkspaceConfigResponse(configPath string, cfg *config.Config) workspaceConfigResponse {
-	response := workspaceConfigResponse{
-		Status:              "ok",
-		Path:                filepath.Base(configPath),
-		DefaultEnvironment:  cfg.DefaultEnvironmentName,
-		SelectedEnvironment: cfg.SelectedEnvironmentName,
-		Environments:        []workspaceConfigEnvironment{},
-		ConnectionTypes:     buildWorkspaceConfigConnectionTypes(),
-	}
-
-	environmentNames := cfg.GetEnvironmentNames()
-	sort.Strings(environmentNames)
-	for _, envName := range environmentNames {
-		env := cfg.Environments[envName]
-		response.Environments = append(response.Environments, workspaceConfigEnvironment{
-			Name:         envName,
-			SchemaPrefix: env.SchemaPrefix,
-			Connections:  buildWorkspaceConfigConnections(env.Connections),
-		})
-	}
-
-	return response
-}
-
-func buildWorkspaceConfigConnections(connections *config.Connections) []workspaceConfigConnection {
-	if connections == nil {
-		return []workspaceConfigConnection{}
-	}
-
-	value := reflect.ValueOf(connections)
-	if value.Kind() == reflect.Pointer {
-		value = value.Elem()
-	}
-	if !value.IsValid() || value.Kind() != reflect.Struct {
-		return []workspaceConfigConnection{}
-	}
-
-	valueType := value.Type()
-	items := make([]workspaceConfigConnection, 0)
-	for index := 0; index < value.NumField(); index++ {
-		field := value.Field(index)
-		structField := valueType.Field(index)
-		if field.Kind() != reflect.Slice {
-			continue
-		}
-
-		typeName := structField.Tag.Get("yaml")
-		if separator := strings.Index(typeName, ","); separator >= 0 {
-			typeName = typeName[:separator]
-		}
-		if typeName == "" {
-			continue
-		}
-
-		for itemIndex := 0; itemIndex < field.Len(); itemIndex++ {
-			connectionValue := field.Index(itemIndex)
-			connectionInterface := connectionValue.Interface()
-			named, ok := connectionInterface.(interface{ GetName() string })
-			if !ok {
-				continue
-			}
-
-			items = append(items, workspaceConfigConnection{
-				Name:   named.GetName(),
-				Type:   typeName,
-				Values: buildWorkspaceConfigConnectionValues(connectionInterface, typeName),
-			})
-		}
-	}
-
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Type == items[j].Type {
-			return items[i].Name < items[j].Name
-		}
-		return items[i].Type < items[j].Type
-	})
-
-	return items
-}
-
-func buildWorkspaceConfigConnectionValues(connection any, typeName string) map[string]any {
-	result := make(map[string]any)
-	fieldDefs := config.GetConnectionFieldsForType(typeName)
-	if len(fieldDefs) == 0 {
-		return result
-	}
-
-	value := reflect.ValueOf(connection)
-	if value.Kind() == reflect.Pointer {
-		value = value.Elem()
-	}
-	if !value.IsValid() || value.Kind() != reflect.Struct {
-		return result
-	}
-
-	valueType := value.Type()
-	for _, fieldDef := range fieldDefs {
-		for index := 0; index < value.NumField(); index++ {
-			structField := valueType.Field(index)
-			mapstructureTag := structField.Tag.Get("mapstructure")
-			if separator := strings.Index(mapstructureTag, ","); separator >= 0 {
-				mapstructureTag = mapstructureTag[:separator]
-			}
-			if mapstructureTag != fieldDef.Name {
-				continue
-			}
-
-			fieldValue := value.Field(index)
-			switch fieldValue.Kind() { //nolint:exhaustive
-			case reflect.String:
-				result[fieldDef.Name] = fieldValue.String()
-			case reflect.Bool:
-				result[fieldDef.Name] = fieldValue.Bool()
-			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-				result[fieldDef.Name] = fieldValue.Int()
-			}
-			break
-		}
-	}
-
-	return result
-}
-
-func addWorkspaceConnection(cfg *config.Config, req upsertWorkspaceConnectionRequest) error {
-	environmentName := strings.TrimSpace(req.EnvironmentName)
-	name := strings.TrimSpace(req.Name)
-	typeName := strings.TrimSpace(req.Type)
-	if environmentName == "" || name == "" || typeName == "" {
-		return fmt.Errorf("environment, name, and type are required")
-	}
-
-	values, err := normalizeWorkspaceConnectionValues(typeName, req.Values)
-	if err != nil {
-		return err
-	}
-
-	return cfg.AddConnection(environmentName, name, typeName, values)
-}
-
-func updateWorkspaceConnection(cfg *config.Config, req upsertWorkspaceConnectionRequest) error {
-	environmentName := strings.TrimSpace(req.EnvironmentName)
-	currentName := strings.TrimSpace(req.CurrentName)
-	if currentName == "" {
-		currentName = strings.TrimSpace(req.Name)
-	}
-
-	if err := cfg.DeleteConnection(environmentName, currentName); err != nil {
-		return err
-	}
-
-	if err := addWorkspaceConnection(cfg, req); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func normalizeWorkspaceConnectionValues(typeName string, values map[string]any) (map[string]any, error) {
-	result := make(map[string]any)
-	fieldDefs := config.GetConnectionFieldsForType(typeName)
-	for _, fieldDef := range fieldDefs {
-		rawValue, exists := values[fieldDef.Name]
-		if !exists {
-			continue
-		}
-
-		switch fieldDef.Type {
-		case "string":
-			result[fieldDef.Name] = strings.TrimSpace(fmt.Sprint(rawValue))
-		case "bool":
-			boolValue, err := normalizeWorkspaceBoolValue(rawValue)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for %s: %w", fieldDef.Name, err)
-			}
-			result[fieldDef.Name] = boolValue
-		case "int":
-			intValue, err := normalizeWorkspaceIntValue(rawValue)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for %s: %w", fieldDef.Name, err)
-			}
-			result[fieldDef.Name] = intValue
-		}
-	}
-
-	return result, nil
-}
-
-func normalizeWorkspaceBoolValue(rawValue any) (bool, error) {
-	switch value := rawValue.(type) {
-	case bool:
-		return value, nil
-	case string:
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			return false, nil
-		}
-		if strings.EqualFold(trimmed, "true") {
-			return true, nil
-		}
-		if strings.EqualFold(trimmed, "false") {
-			return false, nil
-		}
-	}
-
-	return false, fmt.Errorf("expected boolean")
-}
-
-func normalizeWorkspaceIntValue(rawValue any) (int, error) {
-	switch value := rawValue.(type) {
-	case int:
-		return value, nil
-	case int8:
-		return int(value), nil
-	case int16:
-		return int(value), nil
-	case int32:
-		return int(value), nil
-	case int64:
-		return int(value), nil
-	case float64:
-		return int(value), nil
-	case string:
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			return 0, nil
-		}
-		parsed, err := strconv.Atoi(trimmed)
-		if err != nil {
-			return 0, err
-		}
-		return parsed, nil
-	}
-
-	return 0, fmt.Errorf("expected integer")
 }
 
 func databaseNameForConnectionDetails(details any) string {
@@ -4236,14 +3425,7 @@ func (s *webServer) handleGetAssetFreshness(w http.ResponseWriter, _ *http.Reque
 }
 
 func safeJoin(root, relPath string) (string, error) {
-	clean := filepath.Clean(filepath.FromSlash(relPath))
-	if clean == "." || clean == "" {
-		return root, nil
-	}
-	if filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
-		return "", fmt.Errorf("invalid path: %s", relPath)
-	}
-	return filepath.Join(root, clean), nil
+	return service.SafeJoin(root, relPath)
 }
 
 func pipelinePathsReferToSameRoot(left, right string) bool {
@@ -4264,26 +3446,7 @@ func pipelinePathsReferToSameRoot(left, right string) bool {
 }
 
 func slug(input string) string {
-	trimmed := strings.TrimSpace(strings.ToLower(input))
-	if trimmed == "" {
-		return "asset"
-	}
-	b := strings.Builder{}
-	for _, r := range trimmed {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-			continue
-		}
-		if r == '_' || r == '-' || r == ' ' || r == '.' {
-			b.WriteRune('_')
-		}
-	}
-
-	result := strings.Trim(b.String(), "-")
-	if result == "" {
-		return "asset"
-	}
-	return result
+	return strings.ReplaceAll(service.Slug(strings.ReplaceAll(input, ".", " ")), "-", "_")
 }
 
 func extensionForAssetType(assetType string) string {
@@ -4479,38 +3642,11 @@ func defaultConnectionNameForType(connectionType string) string {
 }
 
 func defaultAssetContent(assetName, assetType, assetPath string) string {
-	if strings.HasSuffix(strings.ToLower(assetPath), ".py") {
-		return fmt.Sprintf(
-			`""" @bruin
-
-name: %s
-image: python:3.11
-connection: duckdb-default
-
-materialization:
-  type: table
-
-@bruin """
-
-import pandas as pd
-
-
-def materialize():
-    items = 100000
-    df = pd.DataFrame({
-        'col1': range(items),
-        'col2': [f'value_new_{i}' for i in range(items)],
-        'col3': [i * 6.0 for i in range(items)]
-    })
-
-    return df
-`, assetName)
-	}
+	base := service.DefaultAssetContent(assetName, assetType, assetPath)
 	if strings.HasSuffix(strings.ToLower(assetPath), ".sql") {
 		return fmt.Sprintf("/* @bruin\n\nname: %s\ntype: %s\nmaterialization:\n  type: view\n\n@bruin */\n", assetName, assetType)
 	}
-
-	return fmt.Sprintf("/* @bruin\n\nname: %s\ntype: %s\n\n@bruin */\n", assetName, assetType)
+	return base
 }
 
 func defaultDerivedSQLAssetContent(assetName, assetType, assetPath, sourceAssetName, connectionName string) string {
@@ -4551,55 +3687,23 @@ func ensurePythonRequirementsFile(absAssetPath, assetType, relAssetPath string) 
 }
 
 func splitBruinHeader(content string) (header string, separator string, body string, found bool) {
-	if match := sqlBruinHeaderPattern.FindStringSubmatchIndex(content); match != nil {
-		header = content[match[2]:match[3]]
-		separator = content[match[4]:match[5]]
-		body = content[match[1]:]
-		return header, separator, body, true
-	}
-
-	if match := pythonBruinHeaderPattern.FindStringSubmatchIndex(content); match != nil {
-		header = content[match[2]:match[3]]
-		separator = content[match[4]:match[5]]
-		body = content[match[1]:]
-		return header, separator, body, true
-	}
-
-	return "", "", content, false
+	return service.SplitBruinHeader(content)
 }
 
 func extractExecutableContent(content string) string {
-	_, _, body, found := splitBruinHeader(content)
-	if !found {
-		return content
-	}
-	return body
+	return service.ExtractExecutableContent(content)
 }
 
 func mergeExecutableContent(currentFileContent, executableContent string) string {
-	header, separator, _, found := splitBruinHeader(currentFileContent)
-	if !found {
-		return executableContent
-	}
-
-	sep := separator
-	if sep == "" {
-		sep = "\n\n"
-	}
-
-	return header + sep + strings.TrimLeft(executableContent, "\r\n")
+	return service.MergeExecutableContent(currentFileContent, executableContent)
 }
 
 func encodeID(value string) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(filepath.ToSlash(value)))
+	return service.EncodeID(value)
 }
 
 func decodeID(value string) (string, error) {
-	decoded, err := base64.RawURLEncoding.DecodeString(value)
-	if err != nil {
-		return "", err
-	}
-	return string(decoded), nil
+	return service.DecodeID(value)
 }
 
 func parseQueryJSONOutput(output []byte) ([]string, []map[string]any) {
@@ -5343,4 +4447,8 @@ func anyToColumnCheckValue(value any) pipeline.ColumnCheckValue {
 	}
 
 	return result
+}
+
+func buildWorkspaceConfigConnectionTypes() []service.WorkspaceConfigConnectionType {
+	return service.BuildWorkspaceConfigConnectionTypes()
 }
