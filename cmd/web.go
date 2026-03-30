@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	webapi "github.com/bruin-data/bruin/internal/web/api"
@@ -19,7 +17,6 @@ import (
 	webhttpapi "github.com/bruin-data/bruin/internal/web/httpapi"
 	webmodel "github.com/bruin-data/bruin/internal/web/model"
 	"github.com/bruin-data/bruin/internal/web/service"
-	"github.com/bruin-data/bruin/internal/web/sqlintelligence"
 	webstatic "github.com/bruin-data/bruin/internal/web/static"
 	"github.com/bruin-data/bruin/internal/web/watch"
 	"github.com/bruin-data/bruin/pkg/config"
@@ -81,148 +78,11 @@ type ingestrSuggestionItem struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-type sqlDiscoveryDatabaseResponse struct {
-	Status         string   `json:"status"`
-	ConnectionName string   `json:"connection_name"`
-	ConnectionType string   `json:"connection_type,omitempty"`
-	Databases      []string `json:"databases"`
-	Error          string   `json:"error,omitempty"`
-}
-
 type sqlDiscoveryTableItem struct {
 	Name         string `json:"name"`
 	ShortName    string `json:"short_name"`
 	SchemaName   string `json:"schema_name,omitempty"`
 	DatabaseName string `json:"database_name,omitempty"`
-}
-
-type sqlDiscoveryTablesResponse struct {
-	Status         string                  `json:"status"`
-	ConnectionName string                  `json:"connection_name"`
-	ConnectionType string                  `json:"connection_type,omitempty"`
-	Database       string                  `json:"database"`
-	Tables         []sqlDiscoveryTableItem `json:"tables"`
-	Error          string                  `json:"error,omitempty"`
-}
-
-type sqlDiscoveryTableColumnsResponse struct {
-	Status         string      `json:"status"`
-	ConnectionName string      `json:"connection_name"`
-	Table          string      `json:"table"`
-	Columns        []webColumn `json:"columns"`
-	RawOutput      string      `json:"raw_output"`
-	Command        []string    `json:"command,omitempty"`
-	Error          string      `json:"error,omitempty"`
-}
-
-type ingestrSuggestionsResponse struct {
-	Status         string                  `json:"status"`
-	ConnectionType string                  `json:"connection_type,omitempty"`
-	Suggestions    []ingestrSuggestionItem `json:"suggestions"`
-	Error          string                  `json:"error,omitempty"`
-}
-
-type sqlPathSuggestionsResponse struct {
-	Status      string                  `json:"status"`
-	Suggestions []ingestrSuggestionItem `json:"suggestions"`
-	Error       string                  `json:"error,omitempty"`
-}
-
-type sqlParseContextRequest struct {
-	AssetID string `json:"asset_id"`
-	Content string `json:"content"`
-	Schema  []struct {
-		Name    string `json:"name"`
-		Columns []struct {
-			Name string `json:"name"`
-			Type string `json:"type,omitempty"`
-		} `json:"columns"`
-	} `json:"schema"`
-}
-
-type sqlParseContextRangeResponse struct {
-	Start   int `json:"start"`
-	End     int `json:"end"`
-	Line    int `json:"line"`
-	Col     int `json:"col"`
-	EndLine int `json:"end_line"`
-	EndCol  int `json:"end_col"`
-}
-
-type sqlParseContextPartResponse struct {
-	Name  string                       `json:"name"`
-	Kind  string                       `json:"kind"`
-	Range sqlParseContextRangeResponse `json:"range"`
-}
-
-type sqlParseContextDiagnosticResponse struct {
-	Message  string                        `json:"message"`
-	Severity string                        `json:"severity"`
-	Range    *sqlParseContextRangeResponse `json:"range,omitempty"`
-}
-
-type sqlParseContextTableResponse struct {
-	Name         string                        `json:"name"`
-	SourceKind   string                        `json:"source_kind,omitempty"`
-	ResolvedName string                        `json:"resolved_name,omitempty"`
-	Alias        string                        `json:"alias,omitempty"`
-	Parts        []sqlParseContextPartResponse `json:"parts"`
-	AliasRange   *sqlParseContextRangeResponse `json:"alias_range,omitempty"`
-}
-
-type sqlParseContextColumnResponse struct {
-	Name          string                        `json:"name"`
-	Qualifier     string                        `json:"qualifier,omitempty"`
-	ResolvedTable string                        `json:"resolved_table,omitempty"`
-	Parts         []sqlParseContextPartResponse `json:"parts"`
-}
-
-type sqlParseContextResponse struct {
-	Status         string                              `json:"status"`
-	AssetID        string                              `json:"asset_id"`
-	Dialect        string                              `json:"dialect,omitempty"`
-	QueryKind      string                              `json:"query_kind,omitempty"`
-	IsSingleSelect bool                                `json:"is_single_select"`
-	Tables         []sqlParseContextTableResponse      `json:"tables"`
-	Columns        []sqlParseContextColumnResponse     `json:"columns"`
-	Diagnostics    []sqlParseContextDiagnosticResponse `json:"diagnostics,omitempty"`
-	Errors         []string                            `json:"errors,omitempty"`
-	Error          string                              `json:"error,omitempty"`
-}
-
-type sqlColumnValuesRequest struct {
-	Connection  string `json:"connection"`
-	Environment string `json:"environment,omitempty"`
-	Query       string `json:"query"`
-}
-
-type sqlColumnValuesResponse struct {
-	Status string `json:"status"`
-	Values []any  `json:"values"`
-	Error  string `json:"error,omitempty"`
-}
-
-var assetTypeDialectMap = map[pipeline.AssetType]string{
-	pipeline.AssetTypeBigqueryQuery:   "bigquery",
-	pipeline.AssetTypeSnowflakeQuery:  "snowflake",
-	pipeline.AssetTypePostgresQuery:   "postgres",
-	pipeline.AssetTypeMySQLQuery:      "mysql",
-	pipeline.AssetTypeRedshiftQuery:   "redshift",
-	pipeline.AssetTypeAthenaQuery:     "athena",
-	pipeline.AssetTypeClickHouse:      "clickhouse",
-	pipeline.AssetTypeDatabricksQuery: "databricks",
-	pipeline.AssetTypeMsSQLQuery:      "tsql",
-	pipeline.AssetTypeSynapseQuery:    "tsql",
-	pipeline.AssetTypeDuckDBQuery:     "duckdb",
-}
-
-func assetTypeToDialect(assetType pipeline.AssetType) (string, error) {
-	dialect, ok := assetTypeDialectMap[assetType]
-	if !ok {
-		return "", fmt.Errorf("unsupported asset type %s", assetType)
-	}
-
-	return dialect, nil
 }
 
 type webPipeline struct {
@@ -242,32 +102,24 @@ type workspaceState struct {
 	Revision            int64               `json:"revision,omitempty"`
 }
 
-type workspaceEvent struct {
-	Type            string         `json:"type"`
-	Path            string         `json:"path,omitempty"`
-	Workspace       workspaceState `json:"workspace"`
-	Lite            bool           `json:"lite,omitempty"`
-	ChangedAssetIDs []string       `json:"changed_asset_ids,omitempty"`
-}
-
 type workspaceConfigFieldDef = service.WorkspaceConfigFieldDef
 
 type webServer struct {
-	workspaceRoot string
-	staticDir     string
-	staticHandler http.Handler
-	watchMode     string
-	watchPoll     time.Duration
-	workspaceSvc  *service.WorkspaceService
-	configSvc     *service.ConfigService
-	pipelineSvc   *service.PipelineService
-	executionSvc  *service.ExecutionService
-	assetSvc      *service.AssetService
-	sqlSvc        *service.SQLService
-
-	stateMu  sync.RWMutex
-	state    workspaceState
-	revision atomic.Int64
+	workspaceRoot   string
+	staticDir       string
+	staticHandler   http.Handler
+	watchMode       string
+	watchPoll       time.Duration
+	workspaceSvc    *service.WorkspaceService
+	configSvc       *service.ConfigService
+	pipelineSvc     *service.PipelineService
+	executionSvc    *service.ExecutionService
+	assetSvc        *service.AssetService
+	sqlSvc          *service.SQLService
+	suggestionsSvc  *service.SuggestionsService
+	parseContextSvc *service.ParseContextService
+	runSvc          *service.RunService
+	workspaceCoord  *service.WorkspaceCoordinator
 
 	hub       *events.Hub
 	runner    service.Runner
@@ -275,12 +127,6 @@ type webServer struct {
 
 	duckDBOpsMu sync.Mutex
 	duckDBOps   map[string]*sync.Mutex
-
-	// recentServerWrites tracks paths recently written by API handlers or
-	// patch timers. The filesystem watcher suppresses events for these paths
-	// to avoid duplicate notifications (the handler already emits its own event).
-	recentServerWritesMu sync.Mutex
-	recentServerWrites   map[string]time.Time
 }
 
 func Web() *cli.Command {
@@ -345,18 +191,17 @@ func Web() *cli.Command {
 			}
 
 			server := &webServer{
-				workspaceRoot:      absRoot,
-				staticDir:          staticDir,
-				watchMode:          watchMode,
-				watchPoll:          watchPoll,
-				workspaceSvc:       service.NewWorkspaceService(absRoot, resolveConfigFilePath(absRoot)),
-				configSvc:          service.NewConfigService(absRoot, resolveConfigFilePath(absRoot)),
-				pipelineSvc:        service.NewPipelineService(absRoot),
-				hub:                events.NewDebouncedHub(150 * time.Millisecond),
-				runner:             service.NewRunner(absRoot),
-				freshness:          freshness.New(),
-				duckDBOps:          make(map[string]*sync.Mutex),
-				recentServerWrites: make(map[string]time.Time),
+				workspaceRoot: absRoot,
+				staticDir:     staticDir,
+				watchMode:     watchMode,
+				watchPoll:     watchPoll,
+				workspaceSvc:  service.NewWorkspaceService(absRoot, resolveConfigFilePath(absRoot)),
+				configSvc:     service.NewConfigService(absRoot, resolveConfigFilePath(absRoot)),
+				pipelineSvc:   service.NewPipelineService(absRoot),
+				hub:           events.NewDebouncedHub(150 * time.Millisecond),
+				runner:        service.NewRunner(absRoot),
+				freshness:     freshness.New(),
+				duckDBOps:     make(map[string]*sync.Mutex),
 			}
 
 			server.executionSvc = service.NewExecutionService(service.ExecutionDependencies{
@@ -415,6 +260,31 @@ func Web() *cli.Command {
 				Runner:               server.runner,
 				NewConnectionManager: server.newConnectionManager,
 				RunConnectionQuery:   server.executionSvc.RunConnectionQueryForEnvironment,
+			})
+
+			server.suggestionsSvc = service.NewSuggestionsService(service.SuggestionsDependencies{
+				WorkspaceRoot: absRoot,
+				ConfigPath:    resolveConfigFilePath(absRoot),
+				ResolveAssetByID: func(ctx context.Context, assetID string) (string, any, any, error) {
+					path, parsed, asset, err := server.resolveAssetByID(ctx, assetID)
+					return path, parsed, asset, err
+				},
+				NewConnectionManager: server.newConnectionManager,
+			})
+
+			server.parseContextSvc = service.NewParseContextService(service.ParseContextDependencies{
+				ResolveAssetByID: server.resolveAssetByID,
+			})
+
+			server.runSvc = service.NewRunService(service.RunDependencies{Runner: server.runner})
+
+			server.workspaceCoord = service.NewWorkspaceCoordinator(service.WorkspaceCoordinatorDependencies{
+				WorkspaceService: server.workspaceSvc,
+				Hub:              server.hub,
+				Freshness:        server.freshness,
+				ConvertState: func(state webmodel.WorkspaceState) service.WorkspaceState {
+					return workspaceCoordStateFromModel(state)
+				},
 			})
 
 			embeddedStaticFS, err := webui.DistFS()
@@ -488,36 +358,24 @@ func (s *webServer) registerRoutes(router chi.Router) {
 	webhttpapi.RegisterAssetColumnRoutes(router, &webhttpapi.AssetColumnsAPI{Service: s})
 	webhttpapi.RegisterPipelineExecutionRoutes(router, &webhttpapi.PipelineExecutionAPI{Service: s})
 	webhttpapi.RegisterSQLRoutes(router, &webhttpapi.SQLAPI{Service: s})
-	router.Get("/api/ingestr/suggestions", s.handleGetIngestrSuggestions)
-	router.Get("/api/assets/{assetID}/sql-path-suggestions", s.handleGetSQLPathSuggestions)
-	router.Post("/api/sql/parse-context", s.handleSQLParseContext)
+	webhttpapi.RegisterSuggestionRoutes(router, &webhttpapi.SuggestionsAPI{Service: s})
+	webhttpapi.RegisterParseContextRoutes(router, &webhttpapi.ParseContextAPI{Service: s})
+	webhttpapi.RegisterRunRoutes(router, &webhttpapi.RunAPI{Service: s})
 	router.Get("/api/assets/freshness", s.handleGetAssetFreshness)
-	router.Post("/api/run", s.handleRun)
 
 	router.Get("/*", s.handleStatic)
 }
 
 func (s *webServer) currentState() workspaceState {
-	s.stateMu.RLock()
-	defer s.stateMu.RUnlock()
-	return s.state
+	return workspaceStateFromCoord(s.workspaceCoord.CurrentState())
 }
 
 func (s *webServer) setState(state workspaceState) {
-	s.stateMu.Lock()
-	defer s.stateMu.Unlock()
-	s.state = state
+	s.workspaceCoord.SetState(workspaceCoordStateFromWeb(state))
 }
 
 func (s *webServer) refreshWorkspace(ctx context.Context) error {
-	if err := s.workspaceSvc.Refresh(ctx); err != nil {
-		return err
-	}
-
-	state := workspaceStateFromModel(s.workspaceSvc.GetState())
-	state.Revision = s.revision.Add(1)
-	s.setState(state)
-	return nil
+	return s.workspaceCoord.Refresh(ctx)
 }
 
 func workspaceStateFromModel(state webmodel.WorkspaceState) workspaceState {
@@ -532,6 +390,120 @@ func workspaceStateFromModel(state webmodel.WorkspaceState) workspaceState {
 
 	for _, pipeline := range state.Pipelines {
 		result.Pipelines = append(result.Pipelines, webPipelineFromModel(pipeline))
+	}
+
+	return result
+}
+
+func workspaceCoordStateFromModel(state webmodel.WorkspaceState) service.WorkspaceState {
+	result := service.WorkspaceState{
+		Pipelines:           make([]service.WorkspacePipeline, 0, len(state.Pipelines)),
+		Connections:         mapsClone(state.Connections),
+		SelectedEnvironment: state.SelectedEnvironment,
+		Errors:              append([]string(nil), state.Errors...),
+		UpdatedAt:           state.UpdatedAt,
+		Metadata:            mapSliceClone(state.Metadata),
+	}
+
+	for _, pipeline := range state.Pipelines {
+		result.Pipelines = append(result.Pipelines, workspaceCoordPipelineFromModel(pipeline))
+	}
+
+	return result
+}
+
+func workspaceCoordPipelineFromModel(pipeline webmodel.Pipeline) service.WorkspacePipeline {
+	result := service.WorkspacePipeline{
+		ID:     pipeline.ID,
+		Name:   pipeline.Name,
+		Path:   pipeline.Path,
+		Assets: make([]service.WorkspaceAsset, 0, len(pipeline.Assets)),
+	}
+
+	for _, asset := range pipeline.Assets {
+		result.Assets = append(result.Assets, workspaceCoordAssetFromModel(asset))
+	}
+
+	return result
+}
+
+func workspaceCoordAssetFromModel(asset webmodel.Asset) service.WorkspaceAsset {
+	return service.WorkspaceAsset{
+		ID:        asset.ID,
+		Name:      asset.Name,
+		Path:      asset.Path,
+		Content:   asset.Content,
+		Upstreams: append([]string(nil), asset.Upstreams...),
+	}
+}
+
+func workspaceStateFromCoord(state service.WorkspaceState) workspaceState {
+	result := workspaceState{
+		Pipelines:           make([]webPipeline, 0, len(state.Pipelines)),
+		Connections:         mapsClone(state.Connections),
+		SelectedEnvironment: state.SelectedEnvironment,
+		Errors:              append([]string(nil), state.Errors...),
+		UpdatedAt:           state.UpdatedAt,
+		Metadata:            mapSliceClone(state.Metadata),
+		Revision:            state.Revision,
+	}
+
+	for _, pipeline := range state.Pipelines {
+		result.Pipelines = append(result.Pipelines, workspacePipelineFromCoord(pipeline))
+	}
+
+	return result
+}
+
+func workspaceCoordStateFromWeb(state workspaceState) service.WorkspaceState {
+	result := service.WorkspaceState{
+		Pipelines:           make([]service.WorkspacePipeline, 0, len(state.Pipelines)),
+		Connections:         mapsClone(state.Connections),
+		SelectedEnvironment: state.SelectedEnvironment,
+		Errors:              append([]string(nil), state.Errors...),
+		UpdatedAt:           state.UpdatedAt,
+		Metadata:            mapSliceClone(state.Metadata),
+		Revision:            state.Revision,
+	}
+
+	for _, pipeline := range state.Pipelines {
+		assets := make([]service.WorkspaceAsset, 0, len(pipeline.Assets))
+		for _, asset := range pipeline.Assets {
+			assets = append(assets, service.WorkspaceAsset{
+				ID:        asset.ID,
+				Name:      asset.Name,
+				Path:      asset.Path,
+				Content:   asset.Content,
+				Upstreams: append([]string(nil), asset.Upstreams...),
+			})
+		}
+		result.Pipelines = append(result.Pipelines, service.WorkspacePipeline{
+			ID:     pipeline.ID,
+			Name:   pipeline.Name,
+			Path:   pipeline.Path,
+			Assets: assets,
+		})
+	}
+
+	return result
+}
+
+func workspacePipelineFromCoord(pipeline service.WorkspacePipeline) webPipeline {
+	result := webPipeline{
+		ID:     pipeline.ID,
+		Name:   pipeline.Name,
+		Path:   pipeline.Path,
+		Assets: make([]webAsset, 0, len(pipeline.Assets)),
+	}
+
+	for _, asset := range pipeline.Assets {
+		result.Assets = append(result.Assets, webAsset{
+			ID:        asset.ID,
+			Name:      asset.Name,
+			Path:      asset.Path,
+			Content:   asset.Content,
+			Upstreams: append([]string(nil), asset.Upstreams...),
+		})
 	}
 
 	return result
@@ -670,13 +642,13 @@ func (s *webServer) resolveConfigFilePath() string {
 }
 
 func (s *webServer) ConfigChanged(ctx context.Context, relPath, eventType string) {
-	s.suppressWatcherFor(relPath)
-	s.pushWorkspaceUpdateImmediate(ctx, eventType, relPath)
+	s.workspaceCoord.SuppressWatcherFor(relPath)
+	s.workspaceCoord.PushUpdateImmediate(ctx, eventType, relPath)
 }
 
 func (s *webServer) WorkspaceChanged(ctx context.Context, relPath, eventType string) {
-	s.suppressWatcherFor(relPath)
-	s.pushWorkspaceUpdateImmediate(ctx, eventType, relPath)
+	s.workspaceCoord.SuppressWatcherFor(relPath)
+	s.workspaceCoord.PushUpdateImmediate(ctx, eventType, relPath)
 }
 
 func (s *webServer) CurrentWorkspace() any {
@@ -684,19 +656,15 @@ func (s *webServer) CurrentWorkspace() any {
 }
 
 func (s *webServer) CurrentWorkspaceLite() any {
-	return webhttpapi.WorkspaceUpdatedEvent{
-		Type:      "workspace.updated",
-		Workspace: stripAssetContent(s.currentState()),
-		Lite:      true,
-	}
+	return s.workspaceCoord.CurrentStateLiteEvent()
 }
 
 func (s *webServer) SubscribeWorkspaceEvents() chan []byte {
-	return s.hub.Subscribe()
+	return s.workspaceCoord.Subscribe()
 }
 
 func (s *webServer) UnsubscribeWorkspaceEvents(ch chan []byte) {
-	s.hub.Unsubscribe(ch)
+	s.workspaceCoord.Unsubscribe(ch)
 }
 
 func (s *webServer) writeJSON(w http.ResponseWriter, status int, body any) {
@@ -763,18 +731,6 @@ func (s *webServer) FormatSQLAsset(ctx context.Context, assetID string, req webh
 		return formatSQLAssetResponse{}, &apiError{Status: err.Status, Code: err.Code, Message: err.Message}
 	}
 	return formatSQLAssetResponse(result), nil
-}
-
-func replaceAssetNameReferences(content, oldName, newName string) string {
-	return service.ReplaceAssetNameReferences(content, oldName, newName)
-}
-
-func quoteQualifiedIdentifier(value string) string {
-	return service.QuoteQualifiedIdentifier(value)
-}
-
-func readStringField(row map[string]any, keys ...string) string {
-	return service.ReadStringField(row, keys...)
 }
 
 func (s *webServer) FillColumnsFromDB(ctx context.Context, assetID string) (int, map[string]any, *apiError) {
@@ -872,14 +828,6 @@ func (s *webServer) InferAssetColumns(ctx context.Context, assetID string) (int,
 	}, nil
 }
 
-func buildInferAssetColumnsCommand(parsedPipeline *pipeline.Pipeline, asset *pipeline.Asset) ([]string, error) {
-	return service.BuildInferAssetColumnsCommand(parsedPipeline, asset)
-}
-
-func buildRemoteTableColumnsCommand(connectionName, query, environment string) []string {
-	return service.BuildRemoteTableColumnsCommand(connectionName, query, environment)
-}
-
 func (s *webServer) UpdateAssetColumns(ctx context.Context, assetID string, columns []any) (map[string]string, *apiError) {
 	_, parsedPipeline, asset, err := s.resolveAssetByID(ctx, assetID)
 	if err != nil {
@@ -936,353 +884,6 @@ func (s *webServer) getDuckDBOperationMutex(lockKey string) *sync.Mutex {
 	return mu
 }
 
-func (s *webServer) handleGetIngestrSuggestions(w http.ResponseWriter, r *http.Request) {
-	connectionName := strings.TrimSpace(r.URL.Query().Get("connection"))
-	if connectionName == "" {
-		webapi.WriteBadRequest(w, "connection_required", "connection query parameter is required")
-		return
-	}
-
-	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
-	environment := strings.TrimSpace(r.URL.Query().Get("environment"))
-
-	manager, err := s.newConnectionManager(r.Context(), environment)
-	if err != nil {
-		webapi.WriteInternalError(w, "connection_manager_failed", err.Error())
-		return
-	}
-
-	conn := manager.GetConnection(connectionName)
-	if conn == nil {
-		webapi.WriteBadRequest(w, "connection_not_found", fmt.Sprintf("connection '%s' not found", connectionName))
-		return
-	}
-
-	connType := strings.TrimSpace(manager.GetConnectionType(connectionName))
-	response := ingestrSuggestionsResponse{
-		Status:         "ok",
-		ConnectionType: connType,
-		Suggestions:    []ingestrSuggestionItem{},
-	}
-
-	if s3Conn, ok := conn.(interface {
-		ListBuckets(ctx context.Context) ([]string, error)
-		ListEntries(ctx context.Context, bucketName, prefix string) ([]string, error)
-	}); ok {
-		items, itemErr := buildS3SuggestionItems(
-			r.Context(),
-			s3Conn,
-			prefix,
-			manager.GetConnectionDetails(connectionName),
-		)
-		if itemErr != nil {
-			webapi.WriteBadRequest(w, "ingestr_s3_suggestions_failed", itemErr.Error())
-			return
-		}
-		response.Suggestions = items
-		s.writeJSON(w, http.StatusOK, response)
-		return
-	}
-
-	if fetcherWithSchemas, ok := conn.(interface {
-		GetTablesWithSchemas(ctx context.Context, databaseName string) (map[string][]string, error)
-	}); ok {
-		databaseName := databaseNameForConnectionDetails(manager.GetConnectionDetails(connectionName))
-		if databaseName == "" {
-			webapi.WriteBadRequest(w, "database_name_missing", fmt.Sprintf("connection '%s' has no database configured", connectionName))
-			return
-		}
-
-		tables, tableErr := fetcherWithSchemas.GetTablesWithSchemas(r.Context(), databaseName)
-		if tableErr != nil {
-			webapi.WriteBadRequest(w, "ingestr_table_suggestions_failed", tableErr.Error())
-			return
-		}
-
-		response.Suggestions = buildSchemaTableSuggestionItems(tables, prefix)
-		s.writeJSON(w, http.StatusOK, response)
-		return
-	}
-
-	if fetcher, ok := conn.(interface {
-		GetDatabases(ctx context.Context) ([]string, error)
-		GetTables(ctx context.Context, databaseName string) ([]string, error)
-	}); ok {
-		suggestions, tableErr := buildDuckDBSuggestionItems(r.Context(), fetcher, prefix)
-		if tableErr != nil {
-			webapi.WriteBadRequest(w, "ingestr_table_suggestions_failed", tableErr.Error())
-			return
-		}
-
-		response.Suggestions = suggestions
-		s.writeJSON(w, http.StatusOK, response)
-		return
-	}
-
-	webapi.WriteBadRequest(w, "connection_type_not_supported", fmt.Sprintf("connection '%s' does not support ingestr suggestions", connectionName))
-}
-
-func (s *webServer) handleGetSQLPathSuggestions(w http.ResponseWriter, r *http.Request) {
-	assetID := strings.TrimSpace(chi.URLParam(r, "assetID"))
-	if assetID == "" {
-		webapi.WriteBadRequest(w, "asset_id_required", "asset ID is required")
-		return
-	}
-
-	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
-	if prefix == "" {
-		s.writeJSON(w, http.StatusOK, sqlPathSuggestionsResponse{
-			Status:      "ok",
-			Suggestions: []ingestrSuggestionItem{},
-		})
-		return
-	}
-
-	if _, _, _, err := s.resolveAssetByID(r.Context(), assetID); err != nil {
-		webapi.WriteBadRequest(w, "asset_not_found", err.Error())
-		return
-	}
-
-	response := sqlPathSuggestionsResponse{
-		Status:      "ok",
-		Suggestions: []ingestrSuggestionItem{},
-	}
-
-	switch {
-	case strings.HasPrefix(prefix, "s3://"):
-		environment := strings.TrimSpace(r.URL.Query().Get("environment"))
-		items, err := s.buildSQLS3PathSuggestionItems(r.Context(), prefix, environment)
-		if err != nil {
-			webapi.WriteBadRequest(w, "sql_path_suggestions_failed", err.Error())
-			return
-		}
-		response.Suggestions = items
-	case strings.HasPrefix(prefix, "./"):
-		items, err := buildWorkspacePathSuggestionItems(s.workspaceRoot, prefix)
-		if err != nil {
-			webapi.WriteBadRequest(w, "sql_path_suggestions_failed", err.Error())
-			return
-		}
-		response.Suggestions = items
-	case strings.HasPrefix(prefix, "/"):
-		items, err := buildAbsolutePathSuggestionItems(prefix)
-		if err != nil {
-			webapi.WriteBadRequest(w, "sql_path_suggestions_failed", err.Error())
-			return
-		}
-		response.Suggestions = items
-	}
-
-	s.writeJSON(w, http.StatusOK, response)
-}
-
-func sqlParseContextRangeResponseFromParser(input sqlintelligence.ParseContextRange) sqlParseContextRangeResponse {
-	return sqlParseContextRangeResponse{
-		Start:   input.Start,
-		End:     input.End,
-		Line:    input.Line,
-		Col:     input.Col,
-		EndLine: input.EndLine,
-		EndCol:  input.EndCol,
-	}
-}
-
-func sqlParseContextPartResponsesFromParser(input []sqlintelligence.ParseContextPart) []sqlParseContextPartResponse {
-	result := make([]sqlParseContextPartResponse, 0, len(input))
-	for _, part := range input {
-		result = append(result, sqlParseContextPartResponse{
-			Name:  part.Name,
-			Kind:  part.Kind,
-			Range: sqlParseContextRangeResponseFromParser(part.Range),
-		})
-	}
-
-	return result
-}
-
-func sqlParseContextTableResponsesFromParser(input []sqlintelligence.ParseContextTable) []sqlParseContextTableResponse {
-	result := make([]sqlParseContextTableResponse, 0, len(input))
-	for _, table := range input {
-		item := sqlParseContextTableResponse{
-			Name:         table.Name,
-			SourceKind:   table.SourceKind,
-			ResolvedName: table.ResolvedName,
-			Alias:        table.Alias,
-			Parts:        sqlParseContextPartResponsesFromParser(table.Parts),
-		}
-		if table.AliasRange != nil {
-			aliasRange := sqlParseContextRangeResponseFromParser(*table.AliasRange)
-			item.AliasRange = &aliasRange
-		}
-		result = append(result, item)
-	}
-
-	return result
-}
-
-func sqlParseContextColumnResponsesFromParser(input []sqlintelligence.ParseContextColumn) []sqlParseContextColumnResponse {
-	result := make([]sqlParseContextColumnResponse, 0, len(input))
-	for _, column := range input {
-		result = append(result, sqlParseContextColumnResponse{
-			Name:          column.Name,
-			Qualifier:     column.Qualifier,
-			ResolvedTable: column.ResolvedTable,
-			Parts:         sqlParseContextPartResponsesFromParser(column.Parts),
-		})
-	}
-
-	return result
-}
-
-func buildSQLParseContextSchema(asset *pipeline.Asset, suggestionTables []struct {
-	Name    string `json:"name"`
-	Columns []struct {
-		Name string `json:"name"`
-		Type string `json:"type,omitempty"`
-	} `json:"columns"`
-}) sqlintelligence.Schema {
-	schema := sqlintelligence.Schema{}
-
-	for _, table := range suggestionTables {
-		if strings.TrimSpace(table.Name) == "" {
-			continue
-		}
-
-		columns := map[string]string{}
-		for _, column := range table.Columns {
-			if strings.TrimSpace(column.Name) == "" {
-				continue
-			}
-			columns[column.Name] = strings.TrimSpace(column.Type)
-		}
-
-		if len(columns) > 0 {
-			schema[table.Name] = columns
-		}
-	}
-
-	if asset != nil && strings.TrimSpace(asset.Name) != "" && len(asset.Columns) > 0 {
-		columns := map[string]string{}
-		for _, column := range asset.Columns {
-			if strings.TrimSpace(column.Name) == "" {
-				continue
-			}
-			columns[column.Name] = strings.TrimSpace(column.Type)
-		}
-		if len(columns) > 0 {
-			schema[asset.Name] = columns
-		}
-	}
-
-	return schema
-}
-
-func sqlParseContextDiagnosticResponsesFromParser(input []sqlintelligence.ParseContextDiagnostic) []sqlParseContextDiagnosticResponse {
-	result := make([]sqlParseContextDiagnosticResponse, 0, len(input))
-	for _, diagnostic := range input {
-		item := sqlParseContextDiagnosticResponse{
-			Message:  diagnostic.Message,
-			Severity: diagnostic.Severity,
-		}
-		if diagnostic.Range != nil {
-			rangeValue := sqlParseContextRangeResponseFromParser(*diagnostic.Range)
-			item.Range = &rangeValue
-		}
-		result = append(result, item)
-	}
-
-	return result
-}
-
-func (s *webServer) handleSQLParseContext(w http.ResponseWriter, r *http.Request) {
-	var req sqlParseContextRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	assetID := strings.TrimSpace(req.AssetID)
-	if assetID == "" {
-		webapi.WriteBadRequest(w, "asset_id_required", "asset_id is required")
-		return
-	}
-
-	_, _, asset, err := s.resolveAssetByID(r.Context(), assetID)
-	if err != nil {
-		webapi.WriteBadRequest(w, "asset_not_found", err.Error())
-		return
-	}
-
-	dialect, err := assetTypeToDialect(asset.Type)
-	if err != nil {
-		s.writeJSON(w, http.StatusOK, sqlParseContextResponse{
-			Status:  "ok",
-			AssetID: assetID,
-			Errors:  []string{"unsupported SQL dialect for parse context"},
-			Tables:  []sqlParseContextTableResponse{},
-			Columns: []sqlParseContextColumnResponse{},
-		})
-		return
-	}
-
-	content := req.Content
-	if strings.TrimSpace(content) == "" {
-		content = asset.ExecutableFile.Content
-	}
-	schema := buildSQLParseContextSchema(asset, req.Schema)
-
-	parseContext, err := sqlintelligence.ParseContextWithSchema(content, dialect, schema)
-	if err != nil {
-		s.writeJSON(w, http.StatusOK, sqlParseContextResponse{
-			Status:  "error",
-			AssetID: assetID,
-			Dialect: dialect,
-			Error:   err.Error(),
-			Tables:  []sqlParseContextTableResponse{},
-			Columns: []sqlParseContextColumnResponse{},
-		})
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, sqlParseContextResponse{
-		Status:         "ok",
-		AssetID:        assetID,
-		Dialect:        dialect,
-		QueryKind:      parseContext.QueryKind,
-		IsSingleSelect: parseContext.IsSingleSelect,
-		Tables:         sqlParseContextTableResponsesFromParser(parseContext.Tables),
-		Columns:        sqlParseContextColumnResponsesFromParser(parseContext.Columns),
-		Diagnostics:    sqlParseContextDiagnosticResponsesFromParser(parseContext.Diagnostics),
-		Errors:         parseContext.Errors,
-	})
-}
-
-type runRequest struct {
-	Command    string   `json:"command"`
-	PipelineID string   `json:"pipeline_id"`
-	AssetPath  string   `json:"asset_path"`
-	Args       []string `json:"args"`
-}
-
-func resolvePipelineRunTarget(pipelineID string) (string, error) {
-	relPath, err := decodeID(pipelineID)
-	if err != nil {
-		return "", err
-	}
-
-	cleaned := filepath.Clean(relPath)
-	base := strings.ToLower(filepath.Base(cleaned))
-	if base == "pipeline.yml" || base == "pipeline.yaml" || base == ".pipeline.yml" || base == ".pipeline.yaml" {
-		dir := filepath.Dir(cleaned)
-		if dir == "." {
-			return ".", nil
-		}
-		return filepath.ToSlash(dir), nil
-	}
-
-	return filepath.ToSlash(cleaned), nil
-}
-
 func (s *webServer) ResolvePipelineRunTarget(pipelineID string) error {
 	_, err := resolvePipelineRunTarget(pipelineID)
 	return err
@@ -1309,511 +910,8 @@ func (s *webServer) newConnectionManager(ctx context.Context, environment string
 	return manager, nil
 }
 
-func databaseNameForConnectionDetails(details any) string {
-	switch connectionDetails := details.(type) {
-	case *config.PostgresConnection:
-		return strings.TrimSpace(connectionDetails.Database)
-	case *config.MySQLConnection:
-		return strings.TrimSpace(connectionDetails.Database)
-	case *config.MsSQLConnection:
-		return strings.TrimSpace(connectionDetails.Database)
-	case *config.ClickHouseConnection:
-		return strings.TrimSpace(connectionDetails.Database)
-	case *config.AthenaConnection:
-		return strings.TrimSpace(connectionDetails.Database)
-	case *config.SnowflakeConnection:
-		return strings.TrimSpace(connectionDetails.Database)
-	case *config.DatabricksConnection:
-		return strings.TrimSpace(connectionDetails.Catalog)
-	case *config.VerticaConnection:
-		return strings.TrimSpace(connectionDetails.Database)
-	default:
-		return ""
-	}
-}
-
-func buildSchemaTableSuggestionItems(tables map[string][]string, prefix string) []ingestrSuggestionItem {
-	normalizedPrefix := strings.ToLower(strings.TrimSpace(prefix))
-	items := make([]ingestrSuggestionItem, 0)
-
-	schemas := make([]string, 0, len(tables))
-	for schema := range tables {
-		schemas = append(schemas, schema)
-	}
-	sort.Strings(schemas)
-
-	for _, schema := range schemas {
-		schemaTables := append([]string{}, tables[schema]...)
-		sort.Strings(schemaTables)
-		for _, table := range schemaTables {
-			value := fmt.Sprintf("%s.%s", schema, table)
-			if normalizedPrefix != "" && !strings.HasPrefix(strings.ToLower(value), normalizedPrefix) {
-				continue
-			}
-			items = append(items, ingestrSuggestionItem{
-				Value:  value,
-				Kind:   "table",
-				Detail: schema,
-			})
-		}
-	}
-
-	return limitSuggestionItems(items, 200)
-}
-
-func buildSQLDiscoveryTableItems(databaseName string, tables map[string][]string) []sqlDiscoveryTableItem {
-	items := service.BuildSQLDiscoveryTableItems(databaseName, tables)
-	result := make([]sqlDiscoveryTableItem, 0, len(items))
-	for _, item := range items {
-		result = append(result, sqlDiscoveryTableItem(item))
-	}
-	return result
-}
-
-func buildSQLDiscoveryTableItemsWithoutSchemas(databaseName string, tables []string) []sqlDiscoveryTableItem {
-	items := service.BuildSQLDiscoveryTableItemsWithoutSchemas(databaseName, tables)
-	result := make([]sqlDiscoveryTableItem, 0, len(items))
-	for _, item := range items {
-		result = append(result, sqlDiscoveryTableItem(item))
-	}
-	return result
-}
-
-func buildDuckDBSuggestionItems(
-	ctx context.Context,
-	fetcher interface {
-		GetDatabases(ctx context.Context) ([]string, error)
-		GetTables(ctx context.Context, databaseName string) ([]string, error)
-	},
-	prefix string,
-) ([]ingestrSuggestionItem, error) {
-	schemas, err := fetcher.GetDatabases(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	items := make([]ingestrSuggestionItem, 0)
-	normalizedPrefix := strings.ToLower(strings.TrimSpace(prefix))
-	sort.Strings(schemas)
-
-	for _, schema := range schemas {
-		tables, tableErr := fetcher.GetTables(ctx, schema)
-		if tableErr != nil {
-			return nil, tableErr
-		}
-		sort.Strings(tables)
-		for _, table := range tables {
-			fullName := fmt.Sprintf("%s.%s", schema, table)
-			if normalizedPrefix != "" &&
-				!strings.HasPrefix(strings.ToLower(fullName), normalizedPrefix) &&
-				!strings.HasPrefix(strings.ToLower(table), normalizedPrefix) {
-				continue
-			}
-
-			insertValue := fullName
-			if strings.EqualFold(schema, "main") && normalizedPrefix != "" && !strings.Contains(prefix, ".") {
-				insertValue = table
-			}
-
-			items = append(items, ingestrSuggestionItem{
-				Value:  insertValue,
-				Kind:   "table",
-				Detail: schema,
-			})
-		}
-	}
-
-	return limitSuggestionItems(items, 200), nil
-}
-
-func buildS3SuggestionItems(
-	ctx context.Context,
-	conn interface {
-		ListBuckets(ctx context.Context) ([]string, error)
-		ListEntries(ctx context.Context, bucketName, prefix string) ([]string, error)
-	},
-	prefix string,
-	connectionDetails any,
-) ([]ingestrSuggestionItem, error) {
-	normalizedPrefix := strings.TrimSpace(prefix)
-	configuredBucket, configuredPrefix := s3SuggestionContext(connectionDetails)
-	if configuredBucket != "" {
-		lookupPrefix := normalizedPrefix
-		if lookupPrefix == "" {
-			lookupPrefix = configuredPrefix
-		}
-
-		items, err := conn.ListEntries(ctx, configuredBucket, lookupPrefix)
-		if err != nil {
-			return nil, err
-		}
-
-		return buildS3EntrySuggestionItems(items), nil
-	}
-
-	if normalizedPrefix == "" || !strings.Contains(normalizedPrefix, "/") {
-		buckets, err := conn.ListBuckets(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		items := make([]ingestrSuggestionItem, 0, len(buckets))
-		filter := strings.ToLower(normalizedPrefix)
-		for _, bucket := range buckets {
-			if filter != "" && !strings.HasPrefix(strings.ToLower(bucket), filter) {
-				continue
-			}
-			items = append(items, ingestrSuggestionItem{
-				Value:  bucket + "/",
-				Kind:   "bucket",
-				Detail: "S3 bucket",
-			})
-		}
-
-		return limitSuggestionItems(items, 200), nil
-	}
-
-	bucketName, keyPrefix, _ := strings.Cut(normalizedPrefix, "/")
-	items, err := conn.ListEntries(ctx, bucketName, keyPrefix)
-	if err != nil {
-		return nil, err
-	}
-
-	return buildS3EntrySuggestionItemsWithBucket(bucketName, items), nil
-}
-
-func (s *webServer) buildSQLS3PathSuggestionItems(
-	ctx context.Context,
-	prefix string,
-	environment string,
-) ([]ingestrSuggestionItem, error) {
-	manager, err := s.newConnectionManager(ctx, environment)
-	if err != nil {
-		return nil, err
-	}
-
-	configPath := s.resolveConfigFilePath()
-	cfg, err := config.LoadOrCreate(afero.NewOsFs(), configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
-	}
-
-	if environment != "" {
-		if err := cfg.SelectEnvironment(environment); err != nil {
-			return nil, fmt.Errorf("failed to select environment '%s': %w", environment, err)
-		}
-	}
-
-	if cfg.SelectedEnvironment == nil || cfg.SelectedEnvironment.Connections == nil {
-		return []ingestrSuggestionItem{}, nil
-	}
-
-	lookupPrefix := strings.TrimPrefix(prefix, "s3://")
-	items := make([]ingestrSuggestionItem, 0)
-	seen := make(map[string]struct{})
-	var firstErr error
-
-	for _, connConfig := range cfg.SelectedEnvironment.Connections.S3 {
-		conn := manager.GetConnection(connConfig.Name)
-		if conn == nil {
-			continue
-		}
-
-		listableConn, ok := conn.(interface {
-			ListBuckets(ctx context.Context) ([]string, error)
-			ListEntries(ctx context.Context, bucketName, prefix string) ([]string, error)
-		})
-		if !ok {
-			continue
-		}
-
-		connectionDetails := manager.GetConnectionDetails(connConfig.Name)
-		if connectionDetails == nil {
-			connectionDetails = &connConfig
-		}
-
-		connItems, itemErr := buildS3SuggestionItems(ctx, listableConn, lookupPrefix, connectionDetails)
-		if itemErr != nil {
-			if firstErr == nil {
-				firstErr = itemErr
-			}
-			continue
-		}
-
-		for _, item := range connItems {
-			item.Value = "s3://" + strings.TrimPrefix(item.Value, "s3://")
-			if item.Detail != "" {
-				item.Detail = fmt.Sprintf("%s (%s)", item.Detail, connConfig.Name)
-			} else {
-				item.Detail = connConfig.Name
-			}
-
-			key := strings.ToLower(item.Value) + "::" + item.Kind
-			if _, exists := seen[key]; exists {
-				continue
-			}
-			seen[key] = struct{}{}
-			items = append(items, item)
-		}
-	}
-
-	if len(items) == 0 && firstErr != nil {
-		return nil, firstErr
-	}
-
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].Value < items[j].Value
-	})
-
-	return limitSuggestionItems(items, 200), nil
-}
-
-func s3SuggestionContext(connectionDetails any) (string, string) {
-	s3Connection, ok := connectionDetails.(*config.S3Connection)
-	if !ok || s3Connection == nil {
-		return "", ""
-	}
-
-	bucketName := strings.TrimSpace(s3Connection.BucketName)
-	pathPrefix := strings.TrimSpace(s3Connection.PathToFile)
-	if pathPrefix != "" && !strings.HasSuffix(pathPrefix, "/") {
-		pathPrefix += "/"
-	}
-
-	return bucketName, pathPrefix
-}
-
-func buildS3EntrySuggestionItems(items []string) []ingestrSuggestionItem {
-	suggestions := make([]ingestrSuggestionItem, 0, len(items))
-	for _, item := range items {
-		kind := "file"
-		detail := "S3 object"
-		if strings.HasSuffix(item, "/") {
-			kind = "prefix"
-			detail = "S3 prefix"
-		}
-		suggestions = append(suggestions, ingestrSuggestionItem{
-			Value:  item,
-			Kind:   kind,
-			Detail: detail,
-		})
-	}
-	return limitSuggestionItems(suggestions, 200)
-}
-
-// DuckDB queries executed from Bruin Web inherit the workspace root as cwd,
-// so relative file suggestions should resolve from that same location.
-func buildWorkspacePathSuggestionItems(workspaceRoot string, prefix string) ([]ingestrSuggestionItem, error) {
-	relativePrefix := strings.TrimPrefix(prefix, "./")
-	searchDir, typedDirectory, fragment := splitRelativePathLookup(workspaceRoot, relativePrefix, prefix)
-
-	entries, err := os.ReadDir(searchDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []ingestrSuggestionItem{}, nil
-		}
-		return nil, err
-	}
-
-	items := make([]ingestrSuggestionItem, 0, len(entries))
-	filter := strings.ToLower(fragment)
-	for _, entry := range entries {
-		name := entry.Name()
-		if filter != "" && !strings.HasPrefix(strings.ToLower(name), filter) {
-			continue
-		}
-
-		displayPath := "./" + name
-		if typedDirectory != "" {
-			displayPath = "./" + filepath.ToSlash(filepath.Join(typedDirectory, name))
-		}
-
-		kind := "file"
-		detail := "Workspace file"
-		if entry.IsDir() {
-			displayPath += "/"
-			kind = "directory"
-			detail = "Workspace directory"
-		}
-
-		items = append(items, ingestrSuggestionItem{
-			Value:  displayPath,
-			Kind:   kind,
-			Detail: detail,
-		})
-	}
-
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].Value < items[j].Value
-	})
-
-	return limitSuggestionItems(items, 200), nil
-}
-
-func buildAbsolutePathSuggestionItems(prefix string) ([]ingestrSuggestionItem, error) {
-	searchDir, displayDirectory, fragment := splitAbsolutePathLookup(prefix)
-
-	entries, err := os.ReadDir(searchDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []ingestrSuggestionItem{}, nil
-		}
-		return nil, err
-	}
-
-	items := make([]ingestrSuggestionItem, 0, len(entries))
-	filter := strings.ToLower(fragment)
-	for _, entry := range entries {
-		name := entry.Name()
-		if filter != "" && !strings.HasPrefix(strings.ToLower(name), filter) {
-			continue
-		}
-
-		displayPath := filepath.ToSlash(filepath.Join(displayDirectory, name))
-		if displayDirectory == string(filepath.Separator) {
-			displayPath = string(filepath.Separator) + name
-		}
-
-		kind := "file"
-		detail := "Local file"
-		if entry.IsDir() {
-			displayPath += "/"
-			kind = "directory"
-			detail = "Local directory"
-		}
-
-		items = append(items, ingestrSuggestionItem{
-			Value:  displayPath,
-			Kind:   kind,
-			Detail: detail,
-		})
-	}
-
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].Value < items[j].Value
-	})
-
-	return limitSuggestionItems(items, 200), nil
-}
-
-func splitRelativePathLookup(workspaceRoot string, relativePrefix string, rawPrefix string) (string, string, string) {
-	trimmed := relativePrefix
-	if strings.HasSuffix(rawPrefix, "/") {
-		typedDirectory := strings.TrimSuffix(trimmed, "/")
-		if typedDirectory == "." {
-			typedDirectory = ""
-		}
-		return filepath.Join(workspaceRoot, typedDirectory), typedDirectory, ""
-	}
-
-	fragment := filepath.Base(trimmed)
-	typedDirectory := filepath.Dir(trimmed)
-	if typedDirectory == "." {
-		typedDirectory = ""
-	}
-
-	return filepath.Join(workspaceRoot, typedDirectory), typedDirectory, fragment
-}
-
-func splitAbsolutePathLookup(prefix string) (string, string, string) {
-	if strings.HasSuffix(prefix, "/") {
-		directory := filepath.Clean(prefix)
-		if directory == "." {
-			directory = string(filepath.Separator)
-		}
-		return directory, directory, ""
-	}
-
-	searchDir := filepath.Dir(prefix)
-	displayDirectory := searchDir
-	if displayDirectory == "." {
-		displayDirectory = string(filepath.Separator)
-	}
-
-	return searchDir, displayDirectory, filepath.Base(prefix)
-}
-
-func buildS3EntrySuggestionItemsWithBucket(bucketName string, items []string) []ingestrSuggestionItem {
-	suggestions := make([]ingestrSuggestionItem, 0, len(items))
-	for _, item := range items {
-		kind := "file"
-		detail := "S3 object"
-		if strings.HasSuffix(item, "/") {
-			kind = "prefix"
-			detail = "S3 prefix"
-		}
-		suggestions = append(suggestions, ingestrSuggestionItem{
-			Value:  bucketName + "/" + item,
-			Kind:   kind,
-			Detail: detail,
-		})
-	}
-
-	return limitSuggestionItems(suggestions, 200)
-}
-
-func limitSuggestionItems(items []ingestrSuggestionItem, max int) []ingestrSuggestionItem {
-	if max <= 0 || len(items) <= max {
-		return items
-	}
-	return items[:max]
-}
-
 func (s *webServer) MaterializePipelineStream(ctx context.Context, pipelineID string, onChunk func([]byte)) executionMaterializeEvent {
 	return executionMaterializeEvent(s.executionSvc.MaterializePipelineStream(ctx, pipelineID, onChunk))
-}
-
-func (s *webServer) handleRun(w http.ResponseWriter, r *http.Request) {
-	var req runRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webapi.WriteBadRequest(w, "invalid_request_body", err.Error())
-		return
-	}
-
-	command := req.Command
-	if command == "" {
-		command = "run"
-	}
-
-	if !service.IsCommandAllowed(command) {
-		webapi.WriteBadRequest(w, "command_not_allowed",
-			fmt.Sprintf("command %q is not allowed; permitted commands: run, query, patch, lint", command))
-		return
-	}
-
-	target := "."
-	if req.PipelineID != "" {
-		relPath, err := resolvePipelineRunTarget(req.PipelineID)
-		if err != nil {
-			webapi.WriteBadRequest(w, "invalid_pipeline_id", "invalid pipeline id")
-			return
-		}
-		target = relPath
-	}
-
-	if req.AssetPath != "" {
-		target = req.AssetPath
-	}
-
-	cmdArgs := append([]string{command, target}, req.Args...)
-	output, err := s.runner.Run(r.Context(), cmdArgs)
-	if err != nil {
-		s.writeJSON(w, http.StatusBadRequest, map[string]any{
-			"status":    "error",
-			"command":   cmdArgs,
-			"output":    string(output),
-			"error":     err.Error(),
-			"exit_code": 1,
-		})
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, map[string]any{
-		"status":    "ok",
-		"command":   cmdArgs,
-		"output":    string(output),
-		"exit_code": 0,
-	})
 }
 
 func (s *webServer) handleStatic(w http.ResponseWriter, r *http.Request) {
@@ -1831,168 +929,27 @@ func (s *webServer) handleStatic(w http.ResponseWriter, r *http.Request) {
 // write (API handler or patch timer). Filesystem watcher events for this
 // path will be suppressed for a short window to avoid duplicate notifications.
 func (s *webServer) suppressWatcherFor(eventPath string) {
-	normalized := filepath.ToSlash(eventPath)
-	s.recentServerWritesMu.Lock()
-	s.recentServerWrites[normalized] = time.Now()
-	s.recentServerWritesMu.Unlock()
+	s.workspaceCoord.SuppressWatcherFor(eventPath)
 }
 
 // isWatcherSuppressed returns true if the given path was recently handled by
 // a server-initiated write and the filesystem watcher event should be skipped.
 func (s *webServer) isWatcherSuppressed(eventPath string) bool {
-	normalized := filepath.ToSlash(eventPath)
-	s.recentServerWritesMu.Lock()
-	defer s.recentServerWritesMu.Unlock()
-	t, ok := s.recentServerWrites[normalized]
-	if !ok {
-		return false
-	}
-	if time.Since(t) < 2*time.Second {
-		return true
-	}
-	delete(s.recentServerWrites, normalized)
-	return false
+	return s.workspaceCoord.IsWatcherSuppressed(eventPath)
 }
 
 func (s *webServer) pushWorkspaceUpdate(ctx context.Context, eventType, eventPath string) {
-	_ = s.refreshWorkspace(ctx)
-	state := s.currentState()
-	// For file changes: only the directly edited asset needs re-inspection.
-	// Its SQL changed, but no table data changed yet — downstreams still query
-	// the same underlying tables and get identical results.
-	changed := s.findDirectlyChangedAssetIDs(filepath.ToSlash(eventPath))
-
-	// Record content-change timestamps in the freshness tracker.
-	now := time.Now().UTC()
-	for _, id := range changed {
-		if name := s.findAssetNameByID(id); name != "" {
-			s.freshness.RecordContentChange(name, now)
-		}
-	}
-
-	s.hub.Publish(workspaceEvent{
-		Type:            eventType,
-		Path:            filepath.ToSlash(eventPath),
-		Workspace:       stripAssetContent(state),
-		Lite:            true,
-		ChangedAssetIDs: changed,
-	})
+	s.workspaceCoord.PushUpdate(ctx, eventType, eventPath)
 }
 
 // pushWorkspaceUpdateImmediate publishes immediately (bypasses debounce).
 // Used by API handlers that need the client to see the change right away.
 func (s *webServer) pushWorkspaceUpdateImmediate(ctx context.Context, eventType, eventPath string) {
-	s.pushWorkspaceUpdateImmediateWithChangedIDs(ctx, eventType, eventPath, nil)
+	s.workspaceCoord.PushUpdateImmediate(ctx, eventType, eventPath)
 }
 
 func (s *webServer) pushWorkspaceUpdateImmediateWithChangedIDs(ctx context.Context, eventType, eventPath string, changedAssetIDs []string) {
-	_ = s.refreshWorkspace(ctx)
-	state := s.currentState()
-	changed := changedAssetIDs
-	if len(changed) == 0 {
-		changed = s.findDirectlyChangedAssetIDs(filepath.ToSlash(eventPath))
-	}
-
-	now := time.Now().UTC()
-	for _, id := range changed {
-		if name := s.findAssetNameByID(id); name != "" {
-			s.freshness.RecordContentChange(name, now)
-		}
-	}
-
-	s.hub.PublishImmediate(workspaceEvent{
-		Type:            eventType,
-		Path:            filepath.ToSlash(eventPath),
-		Workspace:       stripAssetContentKeepingIDs(state, changed),
-		Lite:            true,
-		ChangedAssetIDs: changed,
-	})
-}
-
-// stripAssetContent returns a copy of the workspace state with asset Content
-// fields emptied. This dramatically reduces SSE payload size.
-// The full state (with content) is still available via GET /api/workspace.
-func stripAssetContent(state workspaceState) workspaceState {
-	lite := state
-	lite.Pipelines = make([]webPipeline, len(state.Pipelines))
-	for i, p := range state.Pipelines {
-		litePipeline := p
-		litePipeline.Assets = make([]webAsset, len(p.Assets))
-		for j, a := range p.Assets {
-			a.Content = ""
-			litePipeline.Assets[j] = a
-		}
-		lite.Pipelines[i] = litePipeline
-	}
-	return lite
-}
-
-func stripAssetContentKeepingIDs(state workspaceState, keepIDs []string) workspaceState {
-	if len(keepIDs) == 0 {
-		return stripAssetContent(state)
-	}
-
-	keep := make(map[string]struct{}, len(keepIDs))
-	for _, id := range keepIDs {
-		keep[id] = struct{}{}
-	}
-
-	lite := state
-	lite.Pipelines = make([]webPipeline, len(state.Pipelines))
-	for i, p := range state.Pipelines {
-		litePipeline := p
-		litePipeline.Assets = make([]webAsset, len(p.Assets))
-		for j, a := range p.Assets {
-			if _, ok := keep[a.ID]; !ok {
-				a.Content = ""
-			}
-			litePipeline.Assets[j] = a
-		}
-		lite.Pipelines[i] = litePipeline
-	}
-
-	return lite
-}
-
-// assetEntry is a lightweight struct used by the asset-graph helpers.
-type assetEntry struct {
-	id        string
-	name      string
-	path      string
-	upstreams []string
-}
-
-// buildAssetIndex creates the full asset list and name→ID mapping from the
-// current workspace state. Callers should not hold stateMu.
-func (s *webServer) buildAssetIndex() ([]assetEntry, map[string]string) {
-	state := s.currentState()
-	var all []assetEntry
-	nameToID := make(map[string]string)
-	for _, p := range state.Pipelines {
-		for _, a := range p.Assets {
-			all = append(all, assetEntry{
-				id:        a.ID,
-				name:      a.Name,
-				path:      a.Path,
-				upstreams: a.Upstreams,
-			})
-			nameToID[a.Name] = a.ID
-		}
-	}
-	return all, nameToID
-}
-
-// buildDownstreamIndex returns assetID → list of direct downstream IDs.
-func buildDownstreamIndex(assets []assetEntry, nameToID map[string]string) map[string][]string {
-	downstream := make(map[string][]string)
-	for _, a := range assets {
-		for _, upName := range a.upstreams {
-			if upID, ok := nameToID[upName]; ok {
-				downstream[upID] = append(downstream[upID], a.id)
-			}
-		}
-	}
-	return downstream
+	s.workspaceCoord.PushUpdateImmediateWithChangedIDs(ctx, eventType, eventPath, changedAssetIDs)
 }
 
 // findDirectlyChangedAssetIDs returns only the asset IDs whose source file
@@ -2000,17 +957,7 @@ func buildDownstreamIndex(assets []assetEntry, nameToID map[string]string) map[s
 // events where only the edited asset's inspect result would change (its SQL
 // changed, but no table data changed yet).
 func (s *webServer) findDirectlyChangedAssetIDs(eventPath string) []string {
-	assets, _ := s.buildAssetIndex()
-	normalizedEvent := filepath.ToSlash(eventPath)
-
-	var result []string
-	for _, a := range assets {
-		if pathContains(normalizedEvent, a.path) {
-			result = append(result, a.id)
-		}
-	}
-	sort.Strings(result)
-	return result
+	return s.workspaceCoord.FindDirectlyChangedAssetIDs(eventPath)
 }
 
 // findMaterializationInspectIDs returns the given asset IDs plus their direct
@@ -2020,120 +967,13 @@ func (s *webServer) findDirectlyChangedAssetIDs(eventPath string) []string {
 // still read from the direct downstream's un-materialized table, so they are
 // not affected for inspect purposes.
 func (s *webServer) findMaterializationInspectIDs(assetIDs ...string) []string {
-	assets, nameToID := s.buildAssetIndex()
-	downstream := buildDownstreamIndex(assets, nameToID)
-
-	seen := make(map[string]struct{})
-	for _, id := range assetIDs {
-		seen[id] = struct{}{}
-		for _, child := range downstream[id] {
-			seen[child] = struct{}{}
-		}
-	}
-
-	result := make([]string, 0, len(seen))
-	for id := range seen {
-		result = append(result, id)
-	}
-	sort.Strings(result)
-	return result
-}
-
-// findAllDownstreamIDs returns the given asset IDs plus ALL transitive
-// downstream dependents (BFS). Used for materialization-staleness tracking:
-// if asset A's content changes, A and every transitive dependent is stale
-// from a materialization perspective.
-func (s *webServer) findAllDownstreamIDs(eventPath string) []string {
-	assets, nameToID := s.buildAssetIndex()
-	normalizedEvent := filepath.ToSlash(eventPath)
-	downstream := buildDownstreamIndex(assets, nameToID)
-
-	// Find directly changed assets.
-	roots := make(map[string]struct{})
-	for _, a := range assets {
-		if pathContains(normalizedEvent, a.path) {
-			roots[a.id] = struct{}{}
-		}
-	}
-	if len(roots) == 0 {
-		return nil
-	}
-
-	// BFS to expand all transitive downstreams.
-	visited := make(map[string]struct{})
-	queue := make([]string, 0, len(roots))
-	for id := range roots {
-		queue = append(queue, id)
-		visited[id] = struct{}{}
-	}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		for _, child := range downstream[current] {
-			if _, ok := visited[child]; !ok {
-				visited[child] = struct{}{}
-				queue = append(queue, child)
-			}
-		}
-	}
-
-	result := make([]string, 0, len(visited))
-	for id := range visited {
-		result = append(result, id)
-	}
-	sort.Strings(result)
-	return result
-}
-
-// pathContains checks whether eventPath matches or is a parent of assetPath.
-func pathContains(eventPath, assetPath string) bool {
-	eventPath = filepath.ToSlash(filepath.Clean(eventPath))
-	assetPath = filepath.ToSlash(filepath.Clean(assetPath))
-
-	if eventPath == assetPath {
-		return true
-	}
-	// The event might be a directory change that contains the asset file.
-	if strings.HasPrefix(assetPath, eventPath+"/") {
-		return true
-	}
-
-	base := filepath.Base(eventPath)
-
-	// If the pipeline manifest changes, all assets under that pipeline's assets/
-	// folder should be considered affected.
-	if base == "pipeline.yml" || base == ".pipeline.yml" {
-		assetsDir := filepath.ToSlash(filepath.Join(filepath.Dir(eventPath), "assets"))
-		if strings.HasPrefix(assetPath, assetsDir+"/") {
-			return true
-		}
-	}
-
-	// Asset-level metadata files affect assets in the same folder.
-	if base == "asset.yml" || base == ".asset.yml" ||
-		base == "schema.yml" || base == "schema.yaml" ||
-		base == "checks.yml" || base == "checks.yaml" ||
-		base == "source.yml" || base == "source.yaml" {
-		if filepath.Dir(eventPath) == filepath.Dir(assetPath) {
-			return true
-		}
-	}
-
-	return false
+	return s.workspaceCoord.FindMaterializationInspectIDs(assetIDs...)
 }
 
 // findAssetNameByID looks up the asset name for a given encoded asset ID
 // from the current workspace state.
 func (s *webServer) findAssetNameByID(assetID string) string {
-	state := s.currentState()
-	for _, p := range state.Pipelines {
-		for _, a := range p.Assets {
-			if a.ID == assetID {
-				return a.Name
-			}
-		}
-	}
-	return ""
+	return s.workspaceCoord.FindAssetNameByID(assetID)
 }
 
 // handleGetAssetFreshness returns freshness timestamps for all tracked assets.
@@ -2440,6 +1280,22 @@ func (s *webServer) Tables(ctx context.Context, connectionName, databaseName, en
 
 func (s *webServer) TableColumns(ctx context.Context, connectionName, tableName, environment string) (service.SQLTableColumnsResult, int) {
 	return s.sqlSvc.TableColumns(ctx, connectionName, tableName, environment)
+}
+
+func (s *webServer) Ingestr(ctx context.Context, connectionName, prefix, environment string) (service.IngestrSuggestionsResult, *service.SuggestionAPIError) {
+	return s.suggestionsSvc.Ingestr(ctx, connectionName, prefix, environment)
+}
+
+func (s *webServer) SQLPath(ctx context.Context, assetID, prefix, environment string) (service.SQLPathSuggestionsResult, *service.SuggestionAPIError) {
+	return s.suggestionsSvc.SQLPath(ctx, assetID, prefix, environment)
+}
+
+func (s *webServer) ParseContext(ctx context.Context, assetID, content string, schema []service.ParseContextSchemaTable) (service.ParseContextResult, *service.ParseContextAPIError) {
+	return s.parseContextSvc.Parse(ctx, assetID, content, schema)
+}
+
+func (s *webServer) Run(ctx context.Context, req service.RunRequest) service.RunResult {
+	return s.runSvc.Execute(ctx, req)
 }
 
 func extractColumnNames(value any) []string {

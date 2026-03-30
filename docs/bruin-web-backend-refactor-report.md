@@ -22,6 +22,10 @@ Completed extractions so far:
 - asset rename dependency refactor and deferred SQL patch scheduling now live in `internal/web/service/asset.go`
 - materialization inspection, freshness evaluation, query JSON parsing, and connection-query helpers now live in `internal/web/service/execution.go`
 - SQL database discovery, table discovery, table-column introspection, and column-values execution now use `internal/web/service/sql.go` and `internal/web/httpapi/sql.go`
+- ingestr suggestions and SQL path suggestions now use `internal/web/service/suggestions.go` and `internal/web/httpapi/suggestions.go`
+- SQL parse-context now uses `internal/web/service/parse_context.go` and `internal/web/httpapi/parse_context.go`
+- ad hoc command execution via `/api/run` now uses `internal/web/service/run.go` and `internal/web/httpapi/run.go`
+- workspace snapshot storage, revisioning, watcher suppression, change fan-out, and changed-asset ID calculation now center on `internal/web/service/workspace_coordinator.go`
 
 Current canonical ownership:
 
@@ -36,8 +40,16 @@ What still remains in `cmd/web.go`:
 
 - process bootstrap and dependency wiring
 - route registration and adapter methods used by `internal/web/httpapi`
-- several Bruin Web request/response DTOs that have not yet been made canonical elsewhere
-- SQL suggestions, SQL parse-context, and run endpoints
+- Bruin Web-specific DTO conversions between internal service/model types and the existing web response shapes
+- a small compatibility helper layer retained mainly for `cmd/web_test.go`
+
+Recent cleanup notes:
+
+- dead SQL discovery / suggestion response DTOs were removed from `cmd/web.go`
+- dead duplicate dialect/wrapper helpers were removed from `cmd/web.go`
+- dead downstream-expansion runtime helpers were removed from `cmd/web.go` once workspace coordination moved to `internal/web/service/workspace_coordinator.go`
+- remaining compatibility shims used mainly by `cmd/web_test.go` were moved into `cmd/web_compat.go`, leaving `cmd/web.go` more focused on composition and active adapters
+- the remaining top-level DTOs in `cmd/web.go` are still part of the active web-state conversion path, so moving them further right now would add churn without materially shrinking responsibilities
 - workspace snapshot storage and publish/suppression coordination owned by `webServer`
 
 Verification status for the refactor batches to date:
