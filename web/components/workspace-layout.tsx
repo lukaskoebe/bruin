@@ -18,6 +18,7 @@ import {
   useState,
 } from "react";
 
+import { WorkspaceCommandPalette } from "@/components/workspace-command-palette";
 import { WorkspacePipelineDialogs } from "@/components/workspace-pipeline-dialogs";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { Spinner } from "@/components/ui/spinner";
@@ -375,6 +376,12 @@ export function WorkspaceLayout() {
                     : "Project settings"}
                 </div>
               </div>
+	      <WorkspaceCommandPalette
+                  workspace={workspace}
+                  activePipeline={activePipeline}
+                  selectedAsset={selectedAsset}
+                  currentView={currentView}
+	      />
             </header>
 
             <div className="min-h-0 flex-1 overflow-hidden">

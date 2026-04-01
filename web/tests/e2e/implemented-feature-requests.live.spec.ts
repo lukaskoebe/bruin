@@ -33,7 +33,7 @@ test.describe("implemented feature requests live", () => {
   }) => {
     await page.goto(`${liveApp.baseURL}/`);
 
-    await page.getByRole("link", { name: "analytics.customers" }).click();
+    await openCustomersEditor(page);
     await page.getByRole("button", { name: "Rename asset" }).click();
     const renameInput = page.locator("main").getByRole("textbox").first();
     await renameInput.fill("analytics.customers_live");
@@ -46,7 +46,7 @@ test.describe("implemented feature requests live", () => {
   test("shows the already-saved message on Ctrl+S", async ({ liveApp, page }) => {
     await page.goto(`${liveApp.baseURL}/`);
 
-    await page.getByRole("link", { name: "analytics.customers" }).click();
+    await openCustomersEditor(page);
     await page.locator(".monaco-editor").click();
     await page.keyboard.press("ControlOrMeta+S");
 
@@ -56,7 +56,7 @@ test.describe("implemented feature requests live", () => {
   test("runs inspect from the SQL editor with Ctrl+Enter", async ({ liveApp, page }) => {
     await page.goto(`${liveApp.baseURL}/`);
 
-    await page.getByRole("link", { name: "analytics.customers" }).click();
+    await openCustomersEditor(page);
     await page.locator(".monaco-editor").click();
     await page.keyboard.press("ControlOrMeta+Enter");
 
@@ -65,3 +65,15 @@ test.describe("implemented feature requests live", () => {
     await expect(page.getByRole("cell", { name: "Ada", exact: true })).toBeVisible();
   });
 });
+
+async function openCustomersEditor(page: import("@playwright/test").Page) {
+  const editorAssetName = page.getByTestId("editor-asset-name");
+
+  await expect(page.getByRole("link", { name: "analytics.customers" })).toBeVisible();
+
+  if ((await editorAssetName.textContent())?.trim() !== "analytics.customers") {
+    await page.getByRole("link", { name: "analytics.customers" }).click();
+  }
+
+  await expect(editorAssetName).toHaveText("analytics.customers");
+}

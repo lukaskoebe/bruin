@@ -23,18 +23,49 @@ type WorkspaceEvent struct {
 }
 
 type WorkspaceAsset struct {
-	ID        string
-	Name      string
-	Path      string
-	Content   string
-	Upstreams []string
+	ID                  string            `json:"id"`
+	Name                string            `json:"name"`
+	Type                string            `json:"type"`
+	Path                string            `json:"path"`
+	Content             string            `json:"content"`
+	Upstreams           []string          `json:"upstreams"`
+	Parameters          map[string]string `json:"parameters,omitempty"`
+	Meta                map[string]string `json:"meta,omitempty"`
+	Columns             []WorkspaceColumn `json:"columns,omitempty"`
+	Connection          string            `json:"connection,omitempty"`
+	MaterializationType string            `json:"materialization_type,omitempty"`
+	IsMaterialized      bool              `json:"is_materialized"`
+	MaterializedAs      string            `json:"materialized_as,omitempty"`
+	RowCount            *int64            `json:"row_count,omitempty"`
+}
+
+type WorkspaceColumnCheck struct {
+	Name        string `json:"name"`
+	Value       any    `json:"value,omitempty"`
+	Blocking    *bool  `json:"blocking,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+type WorkspaceColumn struct {
+	Name          string                 `json:"name"`
+	Type          string                 `json:"type,omitempty"`
+	Description   string                 `json:"description,omitempty"`
+	Tags          []string               `json:"tags,omitempty"`
+	PrimaryKey    bool                   `json:"primary_key,omitempty"`
+	UpdateOnMerge bool                   `json:"update_on_merge,omitempty"`
+	MergeSQL      string                 `json:"merge_sql,omitempty"`
+	Nullable      *bool                  `json:"nullable,omitempty"`
+	Owner         string                 `json:"owner,omitempty"`
+	Domains       []string               `json:"domains,omitempty"`
+	Meta          map[string]string      `json:"meta,omitempty"`
+	Checks        []WorkspaceColumnCheck `json:"checks,omitempty"`
 }
 
 type WorkspacePipeline struct {
-	ID     string
-	Name   string
-	Path   string
-	Assets []WorkspaceAsset
+	ID     string           `json:"id"`
+	Name   string           `json:"name"`
+	Path   string           `json:"path"`
+	Assets []WorkspaceAsset `json:"assets"`
 }
 
 type WorkspaceState struct {

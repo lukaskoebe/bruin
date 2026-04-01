@@ -38,6 +38,8 @@ require (
 	github.com/denisbrodbeck/machineid v1.0.1
 	github.com/expr-lang/expr v1.17.7
 	github.com/fatih/color v1.18.0
+	github.com/fsnotify/fsnotify v1.5.4
+	github.com/go-chi/chi/v5 v5.2.3
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/google/uuid v1.6.0
@@ -181,11 +183,9 @@ require (
 	github.com/fatih/structtag v1.2.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/firefart/nonamedreturns v1.0.5 // indirect
-	github.com/fsnotify/fsnotify v1.5.4 // indirect
 	github.com/fzipp/gocyclo v0.6.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.9 // indirect
 	github.com/ghostiam/protogetter v0.3.9 // indirect
-	github.com/go-chi/chi/v5 v5.2.3 // indirect
 	github.com/go-critic/go-critic v0.12.0 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect

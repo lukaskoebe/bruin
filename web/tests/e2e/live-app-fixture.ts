@@ -1,6 +1,13 @@
 import { test as base } from "@playwright/test";
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -22,6 +29,82 @@ export const liveTest = base.extend<{
   liveApp: LiveApp;
 }>({
   fixtureName: ["basic-workspace", { option: true }],
+  page: async ({ page }, use, testInfo) => {
+    const networkEvents: Array<Record<string, unknown>> = [];
+    const requestStartedAt = new WeakMap<object, number>();
+
+    const recordEvent = (event: Record<string, unknown>) => {
+      networkEvents.push({
+        timestamp: new Date().toISOString(),
+        ...event,
+      });
+    };
+
+    const onRequest = (request: Parameters<typeof page.on>[1] extends never ? never : any) => {
+      requestStartedAt.set(request, Date.now());
+      recordEvent({
+        type: "request",
+        method: request.method(),
+        url: request.url(),
+        resourceType: request.resourceType(),
+        headers: request.headers(),
+        postData: request.postData() ?? undefined,
+      });
+    };
+
+    const onResponse = (response: Parameters<typeof page.on>[1] extends never ? never : any) => {
+      const request = response.request();
+      const startedAt = requestStartedAt.get(request);
+      recordEvent({
+        type: "response",
+        method: request.method(),
+        url: response.url(),
+        resourceType: request.resourceType(),
+        status: response.status(),
+        statusText: response.statusText(),
+        ok: response.ok(),
+        durationMs: startedAt ? Date.now() - startedAt : undefined,
+        headers: response.headers(),
+      });
+    };
+
+    const onRequestFailed = (request: Parameters<typeof page.on>[1] extends never ? never : any) => {
+      const startedAt = requestStartedAt.get(request);
+      recordEvent({
+        type: "requestfailed",
+        method: request.method(),
+        url: request.url(),
+        resourceType: request.resourceType(),
+        durationMs: startedAt ? Date.now() - startedAt : undefined,
+        failure: request.failure()?.errorText ?? "unknown",
+      });
+    };
+
+    page.on("request", onRequest);
+    page.on("response", onResponse);
+    page.on("requestfailed", onRequestFailed);
+
+    try {
+      await use(page);
+    } finally {
+      page.off("request", onRequest);
+      page.off("response", onResponse);
+      page.off("requestfailed", onRequestFailed);
+
+      if (testInfo.status !== testInfo.expectedStatus) {
+        const networkLogPath = testInfo.outputPath("network-requests.json");
+        writeFileSync(
+          networkLogPath,
+          JSON.stringify(networkEvents, null, 2),
+          "utf8"
+        );
+        await testInfo.attach("network-requests", {
+          path: networkLogPath,
+          contentType: "application/json",
+        });
+      }
+    }
+  },
   liveApp: async ({ fixtureName }, use) => {
     if (!existsSync(binaryPath)) {
       throw new Error(

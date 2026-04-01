@@ -429,11 +429,20 @@ func workspaceCoordPipelineFromModel(pipeline webmodel.Pipeline) service.Workspa
 
 func workspaceCoordAssetFromModel(asset webmodel.Asset) service.WorkspaceAsset {
 	return service.WorkspaceAsset{
-		ID:        asset.ID,
-		Name:      asset.Name,
-		Path:      asset.Path,
-		Content:   asset.Content,
-		Upstreams: append([]string(nil), asset.Upstreams...),
+		ID:                  asset.ID,
+		Name:                asset.Name,
+		Type:                asset.Type,
+		Path:                asset.Path,
+		Content:             asset.Content,
+		Upstreams:           append([]string(nil), asset.Upstreams...),
+		Parameters:          mapsClone(asset.Parameters),
+		Meta:                mapsClone(asset.Meta),
+		Columns:             workspaceCoordColumnsFromModel(asset.Columns),
+		Connection:          asset.Connection,
+		MaterializationType: asset.MaterializationType,
+		IsMaterialized:      asset.IsMaterialized,
+		MaterializedAs:      asset.MaterializedAs,
+		RowCount:            asset.RowCount,
 	}
 }
 
@@ -470,11 +479,20 @@ func workspaceCoordStateFromWeb(state workspaceState) service.WorkspaceState {
 		assets := make([]service.WorkspaceAsset, 0, len(pipeline.Assets))
 		for _, asset := range pipeline.Assets {
 			assets = append(assets, service.WorkspaceAsset{
-				ID:        asset.ID,
-				Name:      asset.Name,
-				Path:      asset.Path,
-				Content:   asset.Content,
-				Upstreams: append([]string(nil), asset.Upstreams...),
+				ID:                  asset.ID,
+				Name:                asset.Name,
+				Type:                asset.Type,
+				Path:                asset.Path,
+				Content:             asset.Content,
+				Upstreams:           append([]string(nil), asset.Upstreams...),
+				Parameters:          mapsClone(asset.Parameters),
+				Meta:                mapsClone(asset.Meta),
+				Columns:             workspaceCoordColumnsFromWeb(asset.Columns),
+				Connection:          asset.Connection,
+				MaterializationType: asset.MaterializationType,
+				IsMaterialized:      asset.IsMaterialized,
+				MaterializedAs:      asset.MaterializedAs,
+				RowCount:            asset.RowCount,
 			})
 		}
 		result.Pipelines = append(result.Pipelines, service.WorkspacePipeline{
@@ -498,11 +516,20 @@ func workspacePipelineFromCoord(pipeline service.WorkspacePipeline) webPipeline 
 
 	for _, asset := range pipeline.Assets {
 		result.Assets = append(result.Assets, webAsset{
-			ID:        asset.ID,
-			Name:      asset.Name,
-			Path:      asset.Path,
-			Content:   asset.Content,
-			Upstreams: append([]string(nil), asset.Upstreams...),
+			ID:                  asset.ID,
+			Name:                asset.Name,
+			Type:                asset.Type,
+			Path:                asset.Path,
+			Content:             asset.Content,
+			Upstreams:           append([]string(nil), asset.Upstreams...),
+			Parameters:          mapsClone(asset.Parameters),
+			Meta:                mapsClone(asset.Meta),
+			Columns:             webColumnsFromCoord(asset.Columns),
+			Connection:          asset.Connection,
+			MaterializationType: asset.MaterializationType,
+			IsMaterialized:      asset.IsMaterialized,
+			MaterializedAs:      asset.MaterializedAs,
+			RowCount:            asset.RowCount,
 		})
 	}
 
@@ -574,6 +601,99 @@ func webColumnFromModel(column webmodel.Column) webColumn {
 		})
 	}
 
+	return result
+}
+
+func workspaceCoordColumnsFromModel(columns []webmodel.Column) []service.WorkspaceColumn {
+	result := make([]service.WorkspaceColumn, 0, len(columns))
+	for _, column := range columns {
+		checks := make([]service.WorkspaceColumnCheck, 0, len(column.Checks))
+		for _, check := range column.Checks {
+			checks = append(checks, service.WorkspaceColumnCheck{
+				Name:        check.Name,
+				Value:       check.Value,
+				Blocking:    check.Blocking,
+				Description: check.Description,
+			})
+		}
+
+		result = append(result, service.WorkspaceColumn{
+			Name:          column.Name,
+			Type:          column.Type,
+			Description:   column.Description,
+			Tags:          append([]string(nil), column.Tags...),
+			PrimaryKey:    column.PrimaryKey,
+			UpdateOnMerge: column.UpdateOnMerge,
+			MergeSQL:      column.MergeSQL,
+			Nullable:      column.Nullable,
+			Owner:         column.Owner,
+			Domains:       append([]string(nil), column.Domains...),
+			Meta:          mapsClone(column.Meta),
+			Checks:        checks,
+		})
+	}
+	return result
+}
+
+func workspaceCoordColumnsFromWeb(columns []webColumn) []service.WorkspaceColumn {
+	result := make([]service.WorkspaceColumn, 0, len(columns))
+	for _, column := range columns {
+		checks := make([]service.WorkspaceColumnCheck, 0, len(column.Checks))
+		for _, check := range column.Checks {
+			checks = append(checks, service.WorkspaceColumnCheck{
+				Name:        check.Name,
+				Value:       check.Value,
+				Blocking:    check.Blocking,
+				Description: check.Description,
+			})
+		}
+
+		result = append(result, service.WorkspaceColumn{
+			Name:          column.Name,
+			Type:          column.Type,
+			Description:   column.Description,
+			Tags:          append([]string(nil), column.Tags...),
+			PrimaryKey:    column.PrimaryKey,
+			UpdateOnMerge: column.UpdateOnMerge,
+			MergeSQL:      column.MergeSQL,
+			Nullable:      column.Nullable,
+			Owner:         column.Owner,
+			Domains:       append([]string(nil), column.Domains...),
+			Meta:          mapsClone(column.Meta),
+			Checks:        checks,
+		})
+	}
+	return result
+}
+
+func webColumnsFromCoord(columns []service.WorkspaceColumn) []webColumn {
+	result := make([]webColumn, 0, len(columns))
+	for _, column := range columns {
+		checks := make([]webColumnCheck, 0, len(column.Checks))
+		for _, check := range column.Checks {
+			checks = append(checks, webColumnCheck{
+				Name:        check.Name,
+				Value:       check.Value,
+				Blocking:    check.Blocking,
+				Description: check.Description,
+			})
+		}
+
+		result = append(result, webColumn{
+			Name:          column.Name,
+			Type:          column.Type,
+			Description:   column.Description,
+			Tags:          append([]string(nil), column.Tags...),
+			PrimaryKey:    column.PrimaryKey,
+			UpdateOnMerge: column.UpdateOnMerge,
+			MergeSQL:      column.MergeSQL,
+			Nullable:      column.Nullable,
+			Owner:         column.Owner,
+			Domains:       append([]string(nil), column.Domains...),
+			Meta:          mapsClone(column.Meta),
+			Checks:        checks,
+		})
+	}
 	return result
 }
 

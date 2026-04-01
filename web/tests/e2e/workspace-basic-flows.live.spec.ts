@@ -14,7 +14,7 @@ test.describe("workspace live basic flows", () => {
     await expect(page.getByRole("link", { name: "analytics", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "analytics.customers" })).toBeVisible();
 
-    await page.getByRole("link", { name: "analytics.customers" }).click();
+    await openCustomersEditor(page);
 
     await expect(
       page.getByText("analytics.customers", { exact: true }).last()
@@ -30,7 +30,7 @@ test.describe("workspace live basic flows", () => {
   }) => {
     await page.goto(`${liveApp.baseURL}/`);
 
-    await page.getByRole("link", { name: "analytics.customers" }).click();
+    await openCustomersEditor(page);
     await page.getByRole("link", { name: "analytics.orders" }).click();
 
     await expect(
@@ -44,7 +44,7 @@ test.describe("workspace live basic flows", () => {
   test("runs inspect for the selected asset", async ({ liveApp, page }) => {
     await page.goto(`${liveApp.baseURL}/`);
 
-    await page.getByRole("link", { name: "analytics.customers" }).click();
+    await openCustomersEditor(page);
     await page.getByRole("button", { name: "Inspect" }).click();
 
     await expect(page.getByRole("tab", { name: "Inspect" })).toBeVisible();
@@ -55,6 +55,43 @@ test.describe("workspace live basic flows", () => {
       page.getByRole("columnheader", { name: "customer_id", exact: true })
     ).toBeVisible();
     await expect(page.getByRole("cell", { name: "Ada", exact: true })).toBeVisible();
+  });
+
+  test("reveals nested command palette matches from root search", async ({
+    liveApp,
+    page,
+  }) => {
+    await page.goto(`${liveApp.baseURL}/`);
+
+    await openCommandPalette(page);
+
+    const commandInput = page.locator('[data-slot="command-input"]');
+    await commandInput.fill("orders");
+
+    await expect(page.getByRole("option", { name: "analytics.orders analytics" })).toBeVisible();
+    await page.getByRole("option", { name: "analytics.orders analytics" }).click();
+
+    await expect(page.getByTestId("editor-asset-name")).toHaveText("analytics.orders");
+    await expect(page.getByTestId("editor-asset-path")).toHaveText(
+      "analytics/assets/orders.sql"
+    );
+  });
+
+  test("clears the command palette search when entering a nested page", async ({
+    liveApp,
+    page,
+  }) => {
+    await page.goto(`${liveApp.baseURL}/`);
+
+    await openCommandPalette(page);
+
+    const commandInput = page.locator('[data-slot="command-input"]');
+    await commandInput.fill("asset");
+    await page.getByRole("option", { name: /Go to asset/i }).click();
+
+    await expect(commandInput).toHaveValue("");
+    await expect(page.getByRole("option", { name: "analytics.customers analytics" })).toBeVisible();
+    await expect(page.getByRole("option", { name: "analytics.orders analytics" })).toBeVisible();
   });
 
   test("opens the rename pipeline dialog from the live sidebar context menu", async ({
@@ -77,7 +114,7 @@ test.describe("workspace live basic flows", () => {
   }) => {
     await page.goto(`${liveApp.baseURL}/`);
 
-    await page.getByRole("link", { name: "analytics.customers" }).click();
+    await openCustomersEditor(page);
     const emptyHistoryMessage = page.getByText("No materialize runs yet.");
 
     await page.getByRole("tab", { name: "Materialize" }).click();
@@ -97,7 +134,7 @@ test.describe("workspace live basic flows", () => {
   }) => {
     await page.goto(`${liveApp.baseURL}/`);
 
-    await page.getByRole("link", { name: "analytics.customers" }).click();
+    await openCustomersEditor(page);
 
     const canvas = page.locator(".react-flow__pane").first();
     const box = await canvas.boundingBox();
@@ -181,3 +218,20 @@ test.describe("workspace live basic flows", () => {
     });
   });
 });
+
+async function openCustomersEditor(page: import("@playwright/test").Page) {
+  const editorAssetName = page.getByTestId("editor-asset-name");
+
+  await expect(page.getByRole("link", { name: "analytics.customers" })).toBeVisible();
+
+  if ((await editorAssetName.textContent())?.trim() !== "analytics.customers") {
+    await page.getByRole("link", { name: "analytics.customers" }).click();
+  }
+
+  await expect(editorAssetName).toHaveText("analytics.customers");
+}
+
+async function openCommandPalette(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Open search" }).click();
+  await expect(page.locator('[data-slot="command-input"]')).toBeVisible();
+}

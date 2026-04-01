@@ -245,6 +245,7 @@ export function WorkspaceSidebar({
               {workspace?.pipelines.map((item) => {
                 const isActive = item.id === activePipeline;
                 const isExpanded = expandedPipelineIds.has(item.id);
+                const assets = item.assets ?? [];
 
                 return (
                   <SidebarMenuItem key={item.id}>
@@ -256,7 +257,7 @@ export function WorkspaceSidebar({
                               to="/"
                               search={{
                                 pipeline: item.id,
-                                asset: item.assets[0]?.id ?? undefined,
+                                asset: assets[0]?.id ?? undefined,
                               }}
                               activeOptions={{ exact: true, includeSearch: false }}
                               onClick={closeSidebarAfterNavigation}
@@ -327,7 +328,7 @@ export function WorkspaceSidebar({
 
                     {isExpanded && (
                       <SidebarMenuSub>
-                        {item.assets.map((asset) => (
+                        {assets.map((asset) => (
                           <SidebarMenuSubItem key={asset.id}>
                             <SidebarMenuSubButton
                               asChild

@@ -76,8 +76,15 @@ test.describe("sql intellisense live", () => {
 });
 
 async function openCustomersEditor(page: Page) {
-  await page.getByRole("link", { name: "analytics.customers" }).click();
-  await expect(page.getByTestId("editor-asset-name")).toHaveText("analytics.customers");
+  const editorAssetName = page.getByTestId("editor-asset-name");
+
+  await expect(page.getByRole("link", { name: "analytics.customers" })).toBeVisible();
+
+  if ((await editorAssetName.textContent())?.trim() !== "analytics.customers") {
+    await page.getByRole("link", { name: "analytics.customers" }).click();
+  }
+
+  await expect(editorAssetName).toHaveText("analytics.customers");
 }
 
 async function replaceEditorContent(

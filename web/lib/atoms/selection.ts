@@ -57,9 +57,11 @@ export const resolvedSelectedAssetAtom = atom<string | null>((get) => {
     return selectedAsset;
   }
 
+  const pipelineAssets = pipeline.assets ?? [];
+
   const pipelineAsset =
-    pipeline.assets.find((asset) => asset.id === selectedAsset) ??
-    pipeline.assets[0] ??
+    pipelineAssets.find((asset) => asset.id === selectedAsset) ??
+    pipelineAssets[0] ??
     null;
 
   return pipelineAsset?.id ?? null;
@@ -73,5 +75,5 @@ export const selectedAssetDataAtom = atom<WebAsset | null>((get) => {
     return null;
   }
 
-  return pipeline.assets.find((asset) => asset.id === selectedAsset) ?? null;
+  return (pipeline.assets ?? []).find((asset) => asset.id === selectedAsset) ?? null;
 });

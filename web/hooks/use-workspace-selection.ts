@@ -8,6 +8,7 @@ import {
   resolvedActivePipelineAtom,
   resolvedSelectedAssetAtom,
   routeSelectionAtom,
+  workspaceAtom,
 } from "@/lib/atoms/domains/workspace";
 
 export function useWorkspaceSelection(): {
@@ -17,6 +18,7 @@ export function useWorkspaceSelection(): {
 } {
   const navigate = useNavigate();
   const setRouteSelection = useSetAtom(routeSelectionAtom);
+  const workspace = useAtomValue(workspaceAtom);
   const activePipeline = useAtomValue(resolvedActivePipelineAtom);
   const selectedAsset = useAtomValue(resolvedSelectedAssetAtom);
   const locationState = useRouterState({
@@ -43,6 +45,51 @@ export function useWorkspaceSelection(): {
     locationState.search.asset,
     locationState.search.pipeline,
     setRouteSelection,
+  ]);
+
+  useEffect(() => {
+    if (locationState.pathname !== "/" || !workspace?.pipelines?.length) {
+      return;
+    }
+
+    const nextPipeline =
+      workspace.pipelines.find(
+        (pipeline) => pipeline.id === locationState.search.pipeline
+      ) ?? workspace.pipelines[0];
+    const nextAssets = nextPipeline.assets ?? [];
+    const nextAsset =
+      nextAssets.find((asset) => asset.id === locationState.search.asset) ??
+      nextAssets[0] ??
+      null;
+
+    const nextPipelineId = nextPipeline.id;
+    const nextAssetId = nextAsset?.id ?? undefined;
+    const currentPipelineId = activePipeline ?? locationState.search.pipeline ?? undefined;
+    const currentAssetId = selectedAsset ?? locationState.search.asset ?? undefined;
+
+    if (
+      currentPipelineId === nextPipelineId &&
+      currentAssetId === nextAssetId
+    ) {
+      return;
+    }
+
+    void navigate({
+      to: "/",
+      search: {
+        pipeline: nextPipelineId,
+        asset: nextAssetId,
+      },
+      replace: true,
+    });
+  }, [
+    activePipeline,
+    locationState.pathname,
+    locationState.search.asset,
+    locationState.search.pipeline,
+    navigate,
+    selectedAsset,
+    workspace,
   ]);
 
   const navigateSelection = useCallback(
