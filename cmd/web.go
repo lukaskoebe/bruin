@@ -838,6 +838,7 @@ func (s *webServer) UpdateAsset(ctx context.Context, assetID string, req webhttp
 		Content:             req.Content,
 		MaterializationType: req.MaterializationType,
 		Meta:                req.Meta,
+		Upstreams:           req.Upstreams,
 	})
 	if err != nil {
 		return nil, &apiError{Status: err.Status, Code: err.Code, Message: err.Message}

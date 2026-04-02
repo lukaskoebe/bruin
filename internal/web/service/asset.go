@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ type AssetUpdateRequest struct {
 	Content             *string
 	MaterializationType *string
 	Meta                map[string]string
+	Upstreams           []string
 }
 
 type FormatSQLAssetRequest struct {
@@ -59,6 +61,8 @@ type AssetService struct {
 	patchMu     sync.Mutex
 	patchTimers map[string]*time.Timer
 }
+
+const bruinWebInferredUpstreamsMetaKey = "bruin_web_inferred_upstreams"
 
 func NewAssetService(deps AssetDependencies) *AssetService {
 	return &AssetService{deps: deps, patchTimers: make(map[string]*time.Timer)}
@@ -197,7 +201,7 @@ func (s *AssetService) Update(ctx context.Context, assetID string, req AssetUpda
 	changedAssetIDs := []string{assetID}
 	changedAssetPaths := []string{filepath.ToSlash(relAssetPath)}
 
-	if req.Name != nil || req.Type != nil || req.MaterializationType != nil || req.Meta != nil {
+	if req.Name != nil || req.Type != nil || req.MaterializationType != nil || req.Meta != nil || req.Upstreams != nil {
 		_, parsedPipeline, asset, resolveErr := s.deps.ResolveAssetByID(ctx, assetID)
 		if resolveErr != nil {
 			return nil, &AssetAPIError{Status: 400, Code: "asset_resolve_failed", Message: resolveErr.Error()}
@@ -243,6 +247,9 @@ func (s *AssetService) Update(ctx context.Context, assetID string, req AssetUpda
 				asset.Meta = nextMeta
 			}
 		}
+		if req.Upstreams != nil {
+			applyManualAssetUpstreams(asset, parsedPipeline, req.Upstreams)
+		}
 		if err := asset.Persist(afero.NewOsFs(), parsedPipeline); err != nil {
 			return nil, &AssetAPIError{Status: 500, Code: "asset_persist_failed", Message: err.Error()}
 		}
@@ -256,11 +263,11 @@ func (s *AssetService) Update(ctx context.Context, assetID string, req AssetUpda
 		}
 	}
 
-	currentBytes, err := os.ReadFile(absAssetPath)
+	latestBytes, err := os.ReadFile(absAssetPath)
 	if err != nil {
 		return nil, &AssetAPIError{Status: 500, Code: "asset_read_failed", Message: err.Error()}
 	}
-	mergedContent := MergeExecutableContent(string(currentBytes), desiredExecutable)
+	mergedContent := MergeExecutableContent(string(latestBytes), desiredExecutable)
 	if err := os.WriteFile(absAssetPath, []byte(mergedContent), 0o644); err != nil {
 		return nil, &AssetAPIError{Status: 500, Code: "asset_write_failed", Message: err.Error()}
 	}
@@ -324,7 +331,7 @@ func (s *AssetService) RefactorDirectDependencies(ctx context.Context, parsedPip
 		}
 
 		if isSQLAsset {
-			if err := updateSQLAssetDependencies(ctx, current, parsedPipeline, sqlParserInstance, renderer); err != nil {
+			if err := reconcileSQLAssetDependencies(ctx, current, parsedPipeline, sqlParserInstance, renderer); err != nil {
 				return nil, nil, fmt.Errorf("failed to refresh dependencies for asset '%s': %w", current.Name, err)
 			}
 		}
@@ -367,17 +374,20 @@ func (s *AssetService) ScheduleSQLPatches(relAssetPath string) {
 
 func (s *AssetService) RunSQLPatches(relAssetPath string) {
 	prefixedPath := relAssetPath
-	if !strings.HasPrefix(prefixedPath, ".") {
-		prefixedPath = "." + prefixedPath
+	if !strings.HasPrefix(prefixedPath, "./") {
+		prefixedPath = "./" + strings.TrimPrefix(prefixedPath, "./")
 	}
 
 	commands := [][]string{
 		{"patch", "fill-columns-from-db", prefixedPath},
-		{"patch", "fill-asset-dependencies", relAssetPath},
 	}
 
 	for _, args := range commands {
 		_, _ = s.deps.Runner.Run(context.Background(), args)
+	}
+
+	if err := s.reconcileSQLAssetDependencies(context.Background(), relAssetPath); err != nil {
+		return
 	}
 
 	s.deps.SuppressWatcher(relAssetPath)
@@ -481,38 +491,248 @@ func isSQLAssetFile(asset *pipeline.Asset) bool {
 }
 
 func updateSQLAssetDependencies(ctx context.Context, asset *pipeline.Asset, parsedPipeline *pipeline.Pipeline, sqlParserInstance *sqlparser.SQLParser, renderer *jinja.Renderer) error {
-	assetRenderer, err := renderer.CloneForAsset(ctx, parsedPipeline, asset)
+	return reconcileSQLAssetDependencies(ctx, asset, parsedPipeline, sqlParserInstance, renderer)
+}
+
+func (s *AssetService) reconcileSQLAssetDependencies(ctx context.Context, relAssetPath string) error {
+	assetID := EncodeID(filepath.ToSlash(relAssetPath))
+	_, parsedPipeline, asset, err := s.deps.ResolveAssetByID(ctx, assetID)
 	if err != nil {
-		return fmt.Errorf("failed to create renderer for asset '%s': %w", asset.Name, err)
+		return err
 	}
 
-	missingDeps, err := sqlParserInstance.GetMissingDependenciesForAsset(asset, parsedPipeline, assetRenderer)
+	sqlParserInstance, err := sqlparser.NewSQLParser(false)
 	if err != nil {
-		return fmt.Errorf("failed to get missing dependencies for asset '%s': %w", asset.Name, err)
+		return err
 	}
+	defer sqlParserInstance.Close()
 
-	if len(missingDeps) == 0 {
+	renderer := jinja.NewRendererWithYesterday(parsedPipeline.Name, "web-asset-update")
+	return reconcileSQLAssetDependencies(ctx, asset, parsedPipeline, sqlParserInstance, renderer)
+}
+
+func reconcileSQLAssetDependencies(ctx context.Context, asset *pipeline.Asset, parsedPipeline *pipeline.Pipeline, sqlParserInstance *sqlparser.SQLParser, renderer *jinja.Renderer) error {
+	if asset == nil || parsedPipeline == nil {
 		return nil
 	}
 
-	for _, dep := range missingDeps {
-		foundMissingUpstream := parsedPipeline.GetAssetByNameCaseInsensitive(dep)
-		if foundMissingUpstream == nil {
+	tracked := parseBruinWebInferredUpstreams(asset.Meta)
+	manualAssetUpstreams := make([]pipeline.Upstream, 0)
+	nonAssetUpstreams := make([]pipeline.Upstream, 0)
+	manualNames := make(map[string]struct{})
+
+	for _, upstream := range asset.Upstreams {
+		if !isAssetUpstream(upstream) {
+			nonAssetUpstreams = append(nonAssetUpstreams, upstream)
 			continue
 		}
 
-		if foundMissingUpstream.Name == asset.Name {
+		normalized := normalizeDependencyName(upstream.Value)
+		if normalized == "" || strings.EqualFold(normalized, asset.Name) {
+			continue
+		}
+		if _, ok := tracked[normalized]; ok {
 			continue
 		}
 
-		asset.AddUpstream(foundMissingUpstream)
+		manualAssetUpstreams = append(manualAssetUpstreams, upstream)
+		manualNames[normalized] = struct{}{}
 	}
 
-	if err := asset.Persist(afero.NewOsFs()); err != nil {
+	inferredNames, err := inferAllSQLAssetDependencies(ctx, asset, parsedPipeline, sqlParserInstance, renderer)
+	if err != nil {
+		return err
+	}
+
+	nextInferred := make([]string, 0, len(inferredNames))
+	for _, name := range inferredNames {
+		normalized := normalizeDependencyName(name)
+		if normalized == "" || strings.EqualFold(normalized, asset.Name) {
+			continue
+		}
+		if _, ok := manualNames[normalized]; ok {
+			continue
+		}
+		nextInferred = append(nextInferred, name)
+	}
+
+	sort.SliceStable(nextInferred, func(i, j int) bool {
+		return strings.ToLower(nextInferred[i]) < strings.ToLower(nextInferred[j])
+	})
+
+	nextUpstreams := make([]pipeline.Upstream, 0, len(nonAssetUpstreams)+len(manualAssetUpstreams)+len(nextInferred))
+	nextUpstreams = append(nextUpstreams, nonAssetUpstreams...)
+	nextUpstreams = append(nextUpstreams, manualAssetUpstreams...)
+	for _, name := range nextInferred {
+		nextUpstreams = append(nextUpstreams, pipeline.Upstream{Type: "asset", Value: name, Mode: pipeline.UpstreamModeFull})
+	}
+
+	asset.Upstreams = nextUpstreams
+	setBruinWebInferredUpstreams(&asset.Meta, nextInferred)
+
+	if err := asset.Persist(afero.NewOsFs(), parsedPipeline); err != nil {
 		return fmt.Errorf("failed to persist asset '%s': %w", asset.Name, err)
 	}
 
 	return nil
+}
+
+func inferAllSQLAssetDependencies(ctx context.Context, asset *pipeline.Asset, parsedPipeline *pipeline.Pipeline, sqlParserInstance *sqlparser.SQLParser, renderer *jinja.Renderer) ([]string, error) {
+	cloned := *asset
+	cloned.Upstreams = nil
+
+	assetRenderer, err := renderer.CloneForAsset(ctx, parsedPipeline, &cloned)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create renderer for asset '%s': %w", asset.Name, err)
+	}
+
+	missingDeps, err := sqlParserInstance.GetMissingDependenciesForAsset(&cloned, parsedPipeline, assetRenderer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to infer dependencies for asset '%s': %w", asset.Name, err)
+	}
+
+	result := make([]string, 0, len(missingDeps))
+	seen := make(map[string]struct{}, len(missingDeps))
+	for _, dep := range missingDeps {
+		normalized := normalizeDependencyName(dep)
+		if normalized == "" {
+			continue
+		}
+
+		canonical := dep
+		if found := parsedPipeline.GetAssetByNameCaseInsensitive(dep); found != nil {
+			canonical = found.Name
+		}
+
+		key := normalizeDependencyName(canonical)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, canonical)
+	}
+
+	return result, nil
+}
+
+func applyManualAssetUpstreams(asset *pipeline.Asset, parsedPipeline *pipeline.Pipeline, requested []string) {
+	if asset == nil {
+		return
+	}
+
+	tracked := parseBruinWebInferredUpstreams(asset.Meta)
+	preservedNonAsset := make([]pipeline.Upstream, 0)
+	preservedTracked := make([]pipeline.Upstream, 0)
+	manualNames := make(map[string]struct{})
+	nextManual := make([]pipeline.Upstream, 0, len(requested))
+
+	for _, raw := range requested {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		if parsedPipeline != nil {
+			if found := parsedPipeline.GetAssetByNameCaseInsensitive(name); found != nil {
+				name = found.Name
+			}
+		}
+		if strings.EqualFold(name, asset.Name) {
+			continue
+		}
+
+		normalized := normalizeDependencyName(name)
+		if _, ok := manualNames[normalized]; ok {
+			continue
+		}
+		manualNames[normalized] = struct{}{}
+		nextManual = append(nextManual, pipeline.Upstream{Type: "asset", Value: name, Mode: pipeline.UpstreamModeFull})
+	}
+
+	for _, upstream := range asset.Upstreams {
+		if !isAssetUpstream(upstream) {
+			preservedNonAsset = append(preservedNonAsset, upstream)
+			continue
+		}
+
+		normalized := normalizeDependencyName(upstream.Value)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := tracked[normalized]; ok {
+			if _, overridden := manualNames[normalized]; !overridden {
+				preservedTracked = append(preservedTracked, upstream)
+			}
+		}
+	}
+
+	asset.Upstreams = append(append(preservedNonAsset, nextManual...), preservedTracked...)
+	nextTracked := make([]string, 0, len(preservedTracked))
+	for _, upstream := range preservedTracked {
+		nextTracked = append(nextTracked, upstream.Value)
+	}
+	setBruinWebInferredUpstreams(&asset.Meta, nextTracked)
+}
+
+func parseBruinWebInferredUpstreams(meta map[string]string) map[string]string {
+	result := make(map[string]string)
+	if meta == nil {
+		return result
+	}
+
+	for _, raw := range strings.Split(meta[bruinWebInferredUpstreamsMetaKey], ",") {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		result[normalizeDependencyName(name)] = name
+	}
+
+	return result
+}
+
+func setBruinWebInferredUpstreams(meta *pipeline.EmptyStringMap, upstreams []string) {
+	unique := make([]string, 0, len(upstreams))
+	seen := make(map[string]struct{}, len(upstreams))
+	for _, upstream := range upstreams {
+		name := strings.TrimSpace(upstream)
+		if name == "" {
+			continue
+		}
+		key := normalizeDependencyName(name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, name)
+	}
+
+	if len(unique) == 0 {
+		if *meta == nil {
+			return
+		}
+		delete(*meta, bruinWebInferredUpstreamsMetaKey)
+		if len(*meta) == 0 {
+			*meta = nil
+		}
+		return
+	}
+
+	sort.SliceStable(unique, func(i, j int) bool {
+		return strings.ToLower(unique[i]) < strings.ToLower(unique[j])
+	})
+
+	if *meta == nil {
+		*meta = pipeline.EmptyStringMap{}
+	}
+	(*meta)[bruinWebInferredUpstreamsMetaKey] = strings.Join(unique, ",")
+}
+
+func normalizeDependencyName(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func isAssetUpstream(upstream pipeline.Upstream) bool {
+	return upstream.Type == "" || strings.EqualFold(upstream.Type, "asset")
 }
 
 func pipelinePathsReferToSameRoot(sourcePipelinePath, targetPipelineRoot string) bool {

@@ -33,6 +33,7 @@ type UpdateAssetInput = {
   content?: string;
   materialization_type?: string;
   meta?: Record<string, string>;
+  upstreams?: string[];
 };
 
 export function useAssetActions(defaultPipelinePath = "my-pipeline") {

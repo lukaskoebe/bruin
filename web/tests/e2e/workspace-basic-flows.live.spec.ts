@@ -94,6 +94,140 @@ test.describe("workspace live basic flows", () => {
     await expect(page.getByRole("option", { name: "analytics.orders analytics" })).toBeVisible();
   });
 
+  test("removes stale Bruin Web inferred dependencies but preserves manual ones", async ({
+    liveApp,
+    page,
+  }) => {
+    await page.goto(`${liveApp.baseURL}/`);
+
+    await openCustomersEditor(page);
+
+    const canvas = page.locator(".react-flow__pane").first();
+    const box = await canvas.boundingBox();
+    if (!box) {
+      throw new Error("Could not locate the React Flow pane for asset creation.");
+    }
+
+    await canvas.click({
+      position: {
+        x: Math.round(box.width * 0.55),
+        y: Math.round(box.height * 0.3),
+      },
+    });
+    await page.getByPlaceholder("Asset name").fill("analytics.manual_seed");
+    await page
+      .getByTestId("rf__node-__new_asset__")
+      .getByRole("button", { name: "Create", exact: true })
+      .click();
+
+    await expect(page.getByRole("link", { name: "analytics.manual_seed" })).toBeVisible();
+
+    await openCustomersEditor(page);
+
+    await page.getByRole("tab", { name: "Dependencies" }).click();
+    const dependencyInput = page.getByPlaceholder("Add dependency");
+    const manualDependenciesSection = page.getByText("Manual dependencies").locator("..");
+    await dependencyInput.fill("analytics.manual_seed");
+    await page.getByRole("option", { name: "analytics.manual_seed" }).click();
+
+    await expect(
+      manualDependenciesSection.getByText("analytics.manual_seed", { exact: true })
+    ).toBeVisible();
+
+    await replaceEditorContent(page, "select *\nfrom analytics.orders");
+    await expect
+      .poll(async () => {
+        await page.getByRole("tab", { name: "Dependencies" }).click();
+        const inferredPanel = page.getByText("Automatically inferred").locator("..");
+        return await inferredPanel.getByText("analytics.orders", { exact: true }).count();
+      }, {
+        timeout: 15000,
+      })
+      .toBe(1);
+
+    const inferredPanel = page.getByText("Automatically inferred").locator("..");
+    await expect(inferredPanel.getByText("analytics.orders", { exact: true })).toBeVisible();
+    await expect(
+      manualDependenciesSection.getByText("analytics.manual_seed", { exact: true })
+    ).toBeVisible();
+
+    await replaceEditorContent(page, "select 1 as customer_id");
+
+    await expect
+      .poll(async () => {
+        await page.getByRole("tab", { name: "Dependencies" }).click();
+        return await inferredPanel.getByText("analytics.orders", { exact: true }).count();
+      }, {
+        timeout: 15000,
+      })
+      .toBe(0);
+
+    await expect(
+      manualDependenciesSection.getByText("analytics.manual_seed", { exact: true })
+    ).toBeVisible();
+    await expect(page.getByText("No automatically inferred dependencies for this asset.")).toBeVisible();
+  });
+
+  test("selects a dependency option by tapping it on mobile", async ({
+    liveApp,
+    page,
+  }) => {
+    test.skip(!test.info().project.name.includes("mobile"), "Mobile-only repro.");
+
+    await page.goto(`${liveApp.baseURL}/`);
+    await expect(page.getByRole("dialog", { name: "Asset Editor" })).toBeVisible();
+    await page.getByRole("tab", { name: "Dependencies" }).click();
+
+    const dependencyInput = page.getByPlaceholder("Add dependency");
+    await dependencyInput.fill("analytics.orders");
+
+    const option = page.getByRole("option", { name: "analytics.orders" });
+    await expect(option).toBeVisible();
+    await option.dispatchEvent("pointerdown", {
+      bubbles: true,
+      pointerType: "touch",
+      isPrimary: true,
+      button: 0,
+      buttons: 1,
+    });
+    await option.dispatchEvent("pointerup", {
+      bubbles: true,
+      pointerType: "touch",
+      isPrimary: true,
+      button: 0,
+      buttons: 0,
+    });
+    await option.dispatchEvent("click", { bubbles: true });
+
+    await expect(
+      page.getByText("Manual dependencies").locator("..").getByText("analytics.orders", {
+        exact: true,
+      })
+    ).toBeVisible();
+  });
+
+  test("selects visualization combobox options by tapping them on mobile", async ({
+    liveApp,
+    page,
+  }) => {
+    test.skip(!test.info().project.name.includes("mobile"), "Mobile-only repro.");
+
+    await page.goto(`${liveApp.baseURL}/`);
+    await expect(page.getByRole("dialog", { name: "Asset Editor" })).toBeVisible();
+
+    await page.getByRole("tab", { name: "Visualization" }).click();
+
+    const viewCombobox = page.getByRole("combobox").filter({ hasText: /none/i }).first();
+    await viewCombobox.click();
+    await page.getByRole("option", { name: "Chart" }).click();
+
+    const xAxisInput = page.getByPlaceholder("Select x-axis column");
+    await xAxisInput.fill("customer_id");
+    await page.getByRole("option", { name: "customer_id" }).click();
+
+    await expect(xAxisInput).toHaveValue("customer_id");
+  });
+
   test("opens the rename pipeline dialog from the live sidebar context menu", async ({
     liveApp,
     page,
@@ -234,4 +368,14 @@ async function openCustomersEditor(page: import("@playwright/test").Page) {
 async function openCommandPalette(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "Open search" }).click();
   await expect(page.locator('[data-slot="command-input"]')).toBeVisible();
+}
+
+async function replaceEditorContent(
+  page: import("@playwright/test").Page,
+  content: string
+) {
+  const editor = page.locator(".monaco-editor").first();
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.type(content);
 }

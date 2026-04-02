@@ -772,6 +772,23 @@ function MultiColumnCombobox({
     return [...normalizedColumns, draftAsItem];
   }, [draftAsItem, normalizedColumns]);
 
+  const toggleValue = (item: string) => {
+    const alreadySelected = normalizedValue.some(
+      (current) => current.toLowerCase() === item.toLowerCase()
+    );
+
+    if (alreadySelected) {
+      onChange(
+        normalizedValue.filter((current) => current.toLowerCase() !== item.toLowerCase())
+      );
+      setDraft("");
+      return;
+    }
+
+    onChange(compactUnique([...normalizedValue, item]));
+    setDraft("");
+  };
+
   const commitDraft = () => {
     const raw = draft.trim();
     if (!raw) {
@@ -813,7 +830,6 @@ function MultiColumnCombobox({
                 value={draft}
                 placeholder={placeholder}
                 disabled={disabled}
-                onBlur={commitDraft}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === ",") {
@@ -830,7 +846,13 @@ function MultiColumnCombobox({
         <ComboboxEmpty>No columns found.</ComboboxEmpty>
         <ComboboxList>
           {(item) => (
-            <ComboboxItem key={item} value={item}>
+            <ComboboxItem
+              key={item}
+              value={item}
+              onClick={() => {
+                toggleValue(item);
+              }}
+            >
               {item}
             </ComboboxItem>
           )}
@@ -870,12 +892,14 @@ function ColumnCombobox({
   return (
     <Combobox
       items={items}
-      onValueChange={(nextValue) => onChange(nextValue ?? "")}
+      onValueChange={(nextValue) => {
+        onChange(nextValue ?? "");
+        setInputValue(nextValue ?? "");
+      }}
       value={value}
     >
       <ComboboxInput
         disabled={disabled}
-        onBlur={() => onChange(inputValue.trim())}
         onChange={(event) => {
           setInputValue(event.target.value);
           onChange(event.target.value);
@@ -893,7 +917,14 @@ function ColumnCombobox({
         <ComboboxEmpty>No columns found.</ComboboxEmpty>
         <ComboboxList>
           {(item) => (
-            <ComboboxItem key={item} value={item}>
+            <ComboboxItem
+              key={item}
+              value={item}
+              onClick={() => {
+                onChange(item);
+                setInputValue(item);
+              }}
+            >
               {item}
             </ComboboxItem>
           )}

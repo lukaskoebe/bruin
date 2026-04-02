@@ -13,5 +13,9 @@ export default defineConfig({
       name: "chromium-live",
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      name: "mobile-chrome-live",
+      use: { ...devices["Pixel 7"] },
+    },
   ],
 });

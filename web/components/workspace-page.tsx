@@ -150,6 +150,7 @@ export function WorkspacePage() {
     setDeleteDialogOpen,
     handleEditorChange,
     handleSaveVisualizationSettings,
+    handleSaveManualUpstreams,
     handleConfirmDeleteAsset,
     handleMaterializeSelectedAsset,
     handleInspectSelectedAsset,
@@ -224,6 +225,13 @@ export function WorkspacePage() {
     () => getAvailableAssetTypes(workspaceConfig?.connection_types ?? []),
     [workspaceConfig?.connection_types]
   );
+  const availableDependencyNames = useMemo(
+    () =>
+      (enrichedPipeline?.assets ?? [])
+        .map((candidate) => candidate.name)
+        .filter((name): name is string => Boolean(name)),
+    [enrichedPipeline?.assets]
+  );
   const editorPaneProps = {
     asset,
     pipelineId: pipeline?.id ?? null,
@@ -251,8 +259,10 @@ export function WorkspacePage() {
     onAssetTypeChange: handleAssetTypeChange,
     onMaterializationTypeChange: handleMaterializationTypeChange,
     onSaveVisualizationSettings: handleSaveVisualizationSettings,
+    onSaveManualUpstreams: handleSaveManualUpstreams,
     onGoToAsset: navigateSelection,
     availableAssetTypes,
+    availableDependencyNames,
   } as const;
 
   const editorPane = <WorkspaceEditorPane {...editorPaneProps} mobile={isMobile} />;

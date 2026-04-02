@@ -27,6 +27,7 @@ export async function updateAsset(
     content?: string;
     materialization_type?: string;
     meta?: Record<string, string>;
+    upstreams?: string[];
   }
 ) {
   return fetchJSONWithBody<Record<string, string>>(

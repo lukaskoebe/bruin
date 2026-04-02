@@ -21,6 +21,8 @@ import { SuggestionTableState } from "@/lib/atoms/suggestion-types";
 import { resolveEffectiveConfigEnvironment } from "@/lib/settings-environment";
 import { WebAsset } from "@/lib/types";
 
+const BRUIN_WEB_INFERRED_UPSTREAMS_META_KEY = "bruin_web_inferred_upstreams";
+
 export type WorkspaceResolvedUpstreamTable = {
   upstreamName: string;
   table: SuggestionTableState | undefined;
@@ -122,6 +124,21 @@ export function useWorkspaceEditorDerivedState({
     [asset]
   );
 
+  const inferredUpstreamNames = useMemo(() => {
+    const raw = asset?.meta?.[BRUIN_WEB_INFERRED_UPSTREAMS_META_KEY] ?? "";
+    return raw
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }, [asset?.meta]);
+
+  const manualUpstreamNames = useMemo(() => {
+    const inferred = new Set(inferredUpstreamNames.map((name) => name.toLowerCase()));
+    return (asset?.upstreams ?? []).filter(
+      (name) => !inferred.has(name.toLowerCase())
+    );
+  }, [asset?.upstreams, inferredUpstreamNames]);
+
   const mergedColumnNames = useMemo(
     () => ((assetColumns ?? []).map((column) => column.name).filter(Boolean) as string[]),
     [assetColumns]
@@ -132,6 +149,8 @@ export function useWorkspaceEditorDerivedState({
     assetInspectColumns,
     debugResolvedUpstreamTables,
     declaredColumnNames,
+    inferredUpstreamNames,
+    manualUpstreamNames,
     mergedColumnNames,
     requiredConnectionType,
     schemaSuggestionTables,

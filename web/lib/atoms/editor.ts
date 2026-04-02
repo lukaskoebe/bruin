@@ -17,6 +17,10 @@ export const editorValueAtom = atom<string>((get) => {
   return asset?.content ?? "";
 });
 
-export type AssetEditorTab = "configuration" | "checks" | "visualization";
+export type AssetEditorTab =
+  | "configuration"
+  | "checks"
+  | "visualization"
+  | "dependencies";
 
 export const assetEditorTabAtom = atom<AssetEditorTab>("configuration");

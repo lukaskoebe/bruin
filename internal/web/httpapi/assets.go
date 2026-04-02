@@ -29,6 +29,7 @@ type UpdateAssetRequest struct {
 	Content             *string           `json:"content,omitempty"`
 	MaterializationType *string           `json:"materialization_type,omitempty"`
 	Meta                map[string]string `json:"meta,omitempty"`
+	Upstreams           []string          `json:"upstreams,omitempty"`
 }
 
 type FormatSQLAssetRequest struct {

@@ -27,6 +27,7 @@ type UseEditorActionsInput = {
       content?: string;
       materialization_type?: string;
       meta?: Record<string, string>;
+      upstreams?: string[];
     }
   ) => Promise<boolean>;
   runDeleteAsset: (pipelineId: string, assetId: string) => Promise<boolean>;
@@ -133,6 +134,20 @@ export function useEditorActions({
       void runUpdateAsset(pipelineId, asset.id, {
         content: editorValue,
         meta: mergedMeta,
+      });
+    },
+    [asset, editorValue, pipelineId, runUpdateAsset]
+  );
+
+  const handleSaveManualUpstreams = useCallback(
+    (upstreams: string[]) => {
+      if (!asset || !pipelineId) {
+        return;
+      }
+
+      void runUpdateAsset(pipelineId, asset.id, {
+        content: editorValue,
+        upstreams,
       });
     },
     [asset, editorValue, pipelineId, runUpdateAsset]
@@ -289,6 +304,7 @@ export function useEditorActions({
     setDeleteDialogOpen,
     handleEditorChange,
     handleSaveVisualizationSettings,
+    handleSaveManualUpstreams,
     handleConfirmDeleteAsset,
     handleMaterializeSelectedAsset,
     handleInspectSelectedAsset,

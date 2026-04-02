@@ -297,6 +297,19 @@ func commentRowsToTask(commentRows []string) (*Asset, error) {
 			continue
 		}
 
+		if strings.HasPrefix(key, "meta.") {
+			metaKeys := strings.Split(key, ".")
+			if len(metaKeys) != 2 {
+				continue
+			}
+
+			if task.Meta == nil {
+				task.Meta = make(map[string]string)
+			}
+			task.Meta[metaKeys[1]] = value
+			continue
+		}
+
 		if strings.HasPrefix(key, "columns.") {
 			// columns.colname.checks: not_null
 			columns := strings.Split(key, ".")

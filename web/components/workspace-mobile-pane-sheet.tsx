@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
 
 import {
   Sheet,
@@ -9,6 +9,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { portalContainerContext } from "@/lib/portal-container";
 
 type WorkspaceMobilePaneSheetProps = {
   open: boolean;
@@ -25,9 +26,12 @@ export function WorkspaceMobilePaneSheet({
   description,
   children,
 }: WorkspaceMobilePaneSheetProps) {
+  const [portalContainer, setPortalContainer] = useState<HTMLElement | null>(null);
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
+        ref={setPortalContainer}
         side="bottom"
         className="h-[88vh] rounded-t-2xl p-0 sm:max-w-none"
       >
@@ -37,7 +41,9 @@ export function WorkspaceMobilePaneSheet({
             {description ?? "Edit the selected configuration."}
           </SheetDescription>
         </SheetHeader>
-        <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+        <portalContainerContext.Provider value={portalContainer}>
+          <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+        </portalContainerContext.Provider>
       </SheetContent>
     </Sheet>
   );

@@ -8,6 +8,7 @@ import { Panel } from "react-resizable-panels";
 
 import { AssetCodeEditor } from "@/components/asset-code-editor";
 import { AssetEditorConfigurationTab } from "@/components/asset-editor-configuration-tab";
+import { AssetEditorDependenciesTab } from "@/components/asset-editor-dependencies-tab";
 import { AssetEditorHeader } from "@/components/asset-editor-header";
 import { AssetEditorVisualizationTab } from "@/components/asset-editor-visualization-tab";
 import { WorkspaceEditorFooter } from "@/components/workspace-editor-footer";
@@ -42,11 +43,11 @@ type WorkspaceEditorPaneProps = {
   assetRenameLoading?: boolean;
   editorValue: string;
   monacoTheme: string;
-  assetEditorTab: "configuration" | "checks" | "visualization";
+  assetEditorTab: "configuration" | "checks" | "visualization" | "dependencies";
   form: UseFormReturn<AssetConfigForm>;
   assetPreviewRows: Record<string, unknown>[];
   onEditorTabChange: (
-    value: "configuration" | "checks" | "visualization"
+    value: "configuration" | "checks" | "visualization" | "dependencies"
   ) => void;
   onEditorChange: (value?: string) => void;
   onMaterializeSelectedAsset: () => void;
@@ -59,9 +60,11 @@ type WorkspaceEditorPaneProps = {
   onSaveVisualizationSettings: (
     visualizationMeta: Record<string, string>
   ) => void;
+  onSaveManualUpstreams: (upstreams: string[]) => void;
   onGoToAsset?: (pipelineId: string, assetId: string) => void;
   mobile?: boolean;
   availableAssetTypes: string[];
+  availableDependencyNames: string[];
 };
 
 export function WorkspaceEditorPane({
@@ -91,9 +94,11 @@ export function WorkspaceEditorPane({
   onAssetTypeChange,
   onMaterializationTypeChange,
   onSaveVisualizationSettings,
+  onSaveManualUpstreams,
   onGoToAsset,
   mobile = false,
   availableAssetTypes,
+  availableDependencyNames,
 }: WorkspaceEditorPaneProps) {
   const [monacoInstance, setMonacoInstance] = useState<Monaco | null>(null);
   const [editorInstance, setEditorInstance] =
@@ -104,6 +109,8 @@ export function WorkspaceEditorPane({
     assetInspectColumns,
     debugResolvedUpstreamTables,
     declaredColumnNames,
+    inferredUpstreamNames,
+    manualUpstreamNames,
     mergedColumnNames,
     requiredConnectionType,
     schemaSuggestionTables,
@@ -228,13 +235,17 @@ export function WorkspaceEditorPane({
               className="flex min-h-0 min-w-0 flex-1 flex-col"
               onValueChange={(value) =>
                 onEditorTabChange(
-                  value as "configuration" | "checks" | "visualization"
+                  value as
+                    | "configuration"
+                    | "checks"
+                    | "visualization"
+                    | "dependencies"
                 )
               }
               value={assetEditorTab}
             >
                 <TabsList
-                  className={`grid w-full min-w-0 grid-cols-2 ${
+                  className={`grid w-full min-w-0 grid-cols-3 ${
                     helpMode && visualizationHighlighted
                       ? "ring-2 ring-primary/70 ring-offset-2"
                       : ""
@@ -246,7 +257,7 @@ export function WorkspaceEditorPane({
                   }
                 >
                   <TabsTrigger value="configuration">Configuration</TabsTrigger>
-                  {/* <TabsTrigger value="checks">Quality / Checks</TabsTrigger> */}
+                  <TabsTrigger value="dependencies">Dependencies</TabsTrigger>
                   <TabsTrigger value="visualization">Visualization</TabsTrigger>
                 </TabsList>
 
@@ -270,6 +281,17 @@ export function WorkspaceEditorPane({
                       {...form.register("custom_checks")}
                     />
                   </div>
+                </TabsContent>
+
+                <TabsContent className="mt-3 space-y-3" value="dependencies">
+                  <AssetEditorDependenciesTab
+                    assetName={asset?.name}
+                    manualUpstreamNames={manualUpstreamNames}
+                    inferredUpstreamNames={inferredUpstreamNames}
+                    availableDependencyNames={availableDependencyNames}
+                    disabled={!pipelineId}
+                    onSaveManualUpstreams={onSaveManualUpstreams}
+                  />
                 </TabsContent>
 
                 <TabsContent className="mt-3 space-y-3" value="visualization">
