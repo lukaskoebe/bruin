@@ -57,6 +57,14 @@ type UpsertWorkspaceConnectionParams struct {
 	Values          map[string]any
 }
 
+type TestWorkspaceConnectionParams struct {
+	EnvironmentName string
+	CurrentName     string
+	Name            string
+	Type            string
+	Values          map[string]any
+}
+
 type ConfigService struct {
 	workspaceRoot string
 	configPath    string
@@ -133,12 +141,35 @@ func (s *ConfigService) BuildParseErrorResponse(parseErr error) WorkspaceConfigR
 	}
 }
 
+func mapsClone(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return map[string]string{}
+	}
+	result := make(map[string]string, len(input))
+	for key, value := range input {
+		result[key] = value
+	}
+	return result
+}
+
 func (s *ConfigService) AddConnection(cfg *config.Config, params UpsertWorkspaceConnectionParams) error {
 	environmentName := strings.TrimSpace(params.EnvironmentName)
 	name := strings.TrimSpace(params.Name)
 	typeName := strings.TrimSpace(params.Type)
 	if environmentName == "" || name == "" || typeName == "" {
 		return fmt.Errorf("environment, name, and type are required")
+	}
+
+	if _, exists := cfg.Environments[environmentName]; !exists {
+		if err := cfg.AddEnvironment(environmentName, ""); err != nil {
+			return err
+		}
+		if strings.TrimSpace(cfg.DefaultEnvironmentName) == "" {
+			cfg.DefaultEnvironmentName = environmentName
+		}
+		if strings.TrimSpace(cfg.SelectedEnvironmentName) == "" {
+			cfg.SelectedEnvironmentName = environmentName
+		}
 	}
 
 	values, err := normalizeWorkspaceConnectionValues(typeName, params.Values)
@@ -163,8 +194,8 @@ func (s *ConfigService) UpdateConnection(cfg *config.Config, params UpsertWorksp
 	return s.AddConnection(cfg, params)
 }
 
-func (s *ConfigService) TestConnection(ctx context.Context, cfg *config.Config, environmentName, connectionName string) (string, error) {
-	environmentName = strings.TrimSpace(environmentName)
+func (s *ConfigService) TestConnection(ctx context.Context, cfg *config.Config, params TestWorkspaceConnectionParams) (string, error) {
+	environmentName := strings.TrimSpace(params.EnvironmentName)
 	if environmentName == "" {
 		environmentName = cfg.SelectedEnvironmentName
 	}
@@ -175,6 +206,23 @@ func (s *ConfigService) TestConnection(ctx context.Context, cfg *config.Config, 
 		return "", fmt.Errorf("no environment selected")
 	}
 
+	connectionName := strings.TrimSpace(params.Name)
+	if connectionName == "" {
+		return "", fmt.Errorf("connection name is required")
+	}
+
+	if strings.TrimSpace(params.Type) != "" {
+		if err := s.prepareDraftConnection(cfg, TestWorkspaceConnectionParams{
+			EnvironmentName: environmentName,
+			CurrentName:     params.CurrentName,
+			Name:            connectionName,
+			Type:            params.Type,
+			Values:          params.Values,
+		}); err != nil {
+			return "", err
+		}
+	}
+
 	if err := cfg.SelectEnvironment(environmentName); err != nil {
 		return "", err
 	}
@@ -182,11 +230,6 @@ func (s *ConfigService) TestConnection(ctx context.Context, cfg *config.Config, 
 	manager, errs := connection.NewManagerFromConfigWithContext(ctx, cfg)
 	if len(errs) > 0 {
 		return "", errs[0]
-	}
-
-	connectionName = strings.TrimSpace(connectionName)
-	if connectionName == "" {
-		return "", fmt.Errorf("connection name is required")
 	}
 
 	conn := manager.GetConnection(connectionName)
@@ -204,6 +247,43 @@ func (s *ConfigService) TestConnection(ctx context.Context, cfg *config.Config, 
 	}
 
 	return fmt.Sprintf("Successfully validated connection '%s' in environment %s.", connectionName, environmentName), nil
+}
+
+func (s *ConfigService) prepareDraftConnection(cfg *config.Config, params TestWorkspaceConnectionParams) error {
+	environmentName := strings.TrimSpace(params.EnvironmentName)
+	name := strings.TrimSpace(params.Name)
+	typeName := strings.TrimSpace(params.Type)
+	if environmentName == "" || name == "" || typeName == "" {
+		return fmt.Errorf("environment, name, and type are required")
+	}
+
+	if _, exists := cfg.Environments[environmentName]; !exists {
+		if err := cfg.AddEnvironment(environmentName, ""); err != nil {
+			return err
+		}
+		if strings.TrimSpace(cfg.DefaultEnvironmentName) == "" {
+			cfg.DefaultEnvironmentName = environmentName
+		}
+		if strings.TrimSpace(cfg.SelectedEnvironmentName) == "" {
+			cfg.SelectedEnvironmentName = environmentName
+		}
+	}
+
+	currentName := strings.TrimSpace(params.CurrentName)
+	if currentName == "" {
+		currentName = name
+	}
+
+	if err := cfg.DeleteConnection(environmentName, currentName); err != nil && !strings.Contains(err.Error(), "does not exist") {
+		return err
+	}
+
+	values, err := normalizeWorkspaceConnectionValues(typeName, params.Values)
+	if err != nil {
+		return err
+	}
+
+	return cfg.AddConnection(environmentName, name, typeName, values)
 }
 
 func BuildWorkspaceConfigConnectionTypes() []WorkspaceConfigConnectionType {

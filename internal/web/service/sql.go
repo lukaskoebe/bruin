@@ -18,17 +18,17 @@ type SQLAPIError struct {
 }
 
 type SQLColumnValuesResult struct {
-	Status string
-	Values []any
-	Error  string
+	Status string `json:"status"`
+	Values []any  `json:"values"`
+	Error  string `json:"error,omitempty"`
 }
 
 type SQLDatabaseDiscoveryResult struct {
-	Status         string
-	ConnectionName string
-	ConnectionType string
-	Databases      []string
-	Error          string
+	Status         string   `json:"status"`
+	ConnectionName string   `json:"connection_name"`
+	ConnectionType string   `json:"connection_type,omitempty"`
+	Databases      []string `json:"databases"`
+	Error          string   `json:"error,omitempty"`
 }
 
 type SQLDiscoveryTableItem struct {
@@ -39,12 +39,12 @@ type SQLDiscoveryTableItem struct {
 }
 
 type SQLTableDiscoveryResult struct {
-	Status         string
-	ConnectionName string
-	ConnectionType string
-	Database       string
-	Tables         []SQLDiscoveryTableItem
-	Error          string
+	Status         string                  `json:"status"`
+	ConnectionName string                  `json:"connection_name"`
+	ConnectionType string                  `json:"connection_type,omitempty"`
+	Database       string                  `json:"database"`
+	Tables         []SQLDiscoveryTableItem `json:"tables"`
+	Error          string                  `json:"error,omitempty"`
 }
 
 type SQLColumn struct {
@@ -53,13 +53,13 @@ type SQLColumn struct {
 }
 
 type SQLTableColumnsResult struct {
-	Status         string
-	ConnectionName string
-	Table          string
-	Columns        []SQLColumn
-	RawOutput      string
-	Command        []string
-	Error          string
+	Status         string      `json:"status"`
+	ConnectionName string      `json:"connection_name"`
+	Table          string      `json:"table"`
+	Columns        []SQLColumn `json:"columns"`
+	RawOutput      string      `json:"raw_output"`
+	Command        []string    `json:"command,omitempty"`
+	Error          string      `json:"error,omitempty"`
 }
 
 type SQLDependencies struct {

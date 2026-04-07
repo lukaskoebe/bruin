@@ -96,10 +96,10 @@ export function resolveAssetIcon(
     return iconWithColor(SiDatabricks({ size }), "#ef4444");
   }
   if (has(value, "motherduck")) {
-    return iconWithColor(SiDuckdb({ size }), "#ffff00");
+    return { icon: duckdbIcon(size) };
   }
   if (has(value, "duckdb")) {
-    return iconWithColor(SiDuckdb({ size }), "#ffff00");
+    return { icon: duckdbIcon(size) };
   }
   if (has(value, "oracle")) {
     return null;
@@ -158,6 +158,36 @@ function iconWithColor(icon: ReactNode, color: string) {
       color,
     }),
   };
+}
+
+function duckdbIcon(size: number) {
+  return (
+  <span  style={{ height: "1.5em" }} className="inline-flex items-center">
+    <span
+      style={{
+        display: "inline-flex",
+        position: "relative",
+        width: size,
+        height: size,
+      }}
+    >
+      {iconWithColor(SiDuckdb({ size }), "#000000").icon}
+      <svg
+        aria-hidden="true"
+        focusable="false"
+        viewBox="0 0 24 24"
+        style={{
+          position: "absolute",
+          inset: 0,
+          pointerEvents: "none",
+        }}
+      >
+        <circle cx="9.5" cy="12" r="4.97" fill="#ffff00" />
+        <ellipse cx="17.1" cy="11.99" rx="2.07" ry="1.78" fill="#ffff00" />
+      </svg>
+    </span>
+  </span>
+  );
 }
 
 function providerFromAssetType(assetType: string): string {

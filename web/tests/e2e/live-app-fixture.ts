@@ -12,10 +12,19 @@ import http from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 
 export type LiveApp = {
   baseURL: string;
   workspaceDir: string;
+};
+
+export type LivePostgres = {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
 };
 
 const webDir = resolve(__dirname, "..", "..");
@@ -27,8 +36,22 @@ const staticDir = resolve(webDir, "dist");
 export const liveTest = base.extend<{
   fixtureName: string;
   liveApp: LiveApp;
+  livePostgres: LivePostgres | null;
 }>({
   fixtureName: ["basic-workspace", { option: true }],
+  livePostgres: async ({ fixtureName }, use) => {
+    if (fixtureName !== "empty-workspace-postgres") {
+      await use(null);
+      return;
+    }
+
+    const postgres = await createLivePostgres();
+    try {
+      await use(postgres.connection);
+    } finally {
+      await postgres.dispose();
+    }
+  },
   page: async ({ page }, use, testInfo) => {
     const networkEvents: Array<Record<string, unknown>> = [];
     const requestStartedAt = new WeakMap<object, number>();
@@ -105,7 +128,7 @@ export const liveTest = base.extend<{
       }
     }
   },
-  liveApp: async ({ fixtureName }, use) => {
+  liveApp: async ({ fixtureName, livePostgres }, use) => {
     if (!existsSync(binaryPath)) {
       throw new Error(
         `Bruin binary not found at ${binaryPath}. Build it first or set BRUIN_E2E_BINARY.`
@@ -151,6 +174,70 @@ export const liveTest = base.extend<{
     }
   },
 });
+
+export async function createLivePostgres() {
+  const hostPort = await getAvailablePort();
+  const containerName = `bruin-web-e2e-pg-${randomUUID().slice(0, 8)}`;
+  const database = "bruin";
+  const user = "postgres";
+  const password = "postgres";
+
+  await runCommand([
+    "docker",
+    "run",
+    "--rm",
+    "-d",
+    "--name",
+    containerName,
+    "-e",
+    `POSTGRES_DB=${database}`,
+    "-e",
+    `POSTGRES_USER=${user}`,
+    "-e",
+    `POSTGRES_PASSWORD=${password}`,
+    "-p",
+    `${hostPort}:5432`,
+    "postgres:16-alpine",
+  ]);
+
+  try {
+    await waitForPostgres(hostPort, user, database);
+    await runCommand([
+      "docker",
+      "exec",
+      containerName,
+      "psql",
+      "-U",
+      user,
+      "-d",
+      database,
+      "-c",
+      [
+        "create schema if not exists analytics;",
+        "create table if not exists analytics.orders (order_id int primary key, order_total numeric);",
+        "create table if not exists analytics.customers (customer_id int primary key, customer_name text);",
+        "insert into analytics.orders (order_id, order_total) values (1, 10.5), (2, 22.0) on conflict do nothing;",
+        "insert into analytics.customers (customer_id, customer_name) values (1, 'Ada'), (2, 'Grace') on conflict do nothing;",
+      ].join(" "),
+    ]);
+
+    return {
+      connection: {
+        host,
+        port: hostPort,
+        user,
+        password,
+        database,
+      } satisfies LivePostgres,
+      async dispose() {
+        await runCommand(["docker", "rm", "-f", containerName], { allowFailure: true });
+      },
+    };
+  } catch (error) {
+    await runCommand(["docker", "rm", "-f", containerName], { allowFailure: true });
+    throw error;
+  }
+}
 
 function waitForServer(baseURL: string) {
   const deadline = Date.now() + 30000;
@@ -221,5 +308,60 @@ function getAvailablePort() {
       server.close(() => resolvePort(port));
     });
     server.on("error", reject);
+  });
+}
+
+async function waitForPostgres(port: number, user: string, database: string) {
+  const deadline = Date.now() + 30000;
+
+  while (Date.now() < deadline) {
+    try {
+      await runCommand([
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "host",
+        "postgres:16-alpine",
+        "pg_isready",
+        "-h",
+        host,
+        "-p",
+        String(port),
+        "-U",
+        user,
+        "-d",
+        database,
+      ]);
+      return;
+    } catch {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+    }
+  }
+
+  throw new Error(`Timed out waiting for Postgres on ${host}:${port}`);
+}
+
+function runCommand(args: string[], options?: { allowFailure?: boolean }) {
+  return new Promise<void>((resolveRun, rejectRun) => {
+    const child = spawn(args[0], args.slice(1), {
+      cwd: repoRoot,
+      env: process.env,
+      stdio: "pipe",
+    });
+
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+
+    child.on("exit", (code) => {
+      if (code === 0 || options?.allowFailure) {
+        resolveRun();
+        return;
+      }
+      rejectRun(new Error(stderr || `${args.join(" ")} failed with exit code ${code}`));
+    });
+    child.on("error", rejectRun);
   });
 }

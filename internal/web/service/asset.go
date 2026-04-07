@@ -382,15 +382,19 @@ func (s *AssetService) RunSQLPatches(relAssetPath string) {
 		{"patch", "fill-columns-from-db", prefixedPath},
 	}
 
-	for _, args := range commands {
-		_, _ = s.deps.Runner.Run(context.Background(), args)
+	if s.deps.Runner != nil {
+		for _, args := range commands {
+			_, _ = s.deps.Runner.Run(context.Background(), args)
+		}
 	}
 
 	if err := s.reconcileSQLAssetDependencies(context.Background(), relAssetPath); err != nil {
 		return
 	}
 
-	s.deps.SuppressWatcher(relAssetPath)
+	if s.deps.SuppressWatcher != nil {
+		s.deps.SuppressWatcher(relAssetPath)
+	}
 	if s.deps.PushWorkspaceUpdate != nil {
 		s.deps.PushWorkspaceUpdate(context.Background(), "asset.patched", relAssetPath)
 	}

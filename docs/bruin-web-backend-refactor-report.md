@@ -26,6 +26,11 @@ Completed extractions so far:
 - SQL parse-context now uses `internal/web/service/parse_context.go` and `internal/web/httpapi/parse_context.go`
 - ad hoc command execution via `/api/run` now uses `internal/web/service/run.go` and `internal/web/httpapi/run.go`
 - workspace snapshot storage, revisioning, watcher suppression, change fan-out, and changed-asset ID calculation now center on `internal/web/service/workspace_coordinator.go`
+- SQL asset dependency reconciliation now lives in `internal/web/service/asset.go`, including:
+  - explicit manual-upstream updates from the web UI
+  - Bruin Web-inferred upstream tracking via asset metadata
+  - stale inferred-upstream cleanup while preserving manual dependencies
+  - deferred SQL patch execution after asset writes
 
 Current canonical ownership:
 
@@ -42,6 +47,7 @@ What still remains in `cmd/web.go`:
 - route registration and adapter methods used by `internal/web/httpapi`
 - Bruin Web-specific DTO conversions between internal service/model types and the existing web response shapes
 - a small compatibility helper layer retained mainly for `cmd/web_test.go`
+- some web-state/model translation still happens at the `cmd/web.go` boundary instead of in a more obviously canonical adapter package
 
 Recent cleanup notes:
 
@@ -51,12 +57,16 @@ Recent cleanup notes:
 - remaining compatibility shims used mainly by `cmd/web_test.go` were moved into `cmd/web_compat.go`, leaving `cmd/web.go` more focused on composition and active adapters
 - the remaining top-level DTOs in `cmd/web.go` are still part of the active web-state conversion path, so moving them further right now would add churn without materially shrinking responsibilities
 - workspace snapshot storage and publish/suppression coordination owned by `webServer`
+- the asset update path in `internal/web/service/asset.go` was tightened so persisted YAML header mutations are no longer clobbered by stale executable-content merges after save
+- `cmd/web.go` now forwards `upstreams` correctly into the asset service request path instead of dropping them in the adapter layer
+- deferred SQL patch path handling in `internal/web/service/asset.go` was corrected to use valid relative asset paths in subprocess calls
 
 Verification status for the refactor batches to date:
 
 - targeted backend tests have been kept green
 - `go test ./internal/web/...` has been kept green
 - live Playwright E2E has been used as the main regression check after each substantial batch
+- additional service regression tests now cover on-disk persistence for manual upstream edits and Bruin Web-inferred dependency reconciliation
 
 ## Executive Summary
 
@@ -131,6 +141,17 @@ There are several promising packages under `internal/web`:
 - `internal/web/api/response.go`: response envelope helpers
 
 These packages are the right kind of building blocks, but they are only partially adopted.
+
+### Progress since the original write-up
+
+The split-brain problem is still real, but it is narrower than it was when this document started. The most important practical improvements since the original analysis are:
+
+- asset write flows now largely resolve through `internal/web/service/asset.go` instead of `cmd/web.go`
+- SQL parse-context and SQL discovery are now behind dedicated `internal/web/httpapi` and `internal/web/service` seams
+- workspace snapshot fan-out and watcher suppression are now centered in `internal/web/service/workspace_coordinator.go`
+- several bugs caused by adapter drift between `cmd/web.go` and `internal/web/service` have been fixed at the service boundary rather than papered over in handlers
+
+The remaining architectural weight in `cmd/web.go` is now mostly composition, transport adaptation, and compatibility glue rather than core use-case logic. That is still more than ideal, but it is a materially better state than the original fully split implementation described here.
 
 ## The Central Architectural Problem: Split-Brain Design
 

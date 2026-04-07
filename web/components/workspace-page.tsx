@@ -1,7 +1,8 @@
 "use client";
 
 import { useAtom, useAtomValue } from "jotai";
-import { useCallback, useMemo, useState } from "react";
+import { useSetAtom } from "jotai";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import "reactflow/dist/style.css";
 
@@ -19,6 +20,7 @@ import {
 import {
   enrichedSelectedAssetAtom,
 } from "@/lib/atoms/domains/results";
+import { workspaceAtom, workspaceSyncSourceAtom } from "@/lib/atoms/domains/workspace";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
   computeGraphLayoutPositions,
@@ -32,6 +34,7 @@ import { useWorkspaceOnboardingController } from "@/hooks/use-workspace-onboardi
 import { useWorkspaceSettingsData } from "@/hooks/use-workspace-settings-data";
 import { useWorkspaceDerivedState } from "@/hooks/use-workspace-derived-state";
 import { getAvailableAssetTypes } from "@/lib/asset-types";
+import { getWorkspace } from "@/lib/api";
 
 import { useWorkspaceLayout } from "./workspace-layout";
 
@@ -51,13 +54,20 @@ export function WorkspacePage() {
   const [assetEditorTab, setAssetEditorTab] = useAtom(assetEditorTabAtom);
   const editorValue = useAtomValue(editorValueAtom);
   const asset = useAtomValue(enrichedSelectedAssetAtom);
+  const setWorkspace = useSetAtom(workspaceAtom);
+  const setWorkspaceSyncSource = useSetAtom(workspaceSyncSourceAtom);
   const isMobile = useIsMobile();
   const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
   const [assetRenameLoading, setAssetRenameLoading] = useState(false);
 
   const { scheduleSave, flushAssetSave, hasPendingAssetSave, saveAssetNow } =
     useDebouncedAssetSave(500);
-  const { workspaceConfig } = useWorkspaceSettingsData();
+  const {
+    workspaceConfig,
+    handleCreateWorkspaceConnection,
+    handleUpdateWorkspaceConnection,
+    loadWorkspaceConfig,
+  } = useWorkspaceSettingsData();
 
   const { enrichedPipeline, refreshPipelineMaterialization } =
     pipelineMaterialization;
@@ -266,6 +276,15 @@ export function WorkspacePage() {
   } as const;
 
   const editorPane = <WorkspaceEditorPane {...editorPaneProps} mobile={isMobile} />;
+  const handleReloadWorkspace = useCallback(async () => {
+    const data = await getWorkspace();
+    setWorkspace(data);
+    setWorkspaceSyncSource({
+      method: "workspace-load",
+      recordedAt: new Date().toISOString(),
+      revision: data.revision,
+    });
+  }, [setWorkspace, setWorkspaceSyncSource]);
 
   return (
     <>
@@ -292,7 +311,6 @@ export function WorkspacePage() {
         sidebarOnboardingMount={sidebarOnboardingMount}
         onboardingContent={onboardingContent}
       />
-
       <WorkspaceMainContent
         hasPipelines={hasPipelines}
         isMobile={isMobile}

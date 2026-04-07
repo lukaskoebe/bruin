@@ -123,6 +123,35 @@ export function WorkspaceLayout() {
     return pipeline?.name ?? "Workspace";
   }, [currentView, pipeline?.name]);
 
+  const documentTitle = useMemo(() => {
+    if (currentView !== "workspace") {
+      return null;
+    }
+
+    const selectedPipeline = pipeline?.name ?? null;
+    const selectedAssetName =
+      pipeline?.assets.find((currentAsset) => currentAsset.id === selectedAsset)
+        ?.name ?? null;
+
+    if (!selectedPipeline) {
+      return "Workspace · Bruin Web";
+    }
+
+    if (!selectedAssetName) {
+      return `${selectedPipeline} · Bruin Web`;
+    }
+
+    return `${selectedAssetName} · ${selectedPipeline} · Bruin Web`;
+  }, [currentView, pipeline, selectedAsset]);
+
+  useEffect(() => {
+    if (!documentTitle) {
+      return;
+    }
+
+    document.title = documentTitle;
+  }, [documentTitle]);
+
   const handleRunPipelineById = useCallback(
     (pipelineId: string) => {
       if (assetResults.materializeLoading) {

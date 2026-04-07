@@ -119,6 +119,7 @@ type webServer struct {
 	suggestionsSvc  *service.SuggestionsService
 	parseContextSvc *service.ParseContextService
 	runSvc          *service.RunService
+	onboardingSvc   *service.OnboardingService
 	workspaceCoord  *service.WorkspaceCoordinator
 
 	hub       *events.Hub
@@ -277,6 +278,7 @@ func Web() *cli.Command {
 			})
 
 			server.runSvc = service.NewRunService(service.RunDependencies{Runner: server.runner})
+			server.onboardingSvc = service.NewOnboardingService(absRoot, resolveConfigFilePath(absRoot), server.runner)
 
 			server.workspaceCoord = service.NewWorkspaceCoordinator(service.WorkspaceCoordinatorDependencies{
 				WorkspaceService: server.workspaceSvc,
@@ -361,6 +363,7 @@ func (s *webServer) registerRoutes(router chi.Router) {
 	webhttpapi.RegisterSuggestionRoutes(router, &webhttpapi.SuggestionsAPI{Service: s})
 	webhttpapi.RegisterParseContextRoutes(router, &webhttpapi.ParseContextAPI{Service: s})
 	webhttpapi.RegisterRunRoutes(router, &webhttpapi.RunAPI{Service: s})
+	webhttpapi.RegisterOnboardingRoutes(router, &webhttpapi.OnboardingAPI{Service: s.onboardingSvc, Publisher: s})
 	router.Get("/api/assets/freshness", s.handleGetAssetFreshness)
 
 	router.Get("/*", s.handleStatic)

@@ -88,6 +88,56 @@ export type WorkspaceConfigResponse = {
   parse_error?: string;
 };
 
+export type OnboardingImportResponse = {
+  status: "ok" | "error";
+  command?: string[];
+  output?: string;
+  error?: string;
+  pipeline_path?: string;
+  asset_paths?: string[];
+};
+
+export type OnboardingImportFormState = {
+  database?: string;
+  pipeline_name?: string;
+  schema?: string;
+  pattern?: string;
+  disable_columns?: boolean;
+};
+
+export type OnboardingImportResultState = {
+  output?: string;
+  error?: string;
+  pipeline_path?: string;
+  asset_paths?: string[];
+};
+
+export type OnboardingSessionState = {
+  active: boolean;
+  step?: "connection-type" | "connection-config" | "import" | "success";
+  selected_type?: string;
+  environment_name?: string;
+  draft_values?: Record<string, unknown>;
+  import_form?: OnboardingImportFormState;
+  selected_tables?: string[];
+  import_result?: OnboardingImportResultState | null;
+};
+
+export type OnboardingDiscoveryResponse = {
+  status: "ok" | "error";
+  connection_type?: string;
+  databases: string[];
+  selected_database?: string;
+  tables: SqlDiscoveryTable[];
+  error?: string;
+};
+
+export type OnboardingPathSuggestionsResponse = {
+  status: "ok" | "error";
+  suggestions: IngestrSuggestion[];
+  error?: string;
+};
+
 export type WorkspaceEvent = {
   type: string;
   path?: string;

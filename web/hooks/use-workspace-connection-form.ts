@@ -162,16 +162,16 @@ export function useWorkspaceConnectionForm({
     };
 
     if (mode === "create") {
-    const response = await onCreateConnection(payload);
+      const response = await onCreateConnection(payload);
       const environment = findEnvironmentByName(
         response.environments,
         connectionForm.environmentName
       );
-      onModeChange("edit");
       onSelectedEnvironmentChange(connectionForm.environmentName);
       onSelectedConnectionChange(
         getSelectedConnectionNameFromEnvironment(environment, connectionForm.name.trim())
       );
+      onModeChange("edit");
       return;
     }
 

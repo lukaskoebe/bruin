@@ -66,6 +66,10 @@ func ImportDatabase(isDebug *bool) *cli.Command {
 				Name:  "schemas",
 				Usage: "filter by multiple schema names, only supported for BigQuery (e.g., --schemas public --schemas analytics)",
 			},
+			&cli.StringSliceFlag{
+				Name:  "table",
+				Usage: "filter by fully qualified table names (e.g., --table analytics.orders)",
+			},
 			&cli.BoolFlag{
 				Name:    "no-columns",
 				Aliases: []string{"n"},
@@ -99,12 +103,13 @@ func ImportDatabase(isDebug *bool) *cli.Command {
 			} else {
 				schema := c.String("schema")
 				schemas := c.StringSlice("schemas")
+				tables := c.StringSlice("table")
 				if schema != "" && len(schemas) > 0 {
 					return cli.Exit("cannot use both --schema and --schemas flags together", 1)
 				}
 
 				log := makeLogger(*isDebug)
-				err = runImport(ctx, log, pipelinePath, connectionName, schema, schemas, !noColumns, environment, configFile)
+				err = runImport(ctx, log, pipelinePath, connectionName, schema, schemas, tables, !noColumns, environment, configFile)
 			}
 
 			if err != nil {
@@ -187,7 +192,7 @@ type importWarning struct {
 	message   string
 }
 
-func runImport(ctx context.Context, log logger.Logger, pipelinePath, connectionName, schema string, schemas []string, fillColumns bool, environment, configFile string) error {
+func runImport(ctx context.Context, log logger.Logger, pipelinePath, connectionName, schema string, schemas, tables []string, fillColumns bool, environment, configFile string) error {
 	fs := afero.NewOsFs()
 
 	log.Debugf("starting database import: connection=%s, schema=%q, schemas=%v, fillColumns=%v, environment=%q",
@@ -262,6 +267,14 @@ func runImport(ctx context.Context, log logger.Logger, pipelinePath, connectionN
 	assetsPath := filepath.Join(pipelinePath, "assets")
 	assetType := determineAssetTypeFromConnection(connectionName, conn)
 	log.Debugf("determined asset type: %s", assetType)
+	selectedTables := make(map[string]bool, len(tables))
+	for _, table := range tables {
+		trimmed := strings.ToLower(strings.TrimSpace(table))
+		if trimmed == "" {
+			continue
+		}
+		selectedTables[trimmed] = true
+	}
 
 	totalTables := 0
 	mergedTableCount := 0
@@ -273,6 +286,9 @@ func runImport(ctx context.Context, log logger.Logger, pipelinePath, connectionN
 		}
 		for _, table := range schemaObj.Tables {
 			fullName := fmt.Sprintf("%s.%s", schemaObj.Name, table.Name)
+			if len(selectedTables) > 0 && !selectedTables[strings.ToLower(fullName)] {
+				continue
+			}
 			createdAsset, warning := createAsset(ctx, assetsPath, schemaObj.Name, table.Name, assetType, conn, fillColumns, table)
 			if warning != "" {
 				warnings = append(warnings, importWarning{tableName: fullName, message: warning})

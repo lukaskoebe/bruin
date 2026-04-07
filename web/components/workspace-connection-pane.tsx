@@ -120,7 +120,10 @@ export function WorkspaceConnectionPane({
     try {
       const response = await testWorkspaceConnection({
         environment_name: connectionForm.environmentName,
+        current_name: activeConnection?.name,
         name: connectionForm.name.trim(),
+        type: connectionForm.type,
+        values: connectionForm.values,
       });
       setValidateMessage(response.message ?? "Connection validated.");
       setValidateTone("success");

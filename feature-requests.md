@@ -5,7 +5,7 @@ This document tracks feature work that is still needed, items that need confirma
 ## Notes And Corrections
 
 - `Store position of nodes in local storage` does not appear to work reliably in practice and should remain on the list.
-- `Keeping the materialize tab selectable without prior output` is still not fully solved. After the page finishes loading and inspect calls settle, the materialize tab can still become unavailable unless a materialize result exists.
+- `Keeping the materialize tab selectable without prior output` is done. The materialize tab now remains available and shows placeholder state before any run output exists.
 - `Inspect is shown when 0 rows are returned` works for the inspect pane, but not yet for the node preview table.
 - `Configure connections and environments in a connection environment editor panel` is already done.
 - `Prevent creating a new asset that overlaps with another one` still matters for duplicate name/path prevention.
@@ -16,6 +16,15 @@ This document tracks feature work that is still needed, items that need confirma
 - The Vite upgrade is already done.
 - Basic end-to-end coverage and a security audit workflow are already in place.
 - `Integrated terminal with AI/MCP` should stay in a maybe section for now.
+- Nested command-palette navigation is now done, including root search surfacing nested matches and clearing search when entering a nested page.
+- SQL formatting in the editor is now done.
+- `Ctrl+Enter` in the SQL editor to inspect the selected asset is now done.
+- Web-managed dependency reconciliation is now done for SQL assets:
+  - newly inferred dependencies are added
+  - stale Bruin Web-inferred dependencies are removed
+  - manually managed dependencies are preserved
+  - dependency editing is exposed in a dedicated editor tab
+- Mobile combobox option selection had a real bug in sheet-based layouts. The root issue was popup portal placement and wrapper-owned selection handling; the dependency selector mobile repro now passes in Playwright after fixing both.
 
 ## Highest Priority Fixes
 
@@ -25,7 +34,6 @@ This document tracks feature work that is still needed, items that need confirma
   - save on button click and `Enter`
 - Keep existing inspect/preview table data visible while refresh/load-more requests are in flight and show an inline spinner instead of replacing the table.
 - Add shared load-more support to both inspect pane and node preview table.
-- Keep the materialize tab selectable even before any output exists and show a placeholder state.
 - Fix node-position persistence so canvas positions are actually restored from local storage.
 - Ensure node preview also handles 0-row inspect results cleanly instead of behaving like “no data”.
 - Prevent duplicate asset creation by name/path.
@@ -36,9 +44,8 @@ This document tracks feature work that is still needed, items that need confirma
 - Add smooth camera transition when a newly selected canvas node becomes active.
 - Show a friendly already-saved message on `Ctrl+S`.
 - Add rename functionality directly inside the SQL editor.
-- Add `Ctrl+Enter` in the SQL editor to inspect the selected asset.
 - Add a search feature for asset name and asset content.
-- Add SQL auto-formatting.
+- Add full-page onboarding that guides first-time users through connection setup and asset import.
 - Add different highlighting for schema name, table name, and column name.
 - Add a connection delete confirmation dialog.
 - Require at least one connection during onboarding before the rest of the page is usable.
@@ -340,6 +347,7 @@ Scope:
 - require at least one connection during onboarding
 - auto-create S3 connection from local config
 - connection delete confirmation dialog
+- guided import flow after connection setup
 
 Touches mostly:
 
@@ -377,6 +385,10 @@ Scope:
 - end-to-end tests
 - security audit
 - forms standardization
+
+Recent progress in Package J:
+
+- live Playwright coverage now includes command-palette behavior, SQL dependency reconciliation, and a mobile combobox regression repro for dependency selection inside the mobile editor sheet
 
 Touches mostly:
 

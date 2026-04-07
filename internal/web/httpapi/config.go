@@ -60,7 +60,10 @@ type DeleteWorkspaceConnectionRequest struct {
 
 type TestWorkspaceConnectionRequest struct {
 	EnvironmentName string `json:"environment_name"`
+	CurrentName     string `json:"current_name,omitempty"`
 	Name            string `json:"name"`
+	Type            string `json:"type,omitempty"`
+	Values          map[string]any `json:"values,omitempty"`
 }
 
 func RegisterConfigRoutes(router chi.Router, handlers *ConfigHandlers) {
@@ -271,7 +274,13 @@ func (h *ConfigHandlers) HandleTestWorkspaceConnection(w http.ResponseWriter, r 
 		return
 	}
 
-	message, err := h.Service.TestConnection(r.Context(), cfg, req.EnvironmentName, req.Name)
+	message, err := h.Service.TestConnection(r.Context(), cfg, service.TestWorkspaceConnectionParams{
+		EnvironmentName: req.EnvironmentName,
+		CurrentName:     req.CurrentName,
+		Name:            req.Name,
+		Type:            req.Type,
+		Values:          req.Values,
+	})
 	if err != nil {
 		trimmed := strings.TrimSpace(err.Error())
 		switch {

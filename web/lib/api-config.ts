@@ -95,7 +95,10 @@ export async function deleteWorkspaceConnection(input: {
 
 export async function testWorkspaceConnection(input: {
   environment_name: string;
+  current_name?: string;
   name: string;
+  type?: string;
+  values?: Record<string, unknown>;
 }): Promise<{ status: string; message?: string }> {
   return fetchJSONWithBody<{ status: string; message?: string }>(
     "/api/config/connections/test",

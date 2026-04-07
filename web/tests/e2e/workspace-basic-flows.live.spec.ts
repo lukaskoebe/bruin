@@ -16,6 +16,7 @@ test.describe("workspace live basic flows", () => {
 
     await openCustomersEditor(page);
 
+    await expect(page).toHaveTitle("analytics.customers · analytics · Bruin Web");
     await expect(
       page.getByText("analytics.customers", { exact: true }).last()
     ).toBeVisible();
@@ -33,6 +34,7 @@ test.describe("workspace live basic flows", () => {
     await openCustomersEditor(page);
     await page.getByRole("link", { name: "analytics.orders" }).click();
 
+    await expect(page).toHaveTitle("analytics.orders · analytics · Bruin Web");
     await expect(
       page.getByText("analytics.orders", { exact: true }).last()
     ).toBeVisible();
@@ -317,11 +319,13 @@ test.describe("workspace live basic flows", () => {
       await expect(
         page.getByRole("heading", { name: "Create your first pipeline" })
       ).toBeVisible();
+      await expect(page).toHaveTitle("Workspace · Bruin Web");
       await page.getByRole("button", { name: "Create pipeline" }).last().click();
       await page.getByLabel("Pipeline path").fill("experiments");
       await page.getByRole("button", { name: "Create Pipeline", exact: true }).click();
 
       await expect(page.getByRole("link", { name: "experiments", exact: true })).toBeVisible();
+      await expect(page).toHaveTitle("experiments · Bruin Web");
 
       await page
         .getByRole("link", { name: "experiments", exact: true })
@@ -333,6 +337,7 @@ test.describe("workspace live basic flows", () => {
       await expect(
         page.getByRole("link", { name: "experiments_renamed", exact: true })
       ).toBeVisible();
+      await expect(page).toHaveTitle("experiments_renamed · Bruin Web");
 
       await page.reload();
 
