@@ -5,6 +5,9 @@ import { AssetViewMode, getAssetViewMode } from "@/lib/asset-visualization";
 import { AssetInspectResponse, WebPipeline } from "@/lib/types";
 
 const DOWNSTREAM_NODE_VERTICAL_GAP = 40;
+const COMPONENT_HORIZONTAL_GAP = 96;
+const COMPONENT_VERTICAL_GAP = 96;
+const NODE_MAX_VIEWPORT_WIDTH_RATIO = 0.8;
 
 export type AssetNodeData = {
   name: string;
@@ -193,29 +196,7 @@ export function computeGraphLayoutPositions(
   const byName = new Map(
     pipeline.assets.map((asset) => [asset.name, asset.id])
   );
-  const graph = new dagre.graphlib.Graph();
-  graph.setDefaultEdgeLabel(() => ({}));
-  graph.setGraph({
-    rankdir: "TB",
-    nodesep: 64,
-    ranksep: 120,
-    marginx: 24,
-    marginy: 24,
-    ranker: "network-simplex",
-  });
-
-  for (const asset of pipeline.assets) {
-    const inspect = inspectByAssetID?.[asset.id];
-    const previewMode = getAssetViewMode(asset.meta);
-    const size = estimateNodeSize(
-      asset.type,
-      previewMode,
-      inspect,
-      inspectLoadingByAssetID?.[asset.id] === true
-    );
-    graph.setNode(asset.id, { width: size.width, height: size.height });
-  }
-
+  const edgePairs: Array<{ source: string; target: string }> = [];
   for (const asset of pipeline.assets) {
     for (const upstream of asset.upstreams ?? []) {
       const sourceId = byName.get(upstream);
@@ -223,33 +204,37 @@ export function computeGraphLayoutPositions(
         continue;
       }
 
-      graph.setEdge(sourceId, asset.id);
+      edgePairs.push({ source: sourceId, target: asset.id });
     }
   }
 
-  dagre.layout(graph);
-
-  const positions: Record<string, { x: number; y: number }> = {};
+  const sizeByAssetId = new Map<string, { width: number; height: number }>();
   for (const asset of pipeline.assets) {
     const inspect = inspectByAssetID?.[asset.id];
     const previewMode = getAssetViewMode(asset.meta);
-    const isPreviewLoading = inspectLoadingByAssetID?.[asset.id] === true;
-    const size = estimateNodeSize(
-      asset.type,
-      previewMode,
-      inspect,
-      isPreviewLoading
+    sizeByAssetId.set(
+      asset.id,
+      estimateNodeSize(
+        asset.type,
+        previewMode,
+        inspect,
+        inspectLoadingByAssetID?.[asset.id] === true
+      )
     );
-    const layoutNode = graph.node(asset.id) as
-      | { x: number; y: number }
-      | undefined;
-    const x = layoutNode?.x ?? 0;
-    const y = layoutNode?.y ?? 0;
+  }
 
-    positions[asset.id] = {
-      x: x - size.width / 2,
-      y: y - size.height / 2,
-    };
+  const components = connectedComponents(
+    pipeline.assets.map((asset) => asset.id),
+    edgePairs
+  );
+  const componentLayouts = components.map((component) =>
+    layoutGraphComponent(component, edgePairs, sizeByAssetId)
+  );
+  const packedComponentPositions = packComponentLayouts(componentLayouts);
+
+  const positions: Record<string, { x: number; y: number }> = {};
+  for (const [assetId, position] of packedComponentPositions.entries()) {
+    positions[assetId] = position;
   }
 
   return positions;
@@ -272,59 +257,225 @@ function estimateNodeSize(
   inspect: AssetInspectResponse | undefined,
   isLoading: boolean
 ) {
+  const maxWidth = maxNodeWidth();
   const isIngestrAsset = assetType.trim().toLowerCase() === "ingestr";
 
   if (!mode) {
-    return isIngestrAsset
+    return clampNodeWidth(
+      isIngestrAsset
       ? { width: 320, height: 150 }
-      : { width: 260, height: 126 };
+      : { width: 260, height: 126 },
+      maxWidth
+    );
   }
 
   if (mode === "chart") {
-    return isIngestrAsset
+    return clampNodeWidth(
+      isIngestrAsset
       ? { width: 400, height: 304 }
-      : { width: 380, height: 280 };
+      : { width: 380, height: 280 },
+      maxWidth
+    );
   }
 
   if (isLoading) {
     if (mode === "table") {
-      return isIngestrAsset
+      return clampNodeWidth(
+        isIngestrAsset
         ? { width: 440, height: 260 }
-        : { width: 420, height: 230 };
+        : { width: 420, height: 230 },
+        maxWidth
+      );
     }
-    return isIngestrAsset
+    return clampNodeWidth(
+      isIngestrAsset
       ? { width: 440, height: 270 }
-      : { width: 420, height: 240 };
+      : { width: 420, height: 240 },
+      maxWidth
+    );
   }
 
   if (!inspect) {
-    return isIngestrAsset
+    return clampNodeWidth(
+      isIngestrAsset
       ? { width: 320, height: 150 }
-      : { width: 260, height: 126 };
+      : { width: 260, height: 126 },
+      maxWidth
+    );
   }
 
   if (mode === "table") {
     const sampledRows = inspect.rows.slice(0, 8);
     const estimatedWidth = estimateTableWidth(inspect.columns, sampledRows);
     const rowCount = Math.min(8, inspect.rows.length);
-    return {
+    return clampNodeWidth({
       width: isIngestrAsset ? Math.max(340, estimatedWidth) : estimatedWidth,
       height: Math.min(
         420,
         Math.max(isIngestrAsset ? 210 : 170, 96 + rowCount * 28)
       ),
-    };
+    }, maxWidth);
   }
 
   const textLength = JSON.stringify(inspect.rows[0] ?? {}).length;
   const estimatedLines = Math.max(6, Math.min(22, Math.ceil(textLength / 56)));
-  return {
+  return clampNodeWidth({
     width: isIngestrAsset ? 440 : 420,
     height: Math.min(
       500,
       Math.max(isIngestrAsset ? 214 : 190, 90 + estimatedLines * 18)
     ),
+  }, maxWidth);
+}
+
+function maxNodeWidth() {
+  if (typeof window === "undefined") {
+    return 760;
+  }
+
+  return Math.max(320, Math.floor(window.innerWidth * NODE_MAX_VIEWPORT_WIDTH_RATIO));
+}
+
+function clampNodeWidth(size: { width: number; height: number }, maxWidth: number) {
+  return {
+    ...size,
+    width: Math.min(size.width, maxWidth),
   };
+}
+
+function connectedComponents(nodeIds: string[], edges: Array<{ source: string; target: string }>) {
+  const adjacency = new Map<string, Set<string>>();
+  for (const nodeId of nodeIds) {
+    adjacency.set(nodeId, new Set());
+  }
+  for (const edge of edges) {
+    adjacency.get(edge.source)?.add(edge.target);
+    adjacency.get(edge.target)?.add(edge.source);
+  }
+
+  const visited = new Set<string>();
+  const components: string[][] = [];
+  for (const nodeId of nodeIds) {
+    if (visited.has(nodeId)) {
+      continue;
+    }
+    const component: string[] = [];
+    const queue = [nodeId];
+    visited.add(nodeId);
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      component.push(current);
+      for (const neighbor of adjacency.get(current) ?? []) {
+        if (visited.has(neighbor)) {
+          continue;
+        }
+        visited.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+    components.push(component);
+  }
+
+  return components;
+}
+
+function layoutGraphComponent(
+  componentNodeIds: string[],
+  edges: Array<{ source: string; target: string }>,
+  sizeByAssetId: Map<string, { width: number; height: number }>
+) {
+  const graph = new dagre.graphlib.Graph();
+  graph.setDefaultEdgeLabel(() => ({}));
+  graph.setGraph({
+    rankdir: "TB",
+    nodesep: 64,
+    ranksep: 120,
+    marginx: 24,
+    marginy: 24,
+    ranker: "network-simplex",
+  });
+
+  for (const nodeId of componentNodeIds) {
+    const size = sizeByAssetId.get(nodeId) ?? { width: 260, height: 126 };
+    graph.setNode(nodeId, { width: size.width, height: size.height });
+  }
+
+  const componentNodeSet = new Set(componentNodeIds);
+  for (const edge of edges) {
+    if (componentNodeSet.has(edge.source) && componentNodeSet.has(edge.target)) {
+      graph.setEdge(edge.source, edge.target);
+    }
+  }
+
+  dagre.layout(graph);
+
+  let minLeft = Number.POSITIVE_INFINITY;
+  let minTop = Number.POSITIVE_INFINITY;
+  let maxRight = 0;
+  let maxBottom = 0;
+  const positions = new Map<string, { x: number; y: number }>();
+
+  for (const nodeId of componentNodeIds) {
+    const layoutNode = graph.node(nodeId) as { x: number; y: number } | undefined;
+    const size = sizeByAssetId.get(nodeId) ?? { width: 260, height: 126 };
+    const left = (layoutNode?.x ?? 0) - size.width / 2;
+    const top = (layoutNode?.y ?? 0) - size.height / 2;
+    positions.set(nodeId, { x: left, y: top });
+    minLeft = Math.min(minLeft, left);
+    minTop = Math.min(minTop, top);
+    maxRight = Math.max(maxRight, left + size.width);
+    maxBottom = Math.max(maxBottom, top + size.height);
+  }
+
+  return {
+    positions,
+    width: Math.max(0, maxRight - minLeft),
+    height: Math.max(0, maxBottom - minTop),
+    minLeft,
+    minTop,
+  };
+}
+
+function packComponentLayouts(
+  layouts: Array<{
+    positions: Map<string, { x: number; y: number }>;
+    width: number;
+    height: number;
+    minLeft: number;
+    minTop: number;
+  }>
+) {
+  const sortedLayouts = [...layouts].sort((left, right) => right.width - left.width);
+  const maxRowWidth = typeof window === "undefined"
+    ? 1400
+    : Math.max(720, Math.floor(window.innerWidth * 1.5));
+
+  const packed = new Map<string, { x: number; y: number }>();
+  let cursorX = 24;
+  let cursorY = 24;
+  let rowHeight = 0;
+
+  for (const layout of sortedLayouts) {
+    if (cursorX > 24 && cursorX + layout.width > maxRowWidth) {
+      cursorX = 24;
+      cursorY += rowHeight + COMPONENT_VERTICAL_GAP;
+      rowHeight = 0;
+    }
+
+    const offsetX = cursorX - layout.minLeft;
+    const offsetY = cursorY - layout.minTop;
+    for (const [nodeId, position] of layout.positions.entries()) {
+      packed.set(nodeId, {
+        x: position.x + offsetX,
+        y: position.y + offsetY,
+      });
+    }
+
+    cursorX += layout.width + COMPONENT_HORIZONTAL_GAP;
+    rowHeight = Math.max(rowHeight, layout.height);
+  }
+
+  return packed;
 }
 
 function estimateTableWidth(

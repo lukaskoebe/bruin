@@ -70,6 +70,7 @@ export function useAssetResults() {
   const {
     inspectAssetById,
     inspectByAssetId,
+    inspectDiagnosticSnapshotByAssetId,
     inspectLoadingByAssetId,
     canLoadMoreByAssetId,
     loadMorePreviewRows,
@@ -165,9 +166,13 @@ export function useAssetResults() {
     });
   };
 
-  const runInspectForAsset = async (assetId: string) => {
+  const runInspectForAsset = async (assetId: string, contentSnapshot?: string) => {
     try {
-      const result = await inspectAssetById(assetId, { force: true, limit: 200 });
+      const result = await inspectAssetById(assetId, {
+        force: true,
+        limit: 200,
+        contentSnapshot,
+      });
       if (result.rows.length > 0 || result.error) {
         setResultTab("inspect");
       }
@@ -178,6 +183,7 @@ export function useAssetResults() {
         columns: [],
         rows: [],
         raw_output: "",
+        command: [],
         error: String(error),
       };
       setResultTab("inspect");
@@ -451,6 +457,7 @@ export function useAssetResults() {
 
   return {
     inspectResult,
+    inspectDiagnosticSnapshotByAssetId,
     inspectLoading,
     materializeLoading: effectiveMaterializeLoading,
     pipelineMaterializeLoading,

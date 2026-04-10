@@ -4,4 +4,5 @@ export * from "./domains/results";
 export * from "./domains/suggestions";
 export * from "./domains/workspace";
 export * from "./onboarding";
+export * from "./sql-discovery";
 export * from "./workspace";

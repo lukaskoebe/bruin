@@ -25,16 +25,16 @@ type SuggestionAPIError struct {
 }
 
 type IngestrSuggestionsResult struct {
-	Status         string
-	ConnectionType string
-	Suggestions    []SuggestionItem
-	Error          string
+	Status         string           `json:"status"`
+	ConnectionType string           `json:"connection_type,omitempty"`
+	Suggestions    []SuggestionItem `json:"suggestions"`
+	Error          string           `json:"error,omitempty"`
 }
 
 type SQLPathSuggestionsResult struct {
-	Status      string
-	Suggestions []SuggestionItem
-	Error       string
+	Status      string           `json:"status"`
+	Suggestions []SuggestionItem `json:"suggestions"`
+	Error       string           `json:"error,omitempty"`
 }
 
 type SuggestionsDependencies struct {

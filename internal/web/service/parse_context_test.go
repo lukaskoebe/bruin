@@ -3,6 +3,8 @@ package service
 import (
 	"testing"
 
+	"github.com/bruin-data/bruin/internal/web/sqlintelligence"
+
 	"github.com/bruin-data/bruin/pkg/pipeline"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -84,4 +86,30 @@ func TestBuildParseContextSchema_SkipsBlankColumnNames(t *testing.T) {
 	})
 
 	assert.Equal(t, map[string]string{"event_id": "uuid"}, schema["raw.events"])
+}
+
+func TestParseContextWithSchema_DuckDBPathReferenceDoesNotProduceUnresolvedTableDiagnostic(t *testing.T) {
+	t.Parallel()
+
+	parseContext, err := sqlintelligence.ParseContextWithSchema(
+		`select * from "./customers.csv"`,
+		"duckdb",
+		sqlintelligence.Schema{
+			"analytics.orders": {"order_id": "integer"},
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, parseContext)
+
+	assert.Empty(t, parseContext.Errors)
+	assert.Len(t, parseContext.Tables, 1)
+	assert.Equal(t, "./customers.csv", parseContext.Tables[0].Name)
+	assert.NotContains(t, parseContext.Diagnostics, sqlintelligence.ParseContextDiagnostic{
+		Message:  "Unresolved table: ./customers.csv",
+		Severity: "error",
+	})
+
+	for _, diagnostic := range parseContext.Diagnostics {
+		assert.NotEqual(t, "Unresolved table: ./customers.csv", diagnostic.Message)
+	}
 }

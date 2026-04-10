@@ -80,8 +80,8 @@ export function WorkspaceOnboarding({
     runDiscovery,
     selectedTables,
     selectedType,
-    setImportForm,
-    setSelectedTables,
+    updateImportFormField,
+    updateSelectedTables,
     chooseType,
     step,
   } = useOnboardingFlow({
@@ -239,8 +239,7 @@ export function WorkspaceOnboarding({
                             const nextSelected = checked
                               ? [...selectedTables, table.name]
                               : selectedTables.filter((item) => item !== table.name);
-                            setSelectedTables(nextSelected);
-                            void persistState({ selected_tables: nextSelected });
+                            void updateSelectedTables(nextSelected);
                           }}
                         />
                         <span>{table.name}</span>
@@ -256,8 +255,7 @@ export function WorkspaceOnboarding({
                   <Input
                     value={importForm.pipelineName}
                     onChange={(event) => {
-                      const next = event.target.value;
-                      setImportForm((current) => ({ ...current, pipelineName: next }));
+                      void updateImportFormField("pipelineName", event.target.value);
                     }}
                     placeholder="analytics"
                   />
@@ -267,8 +265,7 @@ export function WorkspaceOnboarding({
                   <Input
                     value={importForm.schema}
                     onChange={(event) => {
-                      const next = event.target.value;
-                      setImportForm((current) => ({ ...current, schema: next }));
+                      void updateImportFormField("schema", event.target.value);
                     }}
                     placeholder="public"
                   />
@@ -278,8 +275,7 @@ export function WorkspaceOnboarding({
                   <Input
                     value={importForm.pattern}
                     onChange={(event) => {
-                      const next = event.target.value;
-                      setImportForm((current) => ({ ...current, pattern: next }));
+                      void updateImportFormField("pattern", event.target.value);
                     }}
                     placeholder="customer_*"
                   />

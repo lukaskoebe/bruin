@@ -1,5 +1,6 @@
 import {
   WorkspaceConfigConnection,
+  WorkspaceConfigConnectionType,
   WorkspaceConfigEnvironment,
   WorkspaceConfigResponse,
 } from "@/lib/types";
@@ -59,10 +60,10 @@ export function buildConnectionFieldDefaults({
     type_name: string;
     fields: Array<{
       name: string;
-      type: "string" | "int" | "bool";
+      type: string;
       default_value?: string;
     }>;
-  }>;
+  }>; 
   existingConnection: WorkspaceConfigConnection | null;
   previousValues?: Record<string, string | number | boolean>;
   typeName: string;

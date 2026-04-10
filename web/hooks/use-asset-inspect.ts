@@ -23,6 +23,7 @@ function inspectFailure(error: unknown): AssetInspectResponse {
     columns: [],
     rows: [],
     raw_output: "",
+    command: [],
     error: message || String(error),
   };
 }
@@ -114,7 +115,8 @@ export function useAssetInspect(visualAssets: WebAsset[] = []) {
         const nextByAssetId = { ...previous.byAssetId };
 
         for (const [assetId, result] of Object.entries(results)) {
-          const previousResult = previous.byAssetId[assetId]?.result;
+          const previousEntry = previous.byAssetId[assetId];
+          const previousResult = previousEntry?.result;
           const nextResult =
             result.status === "error" && previousResult && previousResult.rows.length > 0
               ? {
@@ -134,6 +136,7 @@ export function useAssetInspect(visualAssets: WebAsset[] = []) {
           nextByAssetId[assetId] = {
             result: nextResult,
             fetchedLimit: fetchedLimitByAssetId[assetId] ?? result.rows.length,
+            diagnosticSnapshot: previousEntry?.diagnosticSnapshot,
           };
         }
 
@@ -244,7 +247,7 @@ export function useAssetInspect(visualAssets: WebAsset[] = []) {
   const inspectAssetById = useCallback(
     async (
       assetId: string,
-      options?: { force?: boolean; limit?: number }
+      options?: { force?: boolean; limit?: number; contentSnapshot?: string }
     ): Promise<AssetInspectResponse> => {
       const limit =
         options?.limit ??
@@ -262,13 +265,41 @@ export function useAssetInspect(visualAssets: WebAsset[] = []) {
       const results = await fetchInspectRequests([{ id: assetId, limit }], {
         force: true,
       });
-      return results[assetId] ?? inspectFailure("Inspect request failed.");
+      const result = results[assetId] ?? inspectFailure("Inspect request failed.");
+
+      const contentSnapshot = options?.contentSnapshot;
+      if (contentSnapshot !== undefined) {
+        setInspectState((previous) => {
+          const entry = previous.byAssetId[assetId];
+          if (!entry) {
+            return previous;
+          }
+
+          return {
+            ...previous,
+            byAssetId: {
+              ...previous.byAssetId,
+              [assetId]: {
+                ...entry,
+                diagnosticSnapshot: {
+                  assetId,
+                  content: contentSnapshot,
+                  inspect: result,
+                },
+              },
+            },
+          };
+        });
+      }
+
+      return result;
     },
     [
       baseLimitByAssetId,
       byAssetId,
       fetchInspectRequests,
       requestedLimitsByAssetId,
+      setInspectState,
       setRequestedLimit,
     ]
   );
@@ -350,6 +381,17 @@ export function useAssetInspect(visualAssets: WebAsset[] = []) {
       const entry = byAssetId[assetId];
       if (entry) {
         next[assetId] = entry.result;
+      }
+    }
+    return next;
+  }, [byAssetId]);
+
+  const inspectDiagnosticSnapshotByAssetId = useMemo(() => {
+    const next: Record<string, NonNullable<(typeof byAssetId)[string]["diagnosticSnapshot"]>> = {};
+    for (const assetId of Object.keys(byAssetId)) {
+      const snapshot = byAssetId[assetId]?.diagnosticSnapshot;
+      if (snapshot) {
+        next[assetId] = snapshot;
       }
     }
     return next;
@@ -451,6 +493,7 @@ export function useAssetInspect(visualAssets: WebAsset[] = []) {
 
   return {
     inspectByAssetId,
+    inspectDiagnosticSnapshotByAssetId,
     inspectLoadingByAssetId,
     canLoadMoreByAssetId,
     loadMorePreviewRows,

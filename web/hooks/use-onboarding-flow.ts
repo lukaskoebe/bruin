@@ -1,7 +1,7 @@
 "use client";
 
-import { useAtom, useSetAtom } from "jotai";
-import { useCallback, useEffect, useMemo } from "react";
+import { useAtom } from "jotai";
+import { useCallback } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
 import {
@@ -16,20 +16,15 @@ import {
   onboardingSelectedTypeAtom,
   onboardingStepAtom,
   OnboardingStep,
-  syncOnboardingAtomsAtom,
 } from "@/lib/atoms/onboarding";
 import {
   importOnboardingDatabase,
-  previewOnboardingDiscovery,
-  testWorkspaceConnection,
   updateOnboardingState,
 } from "@/lib/api";
 import { buildConnectionFieldDefaults } from "@/lib/settings-form-utils";
-import {
-  OnboardingSessionState,
-  WorkspaceConfigConnectionType,
-  WorkspaceConfigResponse,
-} from "@/lib/types";
+import { useOnboardingDiscovery } from "@/hooks/use-onboarding-discovery";
+import { useOnboardingPersistence } from "@/hooks/use-onboarding-persistence";
+import { OnboardingSessionState, WorkspaceConfigResponse } from "@/lib/types";
 
 type Params = {
   workspaceConfig: WorkspaceConfigResponse;
@@ -51,8 +46,6 @@ type Params = {
   onReloadWorkspace?: () => Promise<void> | void;
 };
 
-const FEATURED_TYPES = ["postgres", "duckdb", "snowflake", "google_cloud_platform", "redshift", "databricks"];
-
 export function useOnboardingFlow({
   workspaceConfig,
   onboardingState,
@@ -62,7 +55,6 @@ export function useOnboardingFlow({
   onReloadWorkspace,
 }: Params) {
   const navigate = useNavigate();
-  const setSyncedState = useSetAtom(syncOnboardingAtomsAtom);
   const [step, setStep] = useAtom(onboardingStepAtom);
   const [selectedType, setSelectedType] = useAtom(onboardingSelectedTypeAtom);
   const [busy, setBusy] = useAtom(onboardingBusyAtom);
@@ -74,186 +66,43 @@ export function useOnboardingFlow({
   const [importForm, setImportForm] = useAtom(onboardingImportFormAtom);
   const [importResult, setImportResult] = useAtom(onboardingImportResultAtom);
 
-  const environments = workspaceConfig.environments;
-  const connectionTypes = workspaceConfig.connection_types;
-  const defaultEnvironment =
-    onboardingState.environment_name ||
-    workspaceConfig.selected_environment ||
-    workspaceConfig.default_environment ||
-    environments[0]?.name ||
-    "default";
-
-  const featuredTypes = useMemo(
-    () =>
-      FEATURED_TYPES.map((type) => connectionTypes.find((item) => item.type_name === type)).filter(Boolean) as WorkspaceConfigConnectionType[],
-    [connectionTypes]
-  );
-
-  useEffect(() => {
-    setSyncedState({
-      ...onboardingState,
-      selected_type_fallback: featuredTypes[0]?.type_name || "postgres",
-    });
-  }, [featuredTypes, onboardingState, setSyncedState]);
-
-  const defaultDraftValues = useMemo(
-    () =>
-      applyOnboardingDraftDefaults(
-        selectedType,
-        buildConnectionFieldDefaults({
-          connectionTypes,
-          existingConnection: null,
-          typeName: selectedType,
-        })
-      ),
-    [connectionTypes, selectedType]
-  );
-
-  useEffect(() => {
-    if (
-      step !== "connection-config" ||
-      !selectedType ||
-      Object.keys(draftValues).length > 0 ||
-      Object.keys(onboardingState.draft_values ?? {}).length > 0
-    ) {
-      return;
-    }
-    setDraftValues(defaultDraftValues);
-  }, [defaultDraftValues, draftValues, onboardingState.draft_values, selectedType, setDraftValues, step]);
+  const {
+    connectionTypes,
+    defaultDraftValues,
+    defaultEnvironment,
+    featuredTypes,
+    persistState,
+  } = useOnboardingPersistence({
+    workspaceConfig,
+    onboardingState,
+    selectedType,
+    step,
+    draftValues,
+    importForm,
+    selectedTables,
+    importResult,
+    setDraftValues,
+  });
 
   const connectionName = `${selectedType}-default`;
-
-  const persistState = useCallback(
-    async (overrides: Partial<OnboardingSessionState> = {}) => {
-      await updateOnboardingState({
-        active: true,
-        step,
-        selected_type: selectedType,
-        environment_name: defaultEnvironment,
-        draft_values: draftValues,
-        import_form: {
-          database: importForm.database,
-          pipeline_name: importForm.pipelineName,
-          schema: importForm.schema,
-          pattern: importForm.pattern,
-          disable_columns: importForm.disableColumns,
-        },
-        selected_tables: selectedTables,
-        import_result: importResult
-          ? {
-              output: importResult.output,
-              error: importResult.error,
-              pipeline_path: importResult.pipeline_path,
-              asset_paths: importResult.asset_paths,
-            }
-          : null,
-        ...overrides,
-      });
-    },
-    [defaultEnvironment, draftValues, importForm, importResult, selectedTables, selectedType, step]
-  );
-
-  useEffect(() => {
-    if (step !== "import" || discoveryBusy || discoveryState.databases.length > 0) {
-      return;
-    }
-
-    const loadSavedDiscovery = async () => {
-      setDiscoveryBusy(true);
-      setDiscoveryError(null);
-      try {
-        const resumeDatabase =
-          selectedType === "duckdb"
-            ? importForm.database
-            : selectedTables.length > 0
-              ? importForm.database
-              : undefined;
-
-        const response = await previewOnboardingDiscovery({
-          environment_name: defaultEnvironment,
-          type: selectedType,
-          values: draftValues,
-          database: resumeDatabase,
-        });
-        setDiscoveryState(response);
-        if ((response.tables ?? []).length > 0 && selectedTables.length === 0) {
-          setSelectedTables(response.tables.map((table) => table.name));
-        }
-      } catch (error) {
-        setDiscoveryError(
-          error instanceof Error ? error.message : "Failed to inspect available objects."
-        );
-      } finally {
-        setDiscoveryBusy(false);
-      }
-    };
-
-    void loadSavedDiscovery();
-  }, [defaultEnvironment, discoveryBusy, discoveryState.databases.length, draftValues, importForm.database, selectedTables.length, selectedType, setDiscoveryBusy, setDiscoveryError, setDiscoveryState, setSelectedTables, step]);
-
-  const runDiscovery = useCallback(
-    async (values: Record<string, string | number | boolean>, database?: string) => {
-      setDiscoveryBusy(true);
-      setDiscoveryError(null);
-      try {
-        await testWorkspaceConnection({
-          environment_name: defaultEnvironment,
-          name: connectionName,
-          type: selectedType,
-          values,
-        });
-
-        const response = await previewOnboardingDiscovery({
-          environment_name: defaultEnvironment,
-          type: selectedType,
-          values,
-          database,
-        });
-
-        const nextDatabase =
-          selectedType === "duckdb"
-            ? response.selected_database ?? database ?? importForm.database
-            : database ?? importForm.database;
-        const nextSchema =
-          importForm.schema || response.tables.find((table) => table.schema_name)?.schema_name || importForm.schema;
-        const nextSelectedTables = (response.tables ?? []).map((table) => table.name);
-
-        setDiscoveryState(response);
-        setDraftValues(values);
-        setImportForm((current) => ({
-          ...current,
-          database: nextDatabase,
-          schema: nextSchema,
-        }));
-        setSelectedTables(nextSelectedTables);
-        setStep("import");
-
-        await updateOnboardingState({
-          active: true,
-          step: "import",
-          selected_type: selectedType,
-          environment_name: defaultEnvironment,
-          draft_values: values,
-          import_form: {
-            database: nextDatabase,
-            pipeline_name: importForm.pipelineName,
-            schema: nextSchema,
-            pattern: importForm.pattern,
-            disable_columns: importForm.disableColumns,
-          },
-          selected_tables: nextSelectedTables,
-          import_result: null,
-        });
-        void navigate({ to: "/onboarding/import", replace: true });
-      } catch (error) {
-        setDiscoveryState({ status: "ok", databases: [], tables: [] });
-        setDiscoveryError(error instanceof Error ? error.message : "Connection validation failed.");
-      } finally {
-        setDiscoveryBusy(false);
-      }
-    },
-    [connectionName, defaultEnvironment, importForm.database, importForm.disableColumns, importForm.pattern, importForm.pipelineName, importForm.schema, navigate, selectedType, setDiscoveryBusy, setDiscoveryError, setDiscoveryState, setDraftValues, setImportForm, setSelectedTables, setStep]
-  );
+  const { runDiscovery } = useOnboardingDiscovery({
+    step,
+    selectedType,
+    connectionName,
+    defaultEnvironment,
+    draftValues,
+    importForm,
+    selectedTables,
+    discoveryBusy,
+    discoveryState,
+    setDiscoveryBusy,
+    setDiscoveryError,
+    setDiscoveryState,
+    setDraftValues,
+    setImportForm,
+    setSelectedTables,
+    setStep,
+  });
 
   const navigateToStep = useCallback(
     async (nextStep: OnboardingStep) => {
@@ -289,11 +138,9 @@ export function useOnboardingFlow({
       setSelectedTables([]);
       setImportResult(null);
       setStep("connection-config");
-      await updateOnboardingState({
-        active: true,
+      await persistState({
         step: "connection-config",
         selected_type: nextType,
-        environment_name: defaultEnvironment,
         draft_values: nextDraftValues,
         import_form: {
           pipeline_name: importForm.pipelineName,
@@ -301,9 +148,13 @@ export function useOnboardingFlow({
         selected_tables: [],
         import_result: null,
       });
-      void navigate({ to: "/onboarding/connection", replace: true });
+      void navigate({
+        to: "/onboarding/connection",
+        replace: true,
+        search: { pipeline: undefined, asset: undefined },
+      });
     },
-    [connectionTypes, defaultEnvironment, importForm.pipelineName, navigate, setDiscoveryError, setDiscoveryState, setDraftValues, setImportResult, setSelectedTables, setSelectedType, setStep]
+    [connectionTypes, importForm.pipelineName, navigate, persistState, setDiscoveryError, setDiscoveryState, setDraftValues, setImportResult, setSelectedTables, setSelectedType, setStep]
   );
 
   const handleSaveAndImport = useCallback(async () => {
@@ -376,7 +227,11 @@ export function useOnboardingFlow({
             asset_paths: response.asset_paths,
           },
         });
-        void navigate({ to: "/onboarding/success", replace: true });
+        void navigate({
+          to: "/onboarding/success",
+          replace: true,
+          search: { pipeline: undefined, asset: undefined },
+        });
       }
     } finally {
       setBusy(false);
@@ -385,13 +240,13 @@ export function useOnboardingFlow({
 
   const handleSkip = useCallback(async () => {
     await updateOnboardingState({ active: false });
-    void navigate({ to: "/", replace: true });
+    void navigate({ to: "/", replace: true, search: { pipeline: undefined, asset: undefined } });
   }, [navigate]);
 
   const handleComplete = useCallback(async () => {
     await updateOnboardingState({ active: false });
     await onReloadConfig();
-    void navigate({ to: "/", replace: true });
+    void navigate({ to: "/", replace: true, search: { pipeline: undefined, asset: undefined } });
   }, [navigate, onReloadConfig]);
 
   const importDisabled =
@@ -400,6 +255,34 @@ export function useOnboardingFlow({
     !importForm.pipelineName.trim() ||
     (selectedType !== "duckdb" && !selectedTables.length) ||
     (selectedType !== "duckdb" && !importForm.database.trim());
+
+  const updateImportFormField = useCallback(
+    async (field: "database" | "pipelineName" | "schema" | "pattern", value: string) => {
+      const nextImportForm = {
+        ...importForm,
+        [field]: value,
+      };
+      setImportForm(nextImportForm);
+      await persistState({
+        import_form: {
+          database: nextImportForm.database,
+          pipeline_name: nextImportForm.pipelineName,
+          schema: nextImportForm.schema,
+          pattern: nextImportForm.pattern,
+          disable_columns: nextImportForm.disableColumns,
+        },
+      });
+    },
+    [importForm, persistState, setImportForm]
+  );
+
+  const updateSelectedTables = useCallback(
+    async (nextSelectedTables: string[]) => {
+      setSelectedTables(nextSelectedTables);
+      await persistState({ selected_tables: nextSelectedTables });
+    },
+    [persistState, setSelectedTables]
+  );
 
   return {
     connectionName,
@@ -425,8 +308,8 @@ export function useOnboardingFlow({
     runDiscovery,
     selectedTables,
     selectedType,
-    setImportForm,
-    setSelectedTables,
+    updateImportFormField,
+    updateSelectedTables,
     chooseType,
     step,
   };

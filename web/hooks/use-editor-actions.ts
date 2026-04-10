@@ -12,6 +12,7 @@ import { VISUALIZATION_META_KEYS } from "@/lib/visualization-meta";
 type UseEditorActionsInput = {
   editorValue: string;
   scheduleSave: (pipelineId: string, assetId: string, content: string) => void;
+  flushAssetSave: (assetId: string) => void;
   saveAssetNow: (
     pipelineId: string,
     assetId: string,
@@ -35,7 +36,7 @@ type UseEditorActionsInput = {
     pipelineId: string,
     input: { name?: string; content?: string }
   ) => Promise<boolean>;
-  runInspectForAsset: (assetId: string) => Promise<unknown>;
+  runInspectForAsset: (assetId: string, contentSnapshot?: string) => Promise<unknown>;
   runMaterializeForAsset: (
     assetId: string,
     refresh?: () => Promise<void> | void
@@ -49,6 +50,7 @@ type UseEditorActionsInput = {
 export function useEditorActions({
   editorValue,
   scheduleSave,
+  flushAssetSave,
   runUpdateAsset,
   runDeleteAsset,
   runInspectForAsset,
@@ -145,12 +147,16 @@ export function useEditorActions({
         return;
       }
 
+      // Avoid racing a pending debounced content save against the explicit
+      // upstream update request for the same asset.
+      flushAssetSave(asset.id);
+
       void runUpdateAsset(pipelineId, asset.id, {
         content: editorValue,
         upstreams,
       });
     },
-    [asset, editorValue, pipelineId, runUpdateAsset]
+    [asset, editorValue, flushAssetSave, pipelineId, runUpdateAsset]
   );
 
   const handleConfirmDeleteAsset = useCallback(() => {
@@ -203,8 +209,8 @@ export function useEditorActions({
       return;
     }
 
-    void runInspectForAsset(asset.id);
-  }, [asset, runInspectForAsset]);
+    void runInspectForAsset(asset.id, editorValue);
+  }, [asset, editorValue, runInspectForAsset]);
 
   const handleSaveSelectedAsset = useCallback(async () => {
     if (!asset || !pipelineId) {

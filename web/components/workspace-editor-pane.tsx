@@ -21,6 +21,7 @@ import { useWorkspaceEditorDerivedState } from "@/hooks/use-workspace-editor-der
 import { useYAMLIntellisense } from "@/hooks/use-yaml-intellisense";
 import { defineBruinMonacoThemes } from "@/lib/monaco-theme";
 import { WebAsset } from "@/lib/types";
+import { InspectDiagnosticSnapshot } from "@/lib/inspect-diagnostics";
 
 export type AssetConfigForm = {
   type: string;
@@ -46,6 +47,7 @@ type WorkspaceEditorPaneProps = {
   assetEditorTab: "configuration" | "checks" | "visualization" | "dependencies";
   form: UseFormReturn<AssetConfigForm>;
   assetPreviewRows: Record<string, unknown>[];
+  inspectDiagnosticSnapshot?: InspectDiagnosticSnapshot | null;
   onEditorTabChange: (
     value: "configuration" | "checks" | "visualization" | "dependencies"
   ) => void;
@@ -84,6 +86,7 @@ export function WorkspaceEditorPane({
   assetEditorTab,
   form,
   assetPreviewRows,
+  inspectDiagnosticSnapshot,
   onEditorTabChange,
   onEditorChange,
   onMaterializeSelectedAsset,
@@ -130,7 +133,8 @@ export function WorkspaceEditorPane({
     schemaTables,
     asset?.upstreams ?? [],
     selectedEnvironment,
-    onGoToAsset
+    onGoToAsset,
+    inspectDiagnosticSnapshot ?? null,
   );
   useYAMLIntellisense(monacoInstance, editorInstance, asset);
 

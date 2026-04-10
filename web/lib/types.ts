@@ -1,91 +1,115 @@
-export type WebAsset = {
-  id: string;
-  name: string;
-  type: string;
-  path: string;
-  content: string;
-  upstreams: string[];
-  parameters?: Record<string, string>;
-  meta?: Record<string, string>;
-  columns?: WebColumn[];
-  connection?: string;
-  materialization_type?: string;
-  is_materialized: boolean;
-  freshness_status?: "fresh" | "stale";
-  materialized_as?: string;
-  row_count?: number;
+import type {
+  AssetInspectResponse as GeneratedAssetInspectResponse,
+  FormatSQLAssetResponse as GeneratedFormatSQLAssetResponse,
+  InferColumnsResponse as GeneratedInferColumnsResponse,
+  IngestrSuggestion,
+  IngestrSuggestionsResponse,
+  OnboardingDiscoveryResponse as GeneratedOnboardingDiscoveryResponse,
+  OnboardingImportFormState,
+  OnboardingImportResultState,
+  OnboardingPathSuggestionsResponse,
+  OnboardingSessionState as GeneratedOnboardingSessionState,
+  PipelineMaterializationResponse as GeneratedPipelineMaterializationResponse,
+  SqlDiscoveryDatabasesResponse,
+  SqlDiscoveryTable,
+  SqlDiscoveryTableColumnsResponse,
+  SqlDiscoveryTablesResponse,
+  SqlParseContextColumn,
+  SqlParseContextDiagnostic,
+  SqlParseContextPart,
+  SqlParseContextRange,
+  SqlParseContextResponse as GeneratedSqlParseContextResponse,
+  SqlParseContextTable,
+  SqlPathSuggestionsResponse,
+  WebAsset as GeneratedWebAsset,
+  WebPipeline as GeneratedWebPipeline,
+  WebColumn,
+  WebColumnCheck,
+  WorkspaceConfigConnection,
+  WorkspaceConfigConnectionType as GeneratedWorkspaceConfigConnectionType,
+  WorkspaceConfigEnvironment,
+  WorkspaceConfigFieldDef as GeneratedWorkspaceConfigFieldDef,
+  WorkspaceConfigResponse as GeneratedWorkspaceConfigResponse,
+  WorkspaceEvent as GeneratedWorkspaceEvent,
+  WorkspaceState as GeneratedWorkspaceState,
+} from "@/lib/generated/api-types";
+
+export type {
+  IngestrSuggestion,
+  IngestrSuggestionsResponse,
+  OnboardingImportFormState,
+  OnboardingImportResultState,
+  OnboardingPathSuggestionsResponse,
+  SqlDiscoveryDatabasesResponse,
+  SqlDiscoveryTable,
+  SqlDiscoveryTableColumnsResponse,
+  SqlDiscoveryTablesResponse,
+  SqlParseContextColumn,
+  SqlParseContextDiagnostic,
+  SqlParseContextPart,
+  SqlParseContextRange,
+  SqlParseContextTable,
+  SqlPathSuggestionsResponse,
+  WebColumn,
+  WebColumnCheck,
+  WorkspaceConfigConnection,
+  WorkspaceConfigEnvironment,
 };
 
-export type WebColumnCheck = {
-  name: string;
-  value?: unknown;
-  blocking?: boolean;
-  description?: string;
+export type WorkspaceConfigFieldType = "string" | "int" | "bool";
+
+export type WorkspaceConfigFieldDef = Omit<
+  GeneratedWorkspaceConfigFieldDef,
+  "type"
+> & {
+  type: WorkspaceConfigFieldType;
 };
 
-export type WebColumn = {
-  name: string;
-  type?: string;
-  description?: string;
-  tags?: string[];
-  primary_key?: boolean;
-  update_on_merge?: boolean;
-  merge_sql?: string;
-  nullable?: boolean;
-  owner?: string;
-  domains?: string[];
-  meta?: Record<string, string>;
-  checks?: WebColumnCheck[];
-};
-
-export type WebPipeline = {
-  id: string;
-  name: string;
-  path: string;
-  assets: WebAsset[];
-};
-
-export type WorkspaceState = {
-  pipelines: WebPipeline[];
-  connections: Record<string, string>;
-  selected_environment: string;
-  errors: string[];
-  updated_at: string;
-  revision?: number;
-};
-
-export type WorkspaceConfigFieldDef = {
-  name: string;
-  type: "string" | "int" | "bool";
-  default_value?: string;
-  is_required: boolean;
-};
-
-export type WorkspaceConfigConnectionType = {
-  type_name: string;
+export type WorkspaceConfigConnectionType = Omit<
+  GeneratedWorkspaceConfigConnectionType,
+  "fields"
+> & {
   fields: WorkspaceConfigFieldDef[];
 };
 
-export type WorkspaceConfigConnection = {
-  name: string;
-  type: string;
-  values: Record<string, string | number | boolean | null | undefined>;
-};
-
-export type WorkspaceConfigEnvironment = {
-  name: string;
-  schema_prefix?: string;
-  connections: WorkspaceConfigConnection[];
-};
-
-export type WorkspaceConfigResponse = {
+export type WorkspaceConfigResponse = Omit<
+  GeneratedWorkspaceConfigResponse,
+  "status" | "connection_types"
+> & {
   status: "ok" | "error";
-  path: string;
-  default_environment?: string;
-  selected_environment?: string;
-  environments: WorkspaceConfigEnvironment[];
   connection_types: WorkspaceConfigConnectionType[];
-  parse_error?: string;
+};
+
+export type OnboardingDiscoveryResponse = Omit<GeneratedOnboardingDiscoveryResponse, "status"> & {
+  status: "ok" | "error";
+};
+
+export type SqlParseContextResponse = GeneratedSqlParseContextResponse & {
+  status: "ok" | "error";
+};
+
+export type WebAsset = GeneratedWebAsset & {
+  freshness_status?: "fresh" | "stale";
+};
+
+export type WebPipeline = Omit<GeneratedWebPipeline, "assets"> & {
+  assets: WebAsset[];
+};
+
+export type WorkspaceState = Omit<GeneratedWorkspaceState, "pipelines"> & {
+  pipelines: WebPipeline[];
+};
+
+export type WorkspaceEvent = Omit<GeneratedWorkspaceEvent, "workspace"> & {
+  workspace: WorkspaceState;
+};
+
+export type OnboardingSessionState = Omit<
+  GeneratedOnboardingSessionState,
+  "step" | "import_result"
+> & {
+  step?: "connection-type" | "connection-config" | "import" | "success";
+  import_result?: OnboardingImportResultState | null;
 };
 
 export type OnboardingImportResponse = {
@@ -97,194 +121,26 @@ export type OnboardingImportResponse = {
   asset_paths?: string[];
 };
 
-export type OnboardingImportFormState = {
-  database?: string;
-  pipeline_name?: string;
-  schema?: string;
-  pattern?: string;
-  disable_columns?: boolean;
-};
-
-export type OnboardingImportResultState = {
-  output?: string;
-  error?: string;
-  pipeline_path?: string;
-  asset_paths?: string[];
-};
-
-export type OnboardingSessionState = {
-  active: boolean;
-  step?: "connection-type" | "connection-config" | "import" | "success";
-  selected_type?: string;
-  environment_name?: string;
-  draft_values?: Record<string, unknown>;
-  import_form?: OnboardingImportFormState;
-  selected_tables?: string[];
-  import_result?: OnboardingImportResultState | null;
-};
-
-export type OnboardingDiscoveryResponse = {
+export type AssetInspectResponse = GeneratedAssetInspectResponse & {
   status: "ok" | "error";
-  connection_type?: string;
-  databases: string[];
-  selected_database?: string;
-  tables: SqlDiscoveryTable[];
-  error?: string;
-};
-
-export type OnboardingPathSuggestionsResponse = {
-  status: "ok" | "error";
-  suggestions: IngestrSuggestion[];
-  error?: string;
-};
-
-export type WorkspaceEvent = {
-  type: string;
-  path?: string;
-  workspace: WorkspaceState;
-  lite?: boolean;
-  changed_asset_ids?: string[];
-};
-
-export type AssetInspectResponse = {
-  status: "ok" | "error";
-  columns: string[];
-  rows: Record<string, unknown>[];
-  raw_output: string;
   command?: string[];
-  error?: string;
   warning?: string;
 };
 
-export type PipelineMaterializationResponse = {
-  pipeline_id: string;
-  assets: Array<{
-    asset_id: string;
-    is_materialized: boolean;
+export type InferColumnsResponse = GeneratedInferColumnsResponse & {
+  status: "ok" | "error";
+  command?: string[];
+};
+
+export type FormatSQLAssetResponse = GeneratedFormatSQLAssetResponse & {
+  status: "ok" | "error";
+  error?: string;
+};
+
+export type PipelineMaterializationResponse = Omit<GeneratedPipelineMaterializationResponse, "assets"> & {
+  assets: Array<GeneratedPipelineMaterializationResponse["assets"][number] & {
     freshness_status?: "fresh" | "stale";
-    materialized_as?: string;
-    row_count?: number;
-    connection?: string;
-    materialization_type?: string;
   }>;
-};
-
-export type InferColumnsResponse = {
-  status: "ok" | "error";
-  columns: WebColumn[];
-  raw_output: string;
-  command?: string[];
-  error?: string;
-};
-
-export type IngestrSuggestion = {
-  value: string;
-  kind?: string;
-  detail?: string;
-};
-
-export type IngestrSuggestionsResponse = {
-  status: "ok" | "error";
-  connection_type?: string;
-  suggestions: IngestrSuggestion[];
-  error?: string;
-};
-
-export type SqlPathSuggestionsResponse = {
-  status: "ok" | "error";
-  suggestions: IngestrSuggestion[];
-  error?: string;
-};
-
-export type SqlDiscoveryDatabasesResponse = {
-  status: "ok" | "error";
-  connection_name: string;
-  connection_type?: string;
-  databases: string[];
-  error?: string;
-};
-
-export type SqlDiscoveryTable = {
-  name: string;
-  short_name: string;
-  schema_name?: string;
-  database_name?: string;
-};
-
-export type SqlDiscoveryTablesResponse = {
-  status: "ok" | "error";
-  connection_name: string;
-  connection_type?: string;
-  database: string;
-  tables: SqlDiscoveryTable[];
-  error?: string;
-};
-
-export type SqlDiscoveryTableColumnsResponse = {
-  status: "ok" | "error";
-  connection_name: string;
-  table: string;
-  columns: WebColumn[];
-  raw_output: string;
-  command?: string[];
-  error?: string;
-};
-
-export type SqlParseContextRange = {
-  start: number;
-  end: number;
-  line: number;
-  col: number;
-  end_line: number;
-  end_col: number;
-};
-
-export type SqlParseContextPart = {
-  name: string;
-  kind: "schema" | "table" | "column" | "alias";
-  range: SqlParseContextRange;
-};
-
-export type SqlParseContextTable = {
-  name: string;
-  source_kind?: "table" | "table_function" | string;
-  resolved_name?: string;
-  alias?: string;
-  parts: SqlParseContextPart[];
-  alias_range?: SqlParseContextRange;
-};
-
-export type SqlParseContextColumn = {
-  name: string;
-  qualifier?: string;
-  resolved_table?: string;
-  parts: SqlParseContextPart[];
-};
-
-export type SqlParseContextDiagnostic = {
-  message: string;
-  severity: "error" | "warning" | "info" | string;
-  range?: SqlParseContextRange;
-};
-
-export type SqlParseContextResponse = {
-  status: "ok" | "error";
-  asset_id: string;
-  dialect?: string;
-  query_kind?: string;
-  is_single_select: boolean;
-  tables: SqlParseContextTable[];
-  columns: SqlParseContextColumn[];
-  diagnostics?: SqlParseContextDiagnostic[];
-  errors?: string[];
-  error?: string;
-};
-
-export type FormatSQLAssetResponse = {
-  status: "ok" | "error";
-  asset_id: string;
-  content: string;
-  error?: string;
 };
 
 export type AssetFreshnessEntry = {

@@ -440,8 +440,16 @@ func (s *SQLParser) GetMissingDependenciesForAsset(asset *pipeline.Asset, pipeli
 	}
 
 	pipelineAssetNames := make(map[string]bool, len(pipeline.Assets))
+	pipelineAssetNamesByShortName := make(map[string]string, len(pipeline.Assets))
 	for _, a := range pipeline.Assets {
-		pipelineAssetNames[strings.ToLower(a.Name)] = true
+		normalizedName := strings.ToLower(a.Name)
+		pipelineAssetNames[normalizedName] = true
+		if lastDot := strings.LastIndex(a.Name, "."); lastDot > 0 && lastDot < len(a.Name)-1 {
+			shortName := strings.ToLower(a.Name[lastDot+1:])
+			if _, exists := pipelineAssetNamesByShortName[shortName]; !exists {
+				pipelineAssetNamesByShortName[shortName] = normalizedName
+			}
+		}
 	}
 
 	usedTableNameMap := make(map[string]string, len(tables))
@@ -464,18 +472,25 @@ func (s *SQLParser) GetMissingDependenciesForAsset(asset *pipeline.Asset, pipeli
 			continue
 		}
 
+		resolvedTable := usedTable
+		if _, ok := pipelineAssetNames[resolvedTable]; !ok {
+			if candidate, found := pipelineAssetNamesByShortName[resolvedTable]; found {
+				resolvedTable = candidate
+			}
+		}
+
 		// if the table is in the dependency list already, move on
-		if _, ok := depsNameMap[usedTable]; ok {
+		if _, ok := depsNameMap[resolvedTable]; ok {
 			continue
 		}
 
 		// report this issue only if there's an asset with the same name, otherwise ignore
-		if _, ok := pipelineAssetNames[usedTable]; !ok {
+		if _, ok := pipelineAssetNames[resolvedTable]; !ok {
 			continue
 		}
 
 		// otherwise, report the issue
-		missingDependencies = append(missingDependencies, actualReferenceName)
+		missingDependencies = append(missingDependencies, resolvedTable)
 	}
 
 	return missingDependencies, nil

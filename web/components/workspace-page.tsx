@@ -21,6 +21,7 @@ import {
   enrichedSelectedAssetAtom,
 } from "@/lib/atoms/domains/results";
 import { workspaceAtom, workspaceSyncSourceAtom } from "@/lib/atoms/domains/workspace";
+import { routeSelectionAtom } from "@/lib/atoms/domains/workspace";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
   computeGraphLayoutPositions,
@@ -54,6 +55,7 @@ export function WorkspacePage() {
   const [assetEditorTab, setAssetEditorTab] = useAtom(assetEditorTabAtom);
   const editorValue = useAtomValue(editorValueAtom);
   const asset = useAtomValue(enrichedSelectedAssetAtom);
+  const routeSelection = useAtomValue(routeSelectionAtom);
   const setWorkspace = useSetAtom(workspaceAtom);
   const setWorkspaceSyncSource = useSetAtom(workspaceSyncSourceAtom);
   const isMobile = useIsMobile();
@@ -171,6 +173,7 @@ export function WorkspacePage() {
   } = useEditorActions({
     editorValue,
     scheduleSave,
+    flushAssetSave,
     saveAssetNow,
     hasPendingAssetSave,
     runUpdateAsset: assetActions.runUpdateAsset,
@@ -259,6 +262,9 @@ export function WorkspacePage() {
     assetEditorTab,
     form,
     assetPreviewRows,
+    inspectDiagnosticSnapshot: selectedAsset
+      ? assetResults.inspectDiagnosticSnapshotByAssetId[selectedAsset] ?? null
+      : null,
     onEditorTabChange: setAssetEditorTab,
     onEditorChange: handleEditorChange,
     onMaterializeSelectedAsset: handleMaterializeSelectedAsset,
@@ -307,6 +313,7 @@ export function WorkspacePage() {
         isMobile={isMobile}
         setMobileEditorOpen={setMobileEditorOpen}
         selectedAsset={selectedAsset}
+        routeSelectedAsset={routeSelection.asset}
         flushAssetSave={flushAssetSave}
         sidebarOnboardingMount={sidebarOnboardingMount}
         onboardingContent={onboardingContent}

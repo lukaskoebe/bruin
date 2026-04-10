@@ -288,6 +288,150 @@ select 1 as seed_id
 	assert.Equal(t, []string{"analytics.manual_seed"}, upstreamValues(asset.Upstreams))
 }
 
+func TestAssetServiceCreateReconcilesSQLDependenciesImmediately(t *testing.T) {
+	t.Parallel()
+
+	workspaceRoot := t.TempDir()
+	pipelineRoot := filepath.Join(workspaceRoot, "analytics")
+	assetsRoot := filepath.Join(pipelineRoot, "assets")
+	require.NoError(t, os.MkdirAll(assetsRoot, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pipelineRoot, "pipeline.yml"), []byte(strings.TrimSpace(`
+name: analytics
+schedule: daily
+start_date: "2024-01-01"
+default_connections:
+  duckdb: duckdb-default
+`) + "\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(assetsRoot, "orders.sql"), []byte(strings.TrimSpace(`
+/* @bruin
+name: analytics.orders
+type: duckdb.sql
+materialization:
+  type: view
+@bruin */
+
+select 1 as order_id
+`) + "\n"), 0o644))
+
+	buildPipeline := func(ctx context.Context, pipelinePath string) (*pipeline.Pipeline, error) {
+		osFS := afero.NewOsFs()
+		builder := pipeline.NewBuilder(
+			BuilderConfig,
+			pipeline.CreateTaskFromYamlDefinition(osFS),
+			pipeline.CreateTaskFromFileComments(osFS),
+			osFS,
+			nil,
+		)
+		return builder.CreatePipelineFromPath(ctx, pipelinePath, pipeline.WithMutate())
+	}
+
+	resolveAssetByID := func(ctx context.Context, assetID string) (string, *pipeline.Pipeline, *pipeline.Asset, error) {
+		relAssetPath, err := DecodeID(assetID)
+		if err != nil {
+			return "", nil, nil, err
+		}
+
+		assetPath, err := SafeJoin(workspaceRoot, relAssetPath)
+		if err != nil {
+			return "", nil, nil, err
+		}
+
+		pipelinePath := filepath.Dir(filepath.Dir(assetPath))
+		parsedPipeline, err := buildPipeline(ctx, pipelinePath)
+		if err != nil {
+			return "", nil, nil, err
+		}
+
+		normalizedTarget := filepath.ToSlash(relAssetPath)
+		for _, asset := range parsedPipeline.Assets {
+			currentPath := asset.ExecutableFile.Path
+			if currentPath == "" {
+				currentPath = asset.DefinitionFile.Path
+			}
+
+			relCurrent, relErr := filepath.Rel(workspaceRoot, currentPath)
+			if relErr != nil {
+				continue
+			}
+			if filepath.ToSlash(relCurrent) == normalizedTarget {
+				return normalizedTarget, parsedPipeline, asset, nil
+			}
+		}
+
+		return "", nil, nil, ErrAssetNotFound
+	}
+
+	service := NewAssetService(AssetDependencies{
+		WorkspaceRoot:        workspaceRoot,
+		ResolveAssetByID:     resolveAssetByID,
+		DefaultAssetContent:  DefaultAssetContent,
+		DerivedAssetContent:  DefaultDerivedSQLAssetContent,
+		EnsurePythonRequirements: func(string, string, string) error { return nil },
+		SuppressWatcher:      func(string) {},
+		PushWorkspaceUpdateImmediate: func(context.Context, string, string) {},
+	})
+
+	response, apiErr := service.Create(context.Background(), EncodeID("analytics"), CreateAssetParams{
+		SourceAssetID: EncodeID("analytics/assets/orders.sql"),
+	})
+	require.Nil(t, apiErr)
+	require.Equal(t, "ok", response["status"])
+	require.Equal(t, "analytics/assets/analytics_orders_child_1.sql", response["asset_path"])
+
+	assetPath := filepath.Join(workspaceRoot, filepath.FromSlash(response["asset_path"]))
+	content, err := os.ReadFile(assetPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "depends:\n  - analytics.orders")
+	assert.Contains(t, string(content), "bruin_web_inferred_upstreams: analytics.orders")
+
+	_, _, asset, err := resolveAssetByID(context.Background(), response["asset_id"])
+	require.NoError(t, err)
+	assert.Equal(t, []string{"analytics.orders"}, upstreamValues(asset.Upstreams))
+	assert.Equal(t, "analytics.orders", asset.Meta[bruinWebInferredUpstreamsMetaKey])
+	assert.Equal(t, "analytics.orders_child_1", asset.Name)
+}
+
+func TestReconcileSQLAssetDependenciesResolvesSameSchemaUnqualifiedNames(t *testing.T) {
+	t.Parallel()
+
+	orders := &pipeline.Asset{Name: "analytics.orders"}
+	asset := &pipeline.Asset{
+		Name: "analytics.customers",
+		Type: pipeline.AssetTypeDuckDBQuery,
+		ExecutableFile: pipeline.ExecutableFile{
+			Path:    filepath.Join(t.TempDir(), "customers.sql"),
+			Content: "select * from orders",
+		},
+	}
+	p := &pipeline.Pipeline{
+		Name:   "analytics",
+		Assets: []*pipeline.Asset{asset, orders},
+	}
+
+	parser, err := sqlparser.NewSQLParser(false)
+	require.NoError(t, err)
+	defer parser.Close()
+
+	renderer := jinja.NewRendererWithYesterday("analytics", "test-run")
+	require.NoError(t, reconcileSQLAssetDependencies(context.Background(), asset, p, parser, renderer))
+
+	assert.Equal(t, []string{"analytics.orders"}, upstreamValues(asset.Upstreams))
+	assert.Equal(t, "analytics.orders", asset.Meta[bruinWebInferredUpstreamsMetaKey])
+}
+
+func TestDeriveDownstreamAssetName_PreservesPrefix(t *testing.T) {
+	t.Parallel()
+
+	pl := &pipeline.Pipeline{
+		Assets: []*pipeline.Asset{
+			{Name: "marts.orders"},
+			{Name: "marts.orders_child_1"},
+		},
+	}
+
+	assert.Equal(t, "marts.orders_child_2", deriveDownstreamAssetName("marts.orders", pl))
+}
+
 func upstreamValues(upstreams []pipeline.Upstream) []string {
 	values := make([]string, 0, len(upstreams))
 	for _, upstream := range upstreams {

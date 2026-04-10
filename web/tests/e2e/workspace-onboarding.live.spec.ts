@@ -81,6 +81,16 @@ test.describe("workspace onboarding live flows", () => {
     );
     expect(onboardingStateAfterComplete).toContain('"active": false');
 
+    if (test.info().project.name.includes("mobile")) {
+      await expect(page).toHaveTitle("analytics.orders · analytics · Bruin Web", {
+        timeout: 30000,
+      });
+      await page.getByRole("button", { name: "Edit asset" }).click();
+      await expect(page.getByTestId("editor-asset-name")).toHaveText("analytics.orders");
+      await expect(page.getByText("analytics.customers", { exact: true })).toHaveCount(0);
+      return;
+    }
+
     await expect(page.getByRole("link", { name: "analytics", exact: true })).toBeVisible({
       timeout: 30000,
     });

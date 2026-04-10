@@ -1,16 +1,10 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 
 import { OnboardingRoutePage } from "@/components/onboarding-route-page";
-import { getOnboardingState } from "@/lib/api";
+import { loadOnboardingRouteContext } from "@/src/routes/-onboarding-shared";
 
 export const Route = createFileRoute("/onboarding/success")({
-  beforeLoad: async () => {
-    const state = await getOnboardingState();
-    if (!state.active) {
-      throw redirect({ to: "/" });
-    }
-    return { onboardingState: state };
-  },
+  beforeLoad: loadOnboardingRouteContext,
   component: OnboardingSuccessRouteComponent,
 });
 

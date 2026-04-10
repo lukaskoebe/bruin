@@ -1,17 +1,14 @@
 import type * as MonacoNS from "monaco-editor";
 
 import { SchemaTable, findTableByIdentifier } from "@/lib/sql-schema";
+import type { SqlParseContextColumn, SqlParseContextTable } from "@/lib/types";
 
 type Monaco = typeof MonacoNS;
 
 type RemoteSQLResolver = {
   getParseContext?: () => {
-    tables?: Array<{ name: string; source_kind?: string; resolved_name?: string; alias?: string }>;
-    columns?: Array<{
-      qualifier?: string;
-      resolved_table?: string;
-      parts: Array<{ name: string; kind: string }>;
-    }>;
+    tables?: SqlParseContextTable[];
+    columns?: SqlParseContextColumn[];
   } | null;
   provideTableContextSuggestions(args: {
     monaco: Monaco;
@@ -37,6 +34,13 @@ type RemoteSQLResolver = {
     prefix: string;
     range: MonacoNS.IRange;
   }): Promise<MonacoNS.languages.CompletionItem[]>;
+};
+
+type TableSuggestionContext = {
+  currentPipelineId?: string | null;
+  currentSchemaName?: string | null;
+  currentTableName?: string | null;
+  remoteTableNames?: string[];
 };
 
 type SemanticTokenType = "schema" | "table" | "column" | "alias";
@@ -425,6 +429,87 @@ function resolveReferencedTables(
   }
 
   return referenced;
+}
+
+function schemaNameFromTableName(name: string): string | null {
+  const parts = name
+    .split(".")
+    .map((part) => part.trim().replace(/^['"`]+|['"`]+$/g, ""))
+    .filter(Boolean);
+
+  if (parts.length < 2) {
+    return null;
+  }
+
+  return parts[parts.length - 2].toLowerCase();
+}
+
+function buildLocalTableSortText(
+  table: SchemaTable,
+  options: {
+    inTableCtx: boolean;
+    context?: TableSuggestionContext;
+  },
+) {
+  const currentTableName = options.context?.currentTableName?.toLowerCase();
+  const currentSchemaName = options.context?.currentSchemaName?.toLowerCase();
+  const sameTable = currentTableName === table.name.toLowerCase();
+  const samePipeline = Boolean(options.context?.currentPipelineId) && table.pipelineId === options.context?.currentPipelineId;
+  const sameSchema =
+    Boolean(currentSchemaName) && schemaNameFromTableName(table.name) === currentSchemaName;
+
+  let rank = "04";
+  if (sameTable) {
+    rank = "00";
+  } else if (samePipeline && sameSchema) {
+    rank = "01";
+  } else if (samePipeline) {
+    rank = "02";
+  } else if (sameSchema) {
+    rank = "03";
+  }
+
+  const clauseBucket = options.inTableCtx ? "0" : "4";
+  const sourceBucket = table.isBruinAsset ? "0" : "1";
+
+  return `${clauseBucket}${rank}${sourceBucket}${table.name.toLowerCase()}`;
+}
+
+function hasMatchingRemoteTable(
+  table: SchemaTable,
+  context?: TableSuggestionContext,
+) {
+  const remoteTableNames = context?.remoteTableNames ?? [];
+  const normalizedName = table.name.toLowerCase();
+  return remoteTableNames.some((candidate) => candidate.toLowerCase() === normalizedName);
+}
+
+function buildLocalTableSuggestionLabel(
+  table: SchemaTable,
+) {
+  return table.name;
+}
+
+function buildLocalTableSuggestionKind(
+  monaco: Monaco,
+  table: SchemaTable,
+  context?: TableSuggestionContext,
+) {
+  if (!table.isBruinAsset) {
+    const currentSchemaName = context?.currentSchemaName?.toLowerCase() ?? null;
+    const tableSchemaName = schemaNameFromTableName(table.name);
+    if (currentSchemaName && tableSchemaName === currentSchemaName) {
+      return monaco.languages.CompletionItemKind.Reference;
+    }
+
+    return monaco.languages.CompletionItemKind.Struct;
+  }
+
+  if (context?.currentPipelineId && table.pipelineId === context.currentPipelineId) {
+    return monaco.languages.CompletionItemKind.Class;
+  }
+
+  return monaco.languages.CompletionItemKind.Module;
 }
 
 function collectColumnSuggestions(
@@ -919,6 +1004,7 @@ export function registerSQLProviders(
   tables: SchemaTable[],
   upstreamNames: string[],
   remoteResolver?: RemoteSQLResolver,
+  tableSuggestionContext?: TableSuggestionContext,
 ): MonacoNS.IDisposable {
   const disposables: MonacoNS.IDisposable[] = [];
 
@@ -1096,37 +1182,34 @@ export function registerSQLProviders(
         }
 
         for (const table of tables) {
-          const priority = table.isBruinAsset ? "0" : "1";
-          const kindTag = table.isBruinAsset ? "Asset" : "Table";
+          const hasRemoteMatch = hasMatchingRemoteTable(table, tableSuggestionContext);
+          const kindTag = hasRemoteMatch
+            ? table.isBruinAsset
+              ? "Table + Asset"
+              : "Table"
+            : table.isBruinAsset
+              ? "Asset"
+              : "Table";
+          const suggestionLabel = buildLocalTableSuggestionLabel(table);
 
           suggestions.push({
             label: {
-              label: table.name,
-              description: kindTag,
+              label: suggestionLabel,
+              description: `${kindTag} (${table.name})`,
             },
-            kind: monaco.languages.CompletionItemKind.Struct,
-            detail: `${kindTag}: ${table.name}`,
+            kind: buildLocalTableSuggestionKind(monaco, table, tableSuggestionContext),
+            detail: kindTag,
             documentation: table.columns.length > 0
               ? `Columns: ${table.columns.map((c) => c.name).join(", ")}`
               : undefined,
             insertText: table.name,
+            filterText: `${table.name} ${table.shortName}`,
             range,
-            sortText: inTableCtx ? priority : `4${priority}`,
+            sortText: buildLocalTableSortText(table, {
+              inTableCtx,
+              context: tableSuggestionContext,
+            }),
           });
-
-          if (table.shortName !== table.name) {
-            suggestions.push({
-              label: {
-                label: table.shortName,
-                description: `${kindTag} (${table.name})`,
-              },
-              kind: monaco.languages.CompletionItemKind.Struct,
-              detail: `${kindTag}: ${table.name}`,
-              insertText: table.name,
-              range,
-              sortText: inTableCtx ? `${priority}b` : `4${priority}b`,
-            });
-          }
         }
 
         if (inTableCtx && remoteResolver) {
@@ -1157,7 +1240,9 @@ export function registerSQLProviders(
             typeof suggestion.label === "string"
               ? suggestion.label
               : suggestion.label.label;
-          const key = `${label.toLowerCase()}::${suggestion.kind}`;
+          const detail = typeof suggestion.detail === "string" ? suggestion.detail : "";
+          const insertText = typeof suggestion.insertText === "string" ? suggestion.insertText : "";
+          const key = `${label.toLowerCase()}::${suggestion.kind}::${insertText.toLowerCase()}`;
           if (seen.has(key)) {
             continue;
           }

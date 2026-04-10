@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "generate:api-types": "node ./scripts/generate-api-types.mjs",
+    "typecheck": "corepack pnpm run generate:api-types && tsc --noEmit",
+    "build": "corepack pnpm run typecheck && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
     "test:e2e": "playwright test",

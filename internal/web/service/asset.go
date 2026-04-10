@@ -166,6 +166,11 @@ func (s *AssetService) Create(ctx context.Context, pipelineID string, req Create
 
 	relWorkspaceAssetPath, _ := filepath.Rel(s.deps.WorkspaceRoot, absAssetPath)
 	assetPath := filepath.ToSlash(relWorkspaceAssetPath)
+	if strings.HasSuffix(strings.ToLower(assetPath), ".sql") {
+		if err := s.reconcileSQLAssetDependencies(ctx, assetPath); err != nil {
+			return nil, &AssetAPIError{Status: 500, Code: "asset_dependency_reconcile_failed", Message: err.Error()}
+		}
+	}
 	s.deps.SuppressWatcher(assetPath)
 	s.deps.PushWorkspaceUpdateImmediate(ctx, "asset.created", assetPath)
 	return map[string]string{"status": "ok", "asset_id": EncodeID(assetPath), "asset_path": assetPath}, nil
@@ -598,14 +603,10 @@ func inferAllSQLAssetDependencies(ctx context.Context, asset *pipeline.Asset, pa
 	result := make([]string, 0, len(missingDeps))
 	seen := make(map[string]struct{}, len(missingDeps))
 	for _, dep := range missingDeps {
-		normalized := normalizeDependencyName(dep)
+		canonical := resolveInferredDependencyName(dep, asset, parsedPipeline)
+		normalized := normalizeDependencyName(canonical)
 		if normalized == "" {
 			continue
-		}
-
-		canonical := dep
-		if found := parsedPipeline.GetAssetByNameCaseInsensitive(dep); found != nil {
-			canonical = found.Name
 		}
 
 		key := normalizeDependencyName(canonical)
@@ -617,6 +618,33 @@ func inferAllSQLAssetDependencies(ctx context.Context, asset *pipeline.Asset, pa
 	}
 
 	return result, nil
+}
+
+func resolveInferredDependencyName(dep string, asset *pipeline.Asset, parsedPipeline *pipeline.Pipeline) string {
+	name := strings.TrimSpace(dep)
+	if name == "" || parsedPipeline == nil {
+		return name
+	}
+
+	if found := parsedPipeline.GetAssetByNameCaseInsensitive(name); found != nil {
+		return found.Name
+	}
+
+	if strings.Contains(name, ".") || asset == nil {
+		return name
+	}
+
+	lastDot := strings.LastIndex(strings.TrimSpace(asset.Name), ".")
+	if lastDot <= 0 {
+		return name
+	}
+
+	candidate := asset.Name[:lastDot+1] + name
+	if found := parsedPipeline.GetAssetByNameCaseInsensitive(candidate); found != nil {
+		return found.Name
+	}
+
+	return name
 }
 
 func applyManualAssetUpstreams(asset *pipeline.Asset, parsedPipeline *pipeline.Pipeline, requested []string) {
@@ -773,28 +801,53 @@ func inferAssetTypeFromPath(path string) string {
 }
 
 func deriveDownstreamAssetName(sourceAssetName string, parsedPipeline *pipeline.Pipeline) string {
-	base := sourceAssetName
-	if idx := strings.LastIndex(base, "."); idx >= 0 && idx < len(base)-1 {
-		base = base[idx+1:]
+	trimmed := strings.TrimSpace(sourceAssetName)
+	if trimmed == "" {
+		trimmed = "asset"
 	}
-	base = SlugUnderscore(base)
-	if base == "" {
-		base = "asset"
+
+	prefix := ""
+	leaf := trimmed
+	if lastDot := strings.LastIndex(trimmed, "."); lastDot >= 0 {
+		prefix = trimmed[:lastDot]
+		leaf = trimmed[lastDot+1:]
 	}
-	candidate := base + "_downstream"
+
+	baseLeaf := SlugUnderscore(leaf)
+	if baseLeaf == "" {
+		baseLeaf = "asset"
+	}
+	baseLeaf += "_child"
+
+	buildCandidate := func(index int) string {
+		candidate := fmt.Sprintf("%s_%d", baseLeaf, index)
+		if prefix == "" {
+			return candidate
+		}
+		return prefix + "." + candidate
+	}
+
 	if parsedPipeline == nil {
-		return candidate
+		return buildCandidate(1)
 	}
-	if parsedPipeline.GetAssetByNameCaseInsensitive(candidate) == nil {
-		return candidate
+
+	exists := func(name string) bool {
+		for _, asset := range parsedPipeline.Assets {
+			if asset != nil && strings.EqualFold(strings.TrimSpace(asset.Name), name) {
+				return true
+			}
+		}
+		return false
 	}
-	for index := 2; index < 1000; index += 1 {
-		next := fmt.Sprintf("%s_%d", candidate, index)
-		if parsedPipeline.GetAssetByNameCaseInsensitive(next) == nil {
-			return next
+
+	for index := 1; index < 1000; index += 1 {
+		candidate := buildCandidate(index)
+		if !exists(candidate) {
+			return candidate
 		}
 	}
-	return candidate
+
+	return buildCandidate(1)
 }
 
 func deriveSQLAssetTypeForSource(sourceAsset *pipeline.Asset, parsedPipeline *pipeline.Pipeline, sourceConnectionName string) string {

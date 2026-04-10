@@ -234,7 +234,21 @@ def build_diagnostic(message, range_info, severity="error"):
     return {"message": message, "severity": severity, "range": range_info}
 
 
-def analyze_parse_context_diagnostics(parsed_tables, parsed_columns, schema):
+def is_path_like_table_reference(table_name, dialect):
+    normalized = (table_name or "").strip()
+    if not normalized:
+        return False
+
+    if normalized.startswith(("./", "../", "/", "s3://", "gs://", "http://", "https://")):
+        return True
+
+    if dialect == "duckdb" and normalized.startswith("~/"):
+        return True
+
+    return False
+
+
+def analyze_parse_context_diagnostics(parsed_tables, parsed_columns, schema, dialect):
     if not schema:
         return parsed_tables, parsed_columns, []
 
@@ -253,7 +267,7 @@ def analyze_parse_context_diagnostics(parsed_tables, parsed_columns, schema):
                 alias_lookup[normalize_identifier(table["alias"])] = resolved_name
         else:
             updated_table["resolved_name"] = ""
-            if source_kind == "table":
+            if source_kind == "table" and not is_path_like_table_reference(table["name"], dialect):
                 range_info = table["parts"][-1]["range"] if table.get("parts") else None
                 diagnostics.append(build_diagnostic(f"Unresolved table: {table['name']}", range_info))
 
@@ -391,7 +405,7 @@ def get_parse_context(query, dialect, schema=None):
                 }
             )
 
-    resolved_tables, resolved_columns, diagnostics = analyze_parse_context_diagnostics(tables, columns, schema)
+    resolved_tables, resolved_columns, diagnostics = analyze_parse_context_diagnostics(tables, columns, schema, dialect)
     return {
         "query_kind": query_kind,
         "is_single_select": is_single_select,

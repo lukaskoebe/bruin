@@ -1,10 +1,14 @@
 import { atom } from "jotai";
 
+import { InspectDiagnosticSnapshot } from "@/lib/inspect-diagnostics";
 import { AssetInspectResponse } from "@/lib/types";
+
+export type AssetInspectDiagnosticSnapshot = InspectDiagnosticSnapshot;
 
 export type AssetInspectEntry = {
   result: AssetInspectResponse;
   fetchedLimit: number;
+  diagnosticSnapshot?: AssetInspectDiagnosticSnapshot;
 };
 
 export type AssetInspectState = {

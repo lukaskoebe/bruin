@@ -15,12 +15,21 @@ import {
 } from "@/lib/monaco-sql-providers";
 import { resolveConnection, SchemaTable } from "@/lib/sql-schema";
 import { WebAsset } from "@/lib/types";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 
 import { workspaceAtom } from "@/lib/atoms/domains/workspace";
+import {
+  sqlDiscoveryCacheAtom,
+  sqlDiscoveryColumnsAtom,
+  sqlDiscoveryTablesAtom,
+} from "@/lib/atoms/sql-discovery";
 import { useSQLParseContext } from "@/hooks/use-sql-parse-context";
 import { useSQLSemanticDecorations } from "@/hooks/use-sql-semantic-decorations";
 import { fetchJSON } from "@/lib/api-core";
+import {
+  buildInspectDiagnosticMarker,
+  InspectDiagnosticSnapshot,
+} from "@/lib/inspect-diagnostics";
 
 function buildValueSuggestionQuery(
   assetType: string | undefined,
@@ -62,6 +71,35 @@ function quoteSQLIdentifier(identifier: string) {
     .join(".");
 }
 
+function schemaNameFromAssetName(name?: string | null) {
+  if (!name) {
+    return null;
+  }
+
+  const parts = name
+    .split(".")
+    .map((part) => part.trim().replace(/^['"`]+|['"`]+$/g, ""))
+    .filter(Boolean);
+
+  if (parts.length < 2) {
+    return null;
+  }
+
+  return parts[parts.length - 2] ?? null;
+}
+
+function remoteTablesForConnection(
+  tablesByScope: Record<string, Array<{ name: string; short_name: string }>>,
+  connectionName: string | null,
+  environment?: string,
+) {
+  if (!connectionName) {
+    return [];
+  }
+
+  return tablesByScope[`${connectionName}::${environment ?? ""}`] ?? [];
+}
+
 /**
  * React hook that registers Monaco SQL completion / definition / hover
  * providers scoped to the given schema tables.
@@ -78,8 +116,12 @@ export function useSQLIntellisense(
   upstreamNames: string[],
   environment?: string,
   onGoToAsset?: (pipelineId: string, assetId: string) => void,
+  inspectDiagnosticSnapshot?: InspectDiagnosticSnapshot | null,
 ) {
   const workspace = useAtomValue(workspaceAtom);
+  const sqlDiscoveryCache = useAtomValue(sqlDiscoveryCacheAtom);
+  const loadSQLDiscoveryColumns = useSetAtom(sqlDiscoveryColumnsAtom);
+  const loadSQLDiscoveryTables = useSetAtom(sqlDiscoveryTablesAtom);
   const parseContext = useSQLParseContext(asset, sqlContent, tables);
   const parseContextKey = useMemo(() => JSON.stringify(parseContext ?? null), [parseContext]);
   useSQLSemanticDecorations(editor, parseContext);
@@ -103,6 +145,11 @@ export function useSQLIntellisense(
 
     const connectionName =
       asset && workspace ? resolveConnection(asset, workspace.connections ?? {}) : null;
+    const currentPipelineId = asset
+      ? (workspace?.pipelines ?? []).find((pipeline) =>
+          pipeline.assets.some((candidate) => candidate.id === asset.id),
+        )?.id ?? null
+      : null;
 
     const disposable = registerSQLProviders(monaco, tables, upstreamNames, {
       getParseContext: () => {
@@ -117,9 +164,9 @@ export function useSQLIntellisense(
           return [];
         }
 
-        let databasesResponse;
+        let remoteTables = sqlDiscoveryCache.tablesByScope[`${connectionName}::${environment ?? ""}`];
         try {
-          databasesResponse = await getSQLDatabases({
+          remoteTables ??= await loadSQLDiscoveryTables({
             connection: connectionName,
             environment,
           });
@@ -127,25 +174,9 @@ export function useSQLIntellisense(
           return [];
         }
 
-        const databaseNames = databasesResponse.databases ?? [];
-        const tableResponses = await Promise.all(
-          databaseNames.map(async (databaseName) => {
-            try {
-              return await getSQLTables({
-                connection: connectionName,
-                database: databaseName,
-                environment,
-              });
-            } catch {
-              return null;
-            }
-          })
-        );
-
         const normalizedPrefix = prefix.trim().toLowerCase();
 
-        return tableResponses
-          .flatMap((response) => response?.tables ?? [])
+        return (remoteTables ?? [])
           .filter((table) => {
             if (!normalizedPrefix) {
               return true;
@@ -156,17 +187,37 @@ export function useSQLIntellisense(
               table.short_name.toLowerCase().includes(normalizedPrefix)
             );
           })
-          .map((table) => ({
-            label: {
-              label: table.name,
-              description: "Remote table",
-            },
-            kind: monacoInstance.languages.CompletionItemKind.Struct,
-            detail: `Remote table: ${table.name}`,
-            insertText: table.name,
-            range,
-            sortText: "3",
-          }));
+          .filter((table) => {
+            return !tables.some(
+              (candidate) => candidate.name.toLowerCase() === table.name.toLowerCase(),
+            );
+          })
+          .map((table) => {
+            const matchingAsset = tables.find(
+              (candidate) => candidate.name.toLowerCase() === table.name.toLowerCase(),
+            );
+            const description = matchingAsset
+              ? `Remote table + Bruin asset (${matchingAsset.assetPath ?? matchingAsset.name})`
+              : "Remote table";
+
+            const currentSchemaName = schemaNameFromAssetName(asset?.name)?.toLowerCase() ?? null;
+            const tableSchemaName = schemaNameFromAssetName(table.name)?.toLowerCase() ?? null;
+            const sameSchema = Boolean(currentSchemaName) && currentSchemaName === tableSchemaName;
+            const sameAssetName = asset?.name?.toLowerCase() === table.name.toLowerCase();
+            const rank = sameAssetName ? "20" : sameSchema ? "21" : "22";
+
+            return {
+              label: {
+                label: table.name,
+                description,
+              },
+              kind: monacoInstance.languages.CompletionItemKind.Struct,
+              detail: description,
+              insertText: table.name,
+              range,
+              sortText: `${rank}${table.name.toLowerCase()}`,
+            };
+          });
       },
       async provideColumnSuggestions({
         monaco: monacoInstance,
@@ -187,9 +238,11 @@ export function useSQLIntellisense(
 
         const remoteTableName = localTable?.name ?? tableIdentifier;
 
-        let response;
+        let columns = sqlDiscoveryCache.columnsByScope[
+          `${connectionName}::${environment ?? ""}::${remoteTableName.toLowerCase()}`
+        ];
         try {
-          response = await getSQLTableColumns({
+          columns ??= await loadSQLDiscoveryColumns({
             connection: connectionName,
             table: remoteTableName,
             environment,
@@ -200,7 +253,7 @@ export function useSQLIntellisense(
 
         const normalizedPrefix = columnPrefix.trim().toLowerCase();
 
-        return (response.columns ?? [])
+        return (columns ?? [])
           .filter((column) => {
             if (!normalizedPrefix) {
               return true;
@@ -214,10 +267,9 @@ export function useSQLIntellisense(
             detail: column.type
               ? `${remoteTableName}.${column.name} (${column.type})`
               : `${remoteTableName}.${column.name}`,
-            documentation: column.description || undefined,
             insertText: column.name,
             range,
-            sortText: column.primary_key ? "0" : "1",
+            sortText: "1",
           }));
       },
       async provideColumnValueSuggestions({
@@ -316,12 +368,19 @@ export function useSQLIntellisense(
           sortText: suggestion.kind === "directory" ? "0" : "1",
         }));
       },
+    }, {
+      currentPipelineId,
+      currentSchemaName: schemaNameFromAssetName(asset?.name),
+      currentTableName: asset?.name ?? null,
+      remoteTableNames: (remoteTablesForConnection(sqlDiscoveryCache.tablesByScope, connectionName, environment) ?? []).map(
+        (table) => table.name,
+      ),
     });
 
     return () => {
       disposable.dispose();
     };
-  }, [activeParseContext, asset, editor, environment, monaco, parseContextKey, tables, upstreamNames, workspace]);
+  }, [activeParseContext, asset, editor, environment, loadSQLDiscoveryColumns, loadSQLDiscoveryTables, monaco, parseContextKey, sqlDiscoveryCache.columnsByScope, sqlDiscoveryCache.tablesByScope, tables, upstreamNames, workspace]);
 
   useEffect(() => {
     if (!editor || tables.length === 0) {
@@ -388,10 +447,18 @@ export function useSQLIntellisense(
         endColumn: diagnostic.range!.end_col,
       }));
 
-    monaco.editor.setModelMarkers(model, "bruin-sql-parse-context", diagnostics);
+    const inspectDiagnostics = buildInspectDiagnosticMarker(
+      model,
+      inspectDiagnosticSnapshot ?? null,
+    );
+
+    monaco.editor.setModelMarkers(model, "bruin-sql-parse-context", [
+      ...diagnostics,
+      ...inspectDiagnostics,
+    ]);
 
     return () => {
       monaco.editor.setModelMarkers(model, "bruin-sql-parse-context", []);
     };
-  }, [editor, monaco, parseContextKey]);
+  }, [editor, inspectDiagnosticSnapshot, monaco, parseContextKey]);
 }

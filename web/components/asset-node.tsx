@@ -85,6 +85,10 @@ export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
       : data.rowCount === 0
         ? "text-destructive"
         : "text-chart-2";
+  const maxWidthStyle = useMemo(
+    () => ({ maxWidth: "min(80vw, 760px)" }),
+    []
+  );
 
   return (
     <>
@@ -96,6 +100,7 @@ export function AssetNode({ id, data, selected }: NodeProps<AssetNodeData>) {
             ? "border-primary ring-2 ring-primary/30"
             : "border-border/90"
         }`}
+        style={maxWidthStyle}
         onMouseLeave={() => setShowAddButton(false)}
         onMouseMove={(event) => {
           const element = containerRef.current;

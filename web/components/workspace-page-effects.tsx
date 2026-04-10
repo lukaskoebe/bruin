@@ -24,6 +24,7 @@ type WorkspacePageEffectsProps = {
   isMobile: boolean;
   setMobileEditorOpen: (open: boolean) => void;
   selectedAsset: string | null;
+  routeSelectedAsset: string | null;
   flushAssetSave: (assetId: string) => void;
   sidebarOnboardingMount: HTMLDivElement | null;
   onboardingContent: ReactNode;
@@ -40,6 +41,7 @@ export function WorkspacePageEffects({
   isMobile,
   setMobileEditorOpen,
   selectedAsset,
+  routeSelectedAsset,
   flushAssetSave,
   sidebarOnboardingMount,
   onboardingContent,
@@ -91,10 +93,10 @@ export function WorkspacePageEffects({
       return;
     }
 
-    if (asset) {
+    if (asset && routeSelectedAsset) {
       setMobileEditorOpen(true);
     }
-  }, [asset, isMobile, setMobileEditorOpen]);
+  }, [asset, isMobile, routeSelectedAsset, setMobileEditorOpen]);
 
   const previousSelectedAssetRef = useRef<string | null>(null);
 
