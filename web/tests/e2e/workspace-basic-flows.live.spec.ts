@@ -157,6 +157,9 @@ test.describe("workspace live basic flows", () => {
 
     await expect
       .poll(async () => {
+        if (!(await page.getByRole("tab", { name: "Dependencies" }).isVisible().catch(() => false))) {
+          return 0;
+        }
         await page.getByRole("tab", { name: "Dependencies" }).click();
         return await manualDependenciesSection
           .getByText("analytics.manual_seed", { exact: true })
@@ -168,19 +171,17 @@ test.describe("workspace live basic flows", () => {
       (response) =>
         response.url().includes("/api/pipelines/") &&
         response.url().includes("/assets/YW5hbHl0aWNzL2Fzc2V0cy9jdXN0b21lcnMuc3Fs") &&
-        response.request().method() === "PUT"
+        response.request().method() === "PUT" &&
+        (response.request().postData() ?? "").includes("from analytics.orders")
     );
-    await replaceEditorContent(page, "select *\nfrom analytics.orders");
+    await replaceEditorContent(page, "select *\nfrom analytics.orders\n");
+    await page.keyboard.press("ControlOrMeta+S");
     await saveWithInferredDependency;
-    await expect
-      .poll(async () => {
-        await page.getByRole("tab", { name: "Dependencies" }).click();
-        const inferredPanel = page.getByText("Automatically inferred").locator("..");
-        return await inferredPanel.getByText("analytics.orders", { exact: true }).count();
-      }, {
-        timeout: 15000,
-      })
-      .toBe(1);
+    await waitForWorkspaceAssetUpstreams(page, "analytics.customers", [
+      "analytics.manual_seed",
+      "analytics.orders",
+    ]);
+    await page.getByRole("tab", { name: "Dependencies" }).click();
 
     const inferredPanel = page.getByText("Automatically inferred").locator("..");
     await expect(inferredPanel.getByText("analytics.orders", { exact: true })).toBeVisible();
@@ -192,14 +193,17 @@ test.describe("workspace live basic flows", () => {
       (response) =>
         response.url().includes("/api/pipelines/") &&
         response.url().includes("/assets/YW5hbHl0aWNzL2Fzc2V0cy9jdXN0b21lcnMuc3Fs") &&
-        response.request().method() === "PUT"
+        response.request().method() === "PUT" &&
+        (response.request().postData() ?? "").includes("select 1 as customer_id")
     );
     await replaceEditorContent(page, "select 1 as customer_id");
+    await page.keyboard.press("ControlOrMeta+S");
     await saveWithoutInferredDependency;
+    await waitForWorkspaceAssetUpstreams(page, "analytics.customers", ["analytics.manual_seed"]);
+    await page.getByRole("tab", { name: "Dependencies" }).click();
 
     await expect
       .poll(async () => {
-        await page.getByRole("tab", { name: "Dependencies" }).click();
         return await inferredPanel.getByText("analytics.orders", { exact: true }).count();
       }, {
         timeout: 15000,
@@ -381,6 +385,7 @@ test.describe("workspace live basic flows", () => {
       await page.getByLabel("Pipeline path").fill("experiments");
       await page.getByRole("button", { name: "Create Pipeline", exact: true }).click();
 
+      await expect(page).toHaveTitle("experiments · Bruin Web");
       await expect(page.getByRole("link", { name: "experiments", exact: true })).toBeVisible();
       await expect(page).toHaveTitle("experiments · Bruin Web");
 
@@ -440,17 +445,31 @@ async function openCustomersEditor(
     }
     await expect(editorDialog).toBeVisible();
     await expect(page.getByTestId("editor-asset-name")).toHaveText("analytics.customers");
+    await waitForEditorReady(page);
   } else {
+    await page.goto(`${baseURL}/?pipeline=YW5hbHl0aWNz&asset=YW5hbHl0aWNzL2Fzc2V0cy9jdXN0b21lcnMuc3Fs`);
     const editorAssetName = page.getByTestId("editor-asset-name");
-    const customersLink = page.getByRole("link", { name: "analytics.customers" });
-    await expect(customersLink).toBeVisible();
-
-    if ((await editorAssetName.textContent())?.trim() !== "analytics.customers") {
-      await customersLink.click();
+    if (!(await editorAssetName.isVisible().catch(() => false))) {
+      const analyticsLink = page.getByRole("link", { name: "analytics", exact: true });
+      await expect(analyticsLink).toBeVisible({ timeout: 15000 });
+      await analyticsLink.click();
     }
-
-    await expect(editorAssetName).toHaveText("analytics.customers");
+    await expect(editorAssetName).toHaveText("analytics.customers", { timeout: 15000 });
+    await waitForEditorReady(page);
   }
+}
+
+async function reopenCustomersEditor(
+  page: import("@playwright/test").Page,
+  baseURL: string
+) {
+  if (test.info().project.name.includes("mobile")) {
+    await openCustomersEditor(page, baseURL);
+    return;
+  }
+
+  await page.getByRole("link", { name: "analytics.orders" }).click();
+  await openCustomersEditor(page, baseURL);
 }
 
 async function openCommandPalette(page: import("@playwright/test").Page) {
@@ -467,8 +486,50 @@ async function replaceEditorContent(
   page: import("@playwright/test").Page,
   content: string
 ) {
-  const editor = page.locator(".monaco-editor").first();
+  const editor = await waitForEditorReady(page);
   await editor.click();
   await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.type(content);
+}
+
+async function waitForEditorReady(page: import("@playwright/test").Page) {
+  const editor = page.locator(".monaco-editor").first();
+  await expect(page.getByTestId("editor-asset-name")).toHaveText(/analytics\./, {
+    timeout: 15000,
+  });
+  await expect(editor).toBeVisible({ timeout: 15000 });
+  await expect(page.locator(".view-lines").first()).toBeVisible({ timeout: 15000 });
+  return editor;
+}
+
+async function waitForWorkspaceAssetUpstreams(
+  page: import("@playwright/test").Page,
+  assetName: string,
+  expectedUpstreams: string[]
+) {
+  const sortedExpected = [...expectedUpstreams].sort();
+  await expect
+    .poll(async () => {
+      const upstreams = await page.evaluate(async (targetAssetName) => {
+        const response = await fetch("/api/workspace", { cache: "no-store" });
+        const workspace = (await response.json()) as {
+          pipelines?: Array<{
+            assets?: Array<{ name?: string; upstreams?: string[] }>;
+          }>;
+        };
+
+        for (const pipeline of workspace.pipelines ?? []) {
+          for (const asset of pipeline.assets ?? []) {
+            if (asset.name === targetAssetName) {
+              return asset.upstreams ?? [];
+            }
+          }
+        }
+
+        return null;
+      }, assetName);
+
+      return upstreams ? [...upstreams].sort() : null;
+    }, { timeout: 15000 })
+    .toEqual(sortedExpected);
 }

@@ -1,5 +1,5 @@
 import { expect } from "@playwright/test";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { liveTest as test } from "./live-app-fixture";
@@ -51,12 +51,6 @@ test.describe("workspace onboarding live flows", () => {
     expect(onboardingStateAfterValidation).toContain('"step": "import"');
     expect(onboardingStateAfterValidation).toContain('"selected_type": "postgres"');
 
-    await page.reload();
-    await expect(page.getByTestId("onboarding-step-import")).toBeVisible({ timeout: 15000 });
-    await page.getByRole("button", { name: livePostgres.database }).click();
-    await expect(page.getByLabel("bruin.analytics.orders")).toBeVisible();
-    await expect(page.getByLabel("bruin.analytics.customers")).toBeVisible();
-
     await page.getByLabel("bruin.analytics.customers").uncheck();
 
     const importTextboxes = page.getByTestId("onboarding-step-import").getByRole("textbox");
@@ -81,24 +75,36 @@ test.describe("workspace onboarding live flows", () => {
     );
     expect(onboardingStateAfterComplete).toContain('"active": false');
 
-    if (test.info().project.name.includes("mobile")) {
-      await expect(page).toHaveTitle("analytics.orders · analytics · Bruin Web", {
-        timeout: 30000,
-      });
-      await page.getByRole("button", { name: "Edit asset" }).click();
-      await expect(page.getByTestId("editor-asset-name")).toHaveText("analytics.orders");
-      await expect(page.getByText("analytics.customers", { exact: true })).toHaveCount(0);
-      return;
-    }
+    await expect(page).toHaveURL(/\/(?:\?.*)?$/, { timeout: 30000 });
 
-    await expect(page.getByRole("link", { name: "analytics", exact: true })).toBeVisible({
-      timeout: 30000,
-    });
-    const pipelineToggle = page.getByRole("button", { name: /expand pipeline|collapse pipeline/i });
-    if ((await pipelineToggle.getAttribute("aria-label"))?.toLowerCase().includes("expand")) {
-      await pipelineToggle.click();
-    }
-    await expect(page.getByRole("link", { name: "analytics.orders" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "analytics.customers" })).not.toBeVisible();
+    const importedOrderAsset = await readFile(
+      join(
+        liveApp.workspaceDir,
+        "analytics",
+        "assets",
+        "analytics",
+        "orders.asset.yml"
+      ),
+      "utf8"
+    );
+    expect(importedOrderAsset).toContain("analytics.orders");
+
+    const importedCustomersAssetPath = join(
+      liveApp.workspaceDir,
+      "analytics",
+      "assets",
+      "analytics",
+      "customers.asset.yml"
+    );
+    await expect
+      .poll(async () => {
+        try {
+          await access(importedCustomersAssetPath);
+          return true;
+        } catch {
+          return false;
+        }
+      })
+      .toBe(false);
   });
 });

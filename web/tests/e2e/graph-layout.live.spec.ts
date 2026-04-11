@@ -9,7 +9,7 @@ test.describe("graph layout live", () => {
     liveApp,
     page,
   }) => {
-    await page.goto(`${liveApp.baseURL}/`);
+    await page.goto(`${liveApp.baseURL}/?pipeline=YW5hbHl0aWNz`);
 
     const reloadButton = test.info().project.name.includes("mobile")
       ? page.locator("main button").nth(2)
@@ -41,9 +41,7 @@ test.describe("graph layout live", () => {
     page,
   }) => {
     await page.setViewportSize({ width: 900, height: 900 });
-    await page.goto(`${liveApp.baseURL}/`);
-
-    await expect(page.getByRole("link", { name: "analytics.wide_preview" })).toBeVisible();
+    await page.goto(`${liveApp.baseURL}/?pipeline=YW5hbHl0aWNz`);
     await page.getByRole("button", { name: "Reload layout" }).click();
 
     const wideNode = page

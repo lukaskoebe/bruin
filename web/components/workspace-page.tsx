@@ -153,6 +153,8 @@ export function WorkspacePage() {
     setEdges,
     runCreateAsset: assetActions.runCreateAsset,
     navigateSelection,
+    isMobile,
+    openSelectedAssetEditor: () => setMobileEditorOpen(true),
     buildCreateAssetInput,
   });
 

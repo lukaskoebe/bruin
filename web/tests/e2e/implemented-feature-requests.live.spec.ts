@@ -104,14 +104,14 @@ async function openCustomersEditor(page: import("@playwright/test").Page) {
     await expect(editorDialog).toBeVisible();
     await expect(page.getByTestId("editor-asset-name")).toHaveText("analytics.customers");
   } else {
+    await page.goto(`${page.url().split("?")[0]}?pipeline=YW5hbHl0aWNz&asset=YW5hbHl0aWNzL2Fzc2V0cy9jdXN0b21lcnMuc3Fs`);
     const editorAssetName = page.getByTestId("editor-asset-name");
-    const customersLink = page.getByRole("link", { name: "analytics.customers" });
-    await expect(customersLink).toBeVisible();
-
-    if ((await editorAssetName.textContent())?.trim() !== "analytics.customers") {
-      await customersLink.click();
+    if (!(await editorAssetName.isVisible().catch(() => false))) {
+      const analyticsLink = page.getByRole("link", { name: "analytics", exact: true });
+      await expect(analyticsLink).toBeVisible({ timeout: 15000 });
+      await analyticsLink.click();
     }
 
-    await expect(editorAssetName).toHaveText("analytics.customers");
+    await expect(editorAssetName).toHaveText("analytics.customers", { timeout: 15000 });
   }
 }

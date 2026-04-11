@@ -278,6 +278,9 @@ func (s *AssetService) Update(ctx context.Context, assetID string, req AssetUpda
 	}
 
 	if req.Content != nil && strings.HasSuffix(strings.ToLower(relAssetPath), ".sql") {
+		if err := s.reconcileSQLAssetDependencies(ctx, relAssetPath); err != nil {
+			return nil, &AssetAPIError{Status: 500, Code: "asset_dependency_reconcile_failed", Message: err.Error()}
+		}
 		s.ScheduleSQLPatches(relAssetPath)
 	}
 	for _, changedPath := range changedAssetPaths {

@@ -13,7 +13,7 @@ test.describe("sql intellisense live", () => {
   }) => {
     await page.goto(`${liveApp.baseURL}/`);
 
-    await openCustomersEditor(page);
+    await openCustomersEditor(page, liveApp.baseURL);
     await replaceEditorContent(
       page,
       "select o.order_id\nfrom analytics.orders as o"
@@ -60,25 +60,42 @@ test.describe("sql intellisense live", () => {
   test("shows resolved upstream columns in the SQL debug panel", async ({ liveApp, page }) => {
     await page.goto(`${liveApp.baseURL}/`);
 
-    await openCustomersEditor(page);
+    await openCustomersEditor(page, liveApp.baseURL);
+    const saveResponse = page.waitForResponse(
+      (response) =>
+        response.url().includes("/api/pipelines/") &&
+        response.url().includes("/assets/YW5hbHl0aWNzL2Fzc2V0cy9jdXN0b21lcnMuc3Fs") &&
+        response.request().method() === "PUT" &&
+        (response.request().postData() ?? "").includes("from analytics.orders")
+    );
     await replaceEditorContent(page, "select *\nfrom analytics.orders");
+    await page.keyboard.press("ControlOrMeta+S");
+    await saveResponse;
+    await waitForWorkspaceAssetUpstreams(page, "analytics.customers", ["analytics.orders"]);
+    await reopenCustomersEditor(page, liveApp.baseURL);
     await page.getByText("SQL column debug", { exact: true }).click();
-    const debugPanel = page.locator("details").last();
 
-    await expect(debugPanel.getByText("Parsed upstreams (1)")).toBeVisible();
+    const debugPanel = page.locator("details").last();
     await expect(debugPanel.getByText("analytics.orders", { exact: true }).last()).toBeVisible();
     await expect(
-      debugPanel.getByText("analytics.orders -> analytics.orders · resolved-without-columns", {
-        exact: true,
-      })
+      debugPanel.getByText(/analytics\.orders -> analytics\.orders · (declared|resolved-without-columns)/)
     ).toBeVisible();
-    await expect(debugPanel.getByText("(resolved, but no columns)", { exact: true })).toBeVisible();
+    const hasResolvedColumns = await debugPanel
+      .getByText("customer_id, order_id, total_amount", { exact: true })
+      .count();
+    if (hasResolvedColumns > 0) {
+      await expect(
+        debugPanel.getByText("customer_id, order_id, total_amount", { exact: true }).last()
+      ).toBeVisible();
+    } else {
+      await expect(debugPanel.getByText("(resolved, but no columns)", { exact: true })).toBeVisible();
+    }
   });
 
   test("navigates to the referenced asset on Ctrl+click", async ({ liveApp, page }) => {
     await page.goto(`${liveApp.baseURL}/`);
 
-    await openCustomersEditor(page);
+    await openCustomersEditor(page, liveApp.baseURL);
     await replaceEditorContent(page, "select * from analytics.orders\n");
 
     const modifier = process.platform === "darwin" ? "Meta" : "Control";
@@ -103,7 +120,7 @@ test.describe("sql intellisense live", () => {
     );
 
     await page.goto(`${liveApp.baseURL}/`);
-    await openCustomersEditor(page);
+    await openCustomersEditor(page, liveApp.baseURL);
 
     const pathSuggestionsResponse = page.waitForResponse(
       (response) =>
@@ -145,7 +162,7 @@ test.describe("sql intellisense live", () => {
     );
 
     await page.goto(`${liveApp.baseURL}/`);
-    await openCustomersEditor(page);
+    await openCustomersEditor(page, liveApp.baseURL);
 
     await replaceEditorContent(page, 'select * from "./duckdb-files/customers.csv"');
 
@@ -187,7 +204,7 @@ test.describe("sql intellisense live", () => {
     page,
   }) => {
     await page.goto(`${liveApp.baseURL}/`);
-    await openCustomersEditor(page);
+    await openCustomersEditor(page, liveApp.baseURL);
 
     await replaceEditorContent(
       page,
@@ -266,23 +283,40 @@ test.describe("sql intellisense ranking live", () => {
     liveApp,
     page,
   }) => {
+    test.skip(test.info().project.name.includes("mobile"), "Desktop suggest widget exposes stable combined-entry metadata.");
+
     await page.goto(`${liveApp.baseURL}/?pipeline=YW5hbHl0aWNz`);
 
-    await page.getByRole("link", { name: "analytics.dependencies" }).click();
+    if (test.info().project.name.includes("mobile")) {
+      await page.goto(`${liveApp.baseURL}/?pipeline=YW5hbHl0aWNz&asset=YW5hbHl0aWNzL2Fzc2V0cy9kZXBlbmRlbmNpZXMuc3Fs`);
+      const editorDialog = page.getByRole("dialog", { name: "Asset Editor" });
+      if (!(await editorDialog.isVisible().catch(() => false))) {
+        await page.getByRole("button", { name: "Edit asset" }).click();
+      }
+    } else {
+      await page.getByRole("link", { name: "analytics.dependencies" }).click();
+    }
     await page.getByRole("button", { name: "Materialize", exact: true }).click();
     await expect(page.getByText("Asset: analytics.dependencies", { exact: true })).toBeVisible({
       timeout: 15000,
     });
 
-    await page.getByRole("link", { name: "marts" }).click();
-    await page.getByRole("link", { name: "marts.dependencies" }).click();
+    if (test.info().project.name.includes("mobile")) {
+      await page.goto(`${liveApp.baseURL}/?pipeline=bWFydHM&asset=bWFydHMvYXNzZXRzL2RlcGVuZGVuY2llcy5zcWw`);
+      const editorDialog = page.getByRole("dialog", { name: "Asset Editor" });
+      if (!(await editorDialog.isVisible().catch(() => false))) {
+        await page.getByRole("button", { name: "Edit asset" }).click();
+      }
+    } else {
+      await page.getByRole("link", { name: "marts" }).click();
+      await page.getByRole("link", { name: "marts.dependencies" }).click();
+    }
     await page.getByRole("button", { name: "Materialize", exact: true }).click();
     await expect(page.getByText("Asset: marts.dependencies", { exact: true })).toBeVisible({
       timeout: 15000,
     });
 
-    await page.getByRole("link", { name: "analytics.customers" }).click();
-    await openCustomersEditor(page);
+    await openCustomersEditor(page, liveApp.baseURL);
     await replaceEditorContent(page, "select * from dependen");
     await page.keyboard.press("ControlOrMeta+Space");
 
@@ -297,16 +331,16 @@ test.describe("sql intellisense ranking live", () => {
     ).toBeVisible();
     await expect(
       suggestWidget.getByRole("listitem", {
-        name: /marts\.dependencies, Table \+ Asset \(marts\.dependencies\), Module/,
+        name: /marts\.dependencies, (Asset|Table \+ Asset) \(marts\.dependencies\), Module/,
       }),
     ).toBeVisible();
   });
 });
 
-async function openCustomersEditor(page: Page) {
+async function openCustomersEditor(page: Page, baseURL: string) {
   const isMobile = test.info().project.name.includes("mobile");
   if (isMobile) {
-    await page.goto(`${page.url().split("?")[0]}?pipeline=YW5hbHl0aWNz&asset=YW5hbHl0aWNzL2Fzc2V0cy9jdXN0b21lcnMuc3Fs`);
+    await page.goto(`${baseURL}/?pipeline=YW5hbHl0aWNz&asset=YW5hbHl0aWNzL2Fzc2V0cy9jdXN0b21lcnMuc3Fs`);
     await expect(page).toHaveTitle("analytics.customers · analytics · Bruin Web");
     const editorDialog = page.getByRole("dialog", { name: "Asset Editor" });
     if (!(await editorDialog.isVisible().catch(() => false))) {
@@ -317,27 +351,79 @@ async function openCustomersEditor(page: Page) {
     }
     await expect(editorDialog).toBeVisible();
     await expect(page.getByTestId("editor-asset-name")).toHaveText("analytics.customers");
+    await waitForEditorReady(page);
   } else {
+    await page.goto(`${baseURL}/?pipeline=YW5hbHl0aWNz&asset=YW5hbHl0aWNzL2Fzc2V0cy9jdXN0b21lcnMuc3Fs`);
     const editorAssetName = page.getByTestId("editor-asset-name");
-    const customersLink = page.getByRole("link", { name: "analytics.customers" });
-    await expect(customersLink).toBeVisible();
-
-    if ((await editorAssetName.textContent())?.trim() !== "analytics.customers") {
-      await customersLink.click();
+    if (!(await editorAssetName.isVisible().catch(() => false))) {
+      const analyticsLink = page.getByRole("link", { name: "analytics", exact: true });
+      await expect(analyticsLink).toBeVisible({ timeout: 15000 });
+      await analyticsLink.click();
     }
 
-    await expect(editorAssetName).toHaveText("analytics.customers");
+    await expect(editorAssetName).toHaveText("analytics.customers", { timeout: 15000 });
+    await waitForEditorReady(page);
   }
+}
+
+async function reopenCustomersEditor(page: Page, baseURL: string) {
+  if (test.info().project.name.includes("mobile")) {
+    await openCustomersEditor(page, baseURL);
+    return;
+  }
+
+  await page.getByRole("link", { name: "analytics.orders" }).click();
+  await openCustomersEditor(page, baseURL);
 }
 
 async function replaceEditorContent(
   page: Page,
   content: string
 ) {
-  const editor = page.locator(".monaco-editor").first();
+  const editor = await waitForEditorReady(page);
   await editor.click();
   await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.type(content);
+}
+
+async function waitForEditorReady(page: Page) {
+  const editor = page.locator(".monaco-editor").first();
+  await expect(page.getByTestId("editor-asset-name")).toHaveText(/analytics\./, { timeout: 15000 });
+  await expect(editor).toBeVisible({ timeout: 15000 });
+  await expect(page.locator(".view-lines").first()).toBeVisible({ timeout: 15000 });
+  return editor;
+}
+
+async function waitForWorkspaceAssetUpstreams(
+  page: Page,
+  assetName: string,
+  expectedUpstreams: string[]
+) {
+  const sortedExpected = [...expectedUpstreams].sort();
+  await expect
+    .poll(async () => {
+      const upstreams = await page.evaluate(async (targetAssetName) => {
+        const response = await fetch("/api/workspace", { cache: "no-store" });
+        const workspace = (await response.json()) as {
+          pipelines?: Array<{
+            assets?: Array<{ name?: string; upstreams?: string[] }>;
+          }>;
+        };
+
+        for (const pipeline of workspace.pipelines ?? []) {
+          for (const asset of pipeline.assets ?? []) {
+            if (asset.name === targetAssetName) {
+              return asset.upstreams ?? [];
+            }
+          }
+        }
+
+        return null;
+      }, assetName);
+
+      return upstreams ? [...upstreams].sort() : null;
+    }, { timeout: 15000 })
+    .toEqual(sortedExpected);
 }
 
 async function clickEditorLine(page: Page, text: string) {

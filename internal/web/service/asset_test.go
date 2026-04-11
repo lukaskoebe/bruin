@@ -391,6 +391,110 @@ select 1 as order_id
 	assert.Equal(t, "analytics.orders_child_1", asset.Name)
 }
 
+func TestAssetServiceUpdateReconcilesSQLDependenciesImmediately(t *testing.T) {
+	t.Parallel()
+
+	workspaceRoot := t.TempDir()
+	pipelineRoot := filepath.Join(workspaceRoot, "analytics")
+	assetsRoot := filepath.Join(pipelineRoot, "assets")
+	require.NoError(t, os.MkdirAll(assetsRoot, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pipelineRoot, "pipeline.yml"), []byte(strings.TrimSpace(`
+name: analytics
+schedule: daily
+start_date: "2024-01-01"
+default_connections:
+  duckdb: duckdb-default
+`) + "\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(assetsRoot, "orders.sql"), []byte(strings.TrimSpace(`
+/* @bruin
+name: analytics.orders
+type: duckdb.sql
+materialization:
+  type: view
+@bruin */
+
+select 1 as order_id
+`) + "\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(assetsRoot, "customers.sql"), []byte(strings.TrimSpace(`
+/* @bruin
+name: analytics.customers
+type: duckdb.sql
+materialization:
+  type: view
+depends:
+  - analytics.manual_seed
+@bruin */
+
+select 1 as customer_id
+`) + "\n"), 0o644))
+
+	buildPipeline := func(ctx context.Context, pipelinePath string) (*pipeline.Pipeline, error) {
+		osFS := afero.NewOsFs()
+		builder := pipeline.NewBuilder(
+			BuilderConfig,
+			pipeline.CreateTaskFromYamlDefinition(osFS),
+			pipeline.CreateTaskFromFileComments(osFS),
+			osFS,
+			nil,
+		)
+		return builder.CreatePipelineFromPath(ctx, pipelinePath, pipeline.WithMutate())
+	}
+
+	resolveAssetByID := func(ctx context.Context, assetID string) (string, *pipeline.Pipeline, *pipeline.Asset, error) {
+		relAssetPath, err := DecodeID(assetID)
+		if err != nil {
+			return "", nil, nil, err
+		}
+
+		assetPath, err := SafeJoin(workspaceRoot, relAssetPath)
+		if err != nil {
+			return "", nil, nil, err
+		}
+
+		pipelinePath := filepath.Dir(filepath.Dir(assetPath))
+		parsedPipeline, err := buildPipeline(ctx, pipelinePath)
+		if err != nil {
+			return "", nil, nil, err
+		}
+
+		normalizedTarget := filepath.ToSlash(relAssetPath)
+		for _, asset := range parsedPipeline.Assets {
+			currentPath := asset.ExecutableFile.Path
+			if currentPath == "" {
+				currentPath = asset.DefinitionFile.Path
+			}
+
+			relCurrent, relErr := filepath.Rel(workspaceRoot, currentPath)
+			if relErr != nil {
+				continue
+			}
+			if filepath.ToSlash(relCurrent) == normalizedTarget {
+				return normalizedTarget, parsedPipeline, asset, nil
+			}
+		}
+
+		return "", nil, nil, ErrAssetNotFound
+	}
+
+	service := NewAssetService(AssetDependencies{
+		WorkspaceRoot:                              workspaceRoot,
+		ResolveAssetByID:                           resolveAssetByID,
+		SuppressWatcher:                            func(string) {},
+		PushWorkspaceUpdateImmediateWithChangedIDs: func(context.Context, string, string, []string) {},
+	})
+
+	content := "select *\nfrom analytics.orders\n"
+	_, apiErr := service.Update(context.Background(), EncodeID("analytics/assets/customers.sql"), AssetUpdateRequest{
+		Content: &content,
+	})
+	require.Nil(t, apiErr)
+
+	_, _, asset, err := resolveAssetByID(context.Background(), EncodeID("analytics/assets/customers.sql"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"analytics.manual_seed", "analytics.orders"}, upstreamValues(asset.Upstreams))
+	assert.Equal(t, "analytics.orders", asset.Meta[bruinWebInferredUpstreamsMetaKey])
+}
+
 func TestReconcileSQLAssetDependenciesResolvesSameSchemaUnqualifiedNames(t *testing.T) {
 	t.Parallel()
 

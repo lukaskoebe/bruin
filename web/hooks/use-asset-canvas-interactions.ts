@@ -47,6 +47,8 @@ type UseAssetCanvasInteractionsInput = {
     }
   ) => Promise<{ asset_id?: string } | null>;
   navigateSelection: (pipelineId: string, assetId: string | null) => void;
+  isMobile?: boolean;
+  openSelectedAssetEditor?: () => void;
   buildCreateAssetInput: (
     name: string,
     kind: NewAssetKind
@@ -75,6 +77,8 @@ export function useAssetCanvasInteractions({
   setEdges,
   runCreateAsset,
   navigateSelection,
+  isMobile = false,
+  openSelectedAssetEditor,
   buildCreateAssetInput,
 }: UseAssetCanvasInteractionsInput) {
   const pipeline = useAtomValue(pipelineAtom);
@@ -332,11 +336,16 @@ export function useAssetCanvasInteractions({
       if (node.id === NEW_ASSET_NODE_ID) {
         return;
       }
+      if (isMobile && selectedAssetId === node.id) {
+        openSelectedAssetEditor?.();
+        return;
+      }
+
       if (pipelineId) {
         navigateSelection(pipelineId, node.id);
       }
     },
-    [navigateSelection, pipelineId]
+    [isMobile, navigateSelection, openSelectedAssetEditor, pipelineId, selectedAssetId]
   );
 
   return {
